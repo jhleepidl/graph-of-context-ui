@@ -20,9 +20,12 @@ type Props = {
   nodes: any[]
   edges: any[]
   activeNodeIds: string[]
+  selectedNodeIds?: string[]
   onSelectionChange: (ids: string[]) => void
+  onNodeClick?: (nodeId: string) => void
   onCreateEdge?: (sourceId: string, targetId: string, edgeType: string) => void | Promise<void>
   onDeleteEdges?: (edgeIds: string[]) => void | Promise<void>
+  onDeleteNodes?: (nodeIds: string[]) => void | Promise<void>
 }
 
 type GraphNodeData = {
@@ -80,7 +83,10 @@ function edgePriority(t: string): number {
   if (t === 'IN_RUN') return 2
   if (t === 'USED_IN_RUN') return 3
   if (t === 'FOLDS') return 4
-  return 5
+  if (t === 'HAS_PART') return 5
+  if (t === 'NEXT_PART') return 6
+  if (t === 'SPLIT_FROM') return 7
+  return 8
 }
 
 function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
@@ -89,6 +95,9 @@ function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; str
   if (edgeType === 'IN_RUN') return { stroke: '#0ea5e9', strokeWidth: 1.5, strokeDasharray: '3 4' }
   if (edgeType === 'USED_IN_RUN') return { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '3 4' }
   if (edgeType === 'FOLDS') return { stroke: '#10b981', strokeWidth: 1.5 }
+  if (edgeType === 'HAS_PART') return { stroke: '#7c3aed', strokeWidth: 1.6 }
+  if (edgeType === 'NEXT_PART') return { stroke: '#a855f7', strokeWidth: 1.4, strokeDasharray: '4 3' }
+  if (edgeType === 'SPLIT_FROM') return { stroke: '#ec4899', strokeWidth: 1.3, strokeDasharray: '3 4' }
   return { stroke: '#9ca3af', strokeWidth: 1.4 }
 }
 
@@ -131,16 +140,19 @@ function mergeNodePositions(prev: RFNode[], next: RFNode[]): RFNode[] {
   })
 }
 
-const EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'INVOKES', 'RETURNS', 'USES']
+const EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
 const nodeTypes = { contextNode: GraphNode }
 
 export default function GraphPanel({
   nodes,
   edges,
   activeNodeIds,
+  selectedNodeIds = [],
   onSelectionChange,
+  onNodeClick,
   onCreateEdge,
   onDeleteEdges,
+  onDeleteNodes,
 }: Props) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([])
@@ -345,7 +357,10 @@ export default function GraphPanel({
 
   const handleNodeClick = useCallback((_evt: any, node: any) => {
     setSelectedNodeId(node?.id || null)
-  }, [])
+    if (onNodeClick && node?.id) {
+      onNodeClick(node.id)
+    }
+  }, [onNodeClick])
 
   const handlePaneClick = useCallback(() => {
     setSelectedNodeId(null)
@@ -367,6 +382,14 @@ export default function GraphPanel({
     onDeleteEdges(ids)
   }, [onDeleteEdges])
 
+  const handleDeleteSelectedNodes = useCallback(() => {
+    if (!onDeleteNodes) return
+    if (selectedNodeIds.length === 0) return
+    const ok = window.confirm(`선택한 ${selectedNodeIds.length}개 노드를 삭제할까요? 연결된 edge도 함께 삭제됩니다.`)
+    if (!ok) return
+    onDeleteNodes(selectedNodeIds)
+  }, [onDeleteNodes, selectedNodeIds])
+
   return (
     <div className="graphWrap">
       <div className="graphTools">
@@ -378,6 +401,14 @@ export default function GraphPanel({
         </select>
         <button onClick={() => setShowFoldMembers((v) => !v)}>
           {showFoldMembers ? 'Fold 멤버 숨기기' : 'Fold 상세 보기'}
+        </button>
+        <button
+          className="danger"
+          onClick={handleDeleteSelectedNodes}
+          disabled={selectedNodeIds.length === 0}
+          title={selectedNodeIds.length === 0 ? '삭제할 노드를 먼저 선택하세요.' : '선택 노드 삭제'}
+        >
+          Delete selected nodes ({selectedNodeIds.length})
         </button>
         <span className="muted">Zoom {zoom.toFixed(2)} {autoDetailByZoom ? '(자동 상세)' : ''}</span>
         <span className="muted">노드 카드 드래그: Active 추가 / 핸들 드래그: edge 추가 / edge 선택 후 Delete: 삭제 / 드래그 선택: Fold 대상 선택</span>

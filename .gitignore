@@ -356,4 +356,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 .env
+backend/data/
 

@@ -33,3 +33,10 @@ textarea { width:100%; height: 90px; resize: vertical; }
 .card.dragging { opacity: 0.6; border-style: dashed; }
 .activeDropSlot { height: 10px; margin: 4px 0; border-radius: 6px; border: 1px dashed transparent; background: transparent; transition: all 120ms ease; }
 .activeDropSlot.isHover { border-color: #2563eb; background: rgba(37, 99, 235, 0.12); }
+.tokenBar { width: 100%; height: 10px; border-radius: 999px; background: #e5e7eb; overflow: hidden; margin: 6px 0; }
+.tokenBarFill { height: 100%; background: #2563eb; transition: width 160ms ease; }
+.tokenBarFill.warn { background: #dc2626; }
+.modalOverlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 999; }
+.modalCard { width: min(920px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; }
+.modalHeader { justify-content: space-between; }
+.modalPartList { max-height: 220px; overflow: auto; }

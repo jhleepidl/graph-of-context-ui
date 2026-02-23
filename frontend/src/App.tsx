@@ -6,6 +6,7 @@ import ActiveContext from './components/ActiveContext'
 import RunPanel from './components/RunPanel'
 import SearchPanel from './components/SearchPanel'
 import CopyToChatGPTPanel from './components/CopyToChatGPTPanel'
+import NodeDetailModal from './components/NodeDetailModal'
 
 export default function App() {
   const [threads, setThreads] = useState<any[]>([])
@@ -18,9 +19,18 @@ export default function App() {
   const [edges, setEdges] = useState<any[]>([])
   const [activeIds, setActiveIds] = useState<string[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [detailNodeId, setDetailNodeId] = useState<string | null>(null)
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
+  const partCountByParent = useMemo(() => {
+    const out: Record<string, number> = {}
+    for (const e of edges) {
+      if (e.type !== 'HAS_PART') continue
+      out[e.from_id] = (out[e.from_id] || 0) + 1
+    }
+    return out
+  }, [edges])
   const isSameIdSet = useCallback((a: string[], b: string[]) => {
     if (a.length !== b.length) return false
     const as = new Set(a)
@@ -157,6 +167,21 @@ export default function App() {
     }
   }
 
+  async function handleDeleteNodes(nodeIds: string[]) {
+    if (!threadId || nodeIds.length === 0) return
+    try {
+      await Promise.all(nodeIds.map((nodeId) => api.deleteNode(threadId, nodeId)))
+      setSelectedIds([])
+      if (detailNodeId && nodeIds.includes(detailNodeId)) {
+        setDetailNodeId(null)
+      }
+      await reloadAll(threadId, ctxId || undefined)
+    } catch (e) {
+      console.error('failed to delete nodes', e)
+      await reloadAll(threadId, ctxId || undefined)
+    }
+  }
+
   return (
     <div className="wrap">
       <div className="col">
@@ -206,7 +231,13 @@ export default function App() {
           }}
         />
 
-        <Timeline nodes={nodes} activeIds={activeIds} onToggle={toggleActive} />
+        <Timeline
+          nodes={nodes}
+          activeIds={activeIds}
+          onToggle={toggleActive}
+          onOpenNode={(id) => setDetailNodeId(id)}
+          partCountByParent={partCountByParent}
+        />
       </div>
 
       <div className="col">
@@ -214,9 +245,12 @@ export default function App() {
           nodes={nodes}
           edges={edges}
           activeNodeIds={activeIds}
+          selectedNodeIds={selectedIds}
           onSelectionChange={handleSelectionChange}
+          onNodeClick={(id) => setDetailNodeId(id)}
           onCreateEdge={handleCreateEdge}
           onDeleteEdges={handleDeleteEdges}
+          onDeleteNodes={handleDeleteNodes}
         />
         <div className="muted" style={{ marginTop: 8 }}>
           그래프에서 드래그 멀티 선택으로 Fold 대상 지정, 핸들 드래그로 Edge 추가/삭제
@@ -227,6 +261,8 @@ export default function App() {
         <ActiveContext
           activeIds={activeIds}
           nodesById={nodesById}
+          onOpenNode={(id) => setDetailNodeId(id)}
+          partCountByParent={partCountByParent}
           onAdd={async (id) => {
             await toggleActive(id, true)
           }}
@@ -256,6 +292,17 @@ export default function App() {
           return out.response_text || ''
         }} />
       </div>
+      {detailNodeId && (
+        <NodeDetailModal
+          nodeId={detailNodeId}
+          threadId={threadId}
+          ctxId={ctxId}
+          onClose={() => setDetailNodeId(null)}
+          onAfterMutation={async () => {
+            await reloadAll()
+          }}
+        />
+      )}
     </div>
   )
 }

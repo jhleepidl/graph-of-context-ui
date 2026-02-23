@@ -29,7 +29,7 @@ class Edge(SQLModel, table=True):
     thread_id: str = Field(index=True)
     from_id: str = Field(index=True)
     to_id: str = Field(index=True)
-    type: str = Field(index=True)  # NEXT | REPLY_TO | INVOKES | RETURNS | USES | IN_RUN | FOLDS | USED_IN_RUN
+    type: str = Field(index=True)  # NEXT | REPLY_TO | INVOKES | RETURNS | USES | IN_RUN | FOLDS | USED_IN_RUN | HAS_PART | NEXT_PART | SPLIT_FROM
     payload_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utcnow, index=True)
 

@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
+from app.config import get_env
 from app.db import engine
 from app.models import Node, Edge, ContextSet
 from app.schemas import FoldCreate
@@ -10,6 +11,7 @@ from app.llm import call_openai
 from app.services.graph import add_edge, get_last_node
 
 router = APIRouter(prefix="/api", tags=["folds"])
+FOLD_SUMMARY_MODEL = get_env("GOC_FOLD_SUMMARY_MODEL", "gpt-5-nano") or "gpt-5-nano"
 
 def jdump(x) -> str:
     return json.dumps(x, ensure_ascii=False)
@@ -30,7 +32,7 @@ def summarize_fold(texts):
     )
     joined = "\n\n---\n\n".join(texts)
     prompt = f"[원문]\n{joined}\n\n[요약]"
-    return call_openai(instructions, prompt)
+    return call_openai(instructions, prompt, model=FOLD_SUMMARY_MODEL)
 
 @router.post("/folds")
 def create_fold(body: FoldCreate):

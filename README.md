@@ -15,6 +15,13 @@ This repo contains a minimal Graph-of-Context workflow:
 - Drag-and-drop Active Context composition (add from timeline, reorder, drop-to-remove)
 - Graph viewer node movement is disabled to focus on edge create/delete and fold/unfold workflows
 
+## Recommended ChatGPT Web Workflow
+1. Type `USER REQUEST` in the UI, then click `Copy Prompt` and paste it into ChatGPT Web.
+2. Paste ChatGPT's answer back with `Paste from ChatGPT` to create structured nodes and `REPLY_TO` edges.
+3. Use `Suggest Context for this request` for follow-up requests and add recommended nodes to Active Context.
+4. If context becomes too large/slow, keep important nodes active or Fold, then copy into a new chat.
+5. Use token estimates (Active Context + Full Prompt) and the usage bar to stay within context window limits.
+
 ## 1) Backend
 ```bash
 cd backend

@@ -9,6 +9,9 @@ from app.routers.context_sets import router as ctx_router
 from app.routers.folds import router as folds_router
 from app.routers.runs import router as runs_router
 from app.routers.search import router as search_router
+from app.routers.imports import router as imports_router
+from app.routers.tokens import router as tokens_router
+from app.routers.nodes import router as nodes_router
 
 app = FastAPI(title="Graph-of-Context MVP API")
 
@@ -30,3 +33,6 @@ app.include_router(ctx_router)
 app.include_router(folds_router)
 app.include_router(runs_router)
 app.include_router(search_router)
+app.include_router(imports_router)
+app.include_router(tokens_router)
+app.include_router(nodes_router)

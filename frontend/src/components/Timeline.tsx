@@ -4,9 +4,11 @@ type Props = {
   nodes: any[]
   activeIds: string[]
   onToggle: (nodeId: string, nextActive: boolean) => void
+  onOpenNode: (nodeId: string) => void
+  partCountByParent: Record<string, number>
 }
 
-export default function Timeline({ nodes, activeIds, onToggle }: Props) {
+export default function Timeline({ nodes, activeIds, onToggle, onOpenNode, partCountByParent }: Props) {
   const active = new Set(activeIds)
   const sorted = [...nodes].sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
 
@@ -29,17 +31,23 @@ export default function Timeline({ nodes, activeIds, onToggle }: Props) {
           key={n.id}
           className="card"
           draggable
+          onClick={() => onOpenNode(n.id)}
           onDragStart={(e) => handleDragStart(e, n.id)}
           onDragEnd={handleDragEnd}
           title="드래그해서 Active Context에 추가 가능"
         >
           <div className="muted">{n.created_at}</div>
-          <div><span className="pill">{n.type}</span> {(n.text || '').slice(0, 160).replace(/\n/g, ' ')}</div>
+          <div>
+            <span className="pill">{n.type}</span>
+            {partCountByParent[n.id] > 0 && <span className="pill">parts: {partCountByParent[n.id]}</span>}
+            {(n.text || '').slice(0, 160).replace(/\n/g, ' ')}
+          </div>
           <div className="row" style={{ marginTop: 6 }}>
             <label>
               <input
                 type="checkbox"
                 checked={active.has(n.id)}
+                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => onToggle(n.id, e.target.checked)}
               /> Active
             </label>

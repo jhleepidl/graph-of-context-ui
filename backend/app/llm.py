@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib
-from typing import List
+from typing import List, Optional
 import numpy as np
 
 from app.config import get_env
@@ -13,7 +13,7 @@ GOC_EMBED_DIM = int(get_env("GOC_EMBED_DIM", "1536") or "1536")
 def llm_available() -> bool:
     return bool(OPENAI_API_KEY)
 
-def call_openai(instructions: str, user_input: str) -> str:
+def call_openai(instructions: str, user_input: str, model: Optional[str] = None) -> str:
     if not llm_available():
         return (
             "[LLM 미연결 상태]\n"
@@ -22,8 +22,9 @@ def call_openai(instructions: str, user_input: str) -> str:
         )
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)
+    model_name = model or OPENAI_MODEL
     resp = client.responses.create(
-        model=OPENAI_MODEL,
+        model=model_name,
         instructions=instructions,
         input=user_input,
         truncation="disabled",

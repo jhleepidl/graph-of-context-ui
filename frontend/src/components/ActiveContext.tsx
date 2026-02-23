@@ -7,6 +7,8 @@ type Props = {
   onUnfold: (foldId: string) => void | Promise<void>
   onAdd: (nodeId: string) => void | Promise<void>
   onReorder: (nodeIds: string[]) => void | Promise<void>
+  onOpenNode: (nodeId: string) => void
+  partCountByParent: Record<string, number>
 }
 
 function getDraggedNodeId(e: React.DragEvent): string {
@@ -17,7 +19,7 @@ function getDraggedNodeId(e: React.DragEvent): string {
   ).trim()
 }
 
-export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold, onAdd, onReorder }: Props) {
+export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold, onAdd, onReorder, onOpenNode, partCountByParent }: Props) {
   const [orderedIds, setOrderedIds] = React.useState<string[]>(activeIds)
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null)
@@ -133,15 +135,21 @@ export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold
             <div
               className={`card ${draggingId === id ? 'dragging' : ''}`}
               draggable
+              onClick={() => onOpenNode(id)}
               onDragStart={(e) => handleDragStart(e, id)}
               onDragEnd={handleDragEnd}
               title="드래그해서 순서 재배치 가능"
             >
               <div className="muted">{n.created_at}</div>
-              <div><span className="pill">{n.type}</span> {(n.text || '').slice(0, 220)}</div>
+              <div>
+                <span className="pill">{n.type}</span>
+                {partCountByParent[id] > 0 && <span className="pill">parts: {partCountByParent[id]}</span>}
+                {(n.text || '').slice(0, 220)}
+              </div>
               <div className="row" style={{ marginTop: 6 }}>
-                <button className="danger" onClick={() => onRemove(id)}>Remove</button>
-                {n.type === 'Fold' && <button onClick={() => onUnfold(id)}>Unfold</button>}
+                <button className="danger" onClick={(e) => { e.stopPropagation(); onRemove(id) }}>Remove</button>
+                {n.type === 'Fold' && <button onClick={(e) => { e.stopPropagation(); onUnfold(id) }}>Unfold</button>}
+                <button onClick={(e) => { e.stopPropagation(); onOpenNode(id) }}>Replace with parts</button>
               </div>
             </div>
             <div

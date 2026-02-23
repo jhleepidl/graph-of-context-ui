@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel
 
 class ThreadCreate(BaseModel):
@@ -51,3 +51,37 @@ class EdgeCreate(BaseModel):
 
 class ActiveOrderUpdate(BaseModel):
     node_ids: List[str]
+
+
+class ChatGPTImportRequest(BaseModel):
+    raw_text: str
+    context_set_id: Optional[str] = None
+    reply_to: Optional[str] = None
+    source: Literal["chatgpt_web", "unknown"] = "unknown"
+    auto_activate: Optional[bool] = None
+
+
+class TokenEstimateRequest(BaseModel):
+    text: str
+    model: Optional[str] = None
+
+
+SplitStrategy = Literal["auto", "tagged", "heading", "bullets", "paragraph", "sentences", "custom"]
+
+
+class SplitNodeRequest(BaseModel):
+    strategy: SplitStrategy = "auto"
+    custom_text: Optional[str] = None
+    child_type: Optional[str] = None
+    context_set_id: Optional[str] = None
+    replace_in_active: bool = False
+    inherit_reply_to: bool = True
+    target_chars: Optional[int] = 900
+    max_chars: Optional[int] = 2000
+
+
+class SplitNodeResponse(BaseModel):
+    ok: bool = True
+    parent_id: str
+    created_ids: List[str]
+    strategy_used: str

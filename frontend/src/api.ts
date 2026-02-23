@@ -40,9 +40,52 @@ export const api = {
     j<any>(fetch(apiUrl(`/api/threads/${threadId}/edges/${edgeId}`), {
       method: 'DELETE',
     })),
+  deleteNode: (threadId: string, nodeId: string) =>
+    j<any>(fetch(apiUrl(`/api/threads/${threadId}/nodes/${nodeId}`), {
+      method: 'DELETE',
+    })),
 
   addMessage: (threadId: string, role: 'user'|'assistant', text: string, reply_to?: string) =>
     j<any>(fetch(apiUrl(`/api/threads/${threadId}/messages`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role, text, reply_to })})),
+
+  getNode: (nodeId: string) =>
+    j<any>(fetch(apiUrl(`/api/nodes/${nodeId}`))),
+  splitNode: (
+    nodeId: string,
+    body: {
+      strategy: 'auto' | 'tagged' | 'heading' | 'bullets' | 'paragraph' | 'sentences' | 'custom'
+      custom_text?: string | null
+      child_type?: string | null
+      context_set_id?: string | null
+      replace_in_active?: boolean
+      inherit_reply_to?: boolean
+      target_chars?: number | null
+      max_chars?: number | null
+    },
+  ) => j<any>(
+    fetch(apiUrl(`/api/nodes/${nodeId}/split`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
+
+  importChatGPT: (
+    threadId: string,
+    body: {
+      raw_text: string
+      context_set_id?: string | null
+      reply_to?: string | null
+      source?: 'chatgpt_web' | 'unknown'
+      auto_activate?: boolean
+    },
+  ) => j<any>(
+    fetch(apiUrl(`/api/threads/${threadId}/import_chatgpt`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
 
   ctxSets: (threadId: string) => j<any[]>(fetch(apiUrl(`/api/threads/${threadId}/context_sets`))),
   createCtx: (threadId: string, name: string) =>
@@ -70,4 +113,13 @@ export const api = {
 
   search: (threadId: string, q: string, k = 10) =>
     j<any>(fetch(apiUrl(`/api/threads/${threadId}/search?q=${encodeURIComponent(q)}&k=${k}`))),
+
+  estimateTokens: (text: string, model?: string | null) =>
+    j<{ tokens: number; method: 'tiktoken' | 'heuristic' }>(
+      fetch(apiUrl('/api/tokens/estimate'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, model: model || null }),
+      }),
+    ),
 }

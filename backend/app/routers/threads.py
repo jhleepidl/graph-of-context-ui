@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
 from app.db import engine
-from app.models import Thread, ContextSet, Node, Edge
+from app.models import Thread, ContextSet, Node, Edge, NodeEmbedding
 from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
 from app.services.graph import add_edge, get_last_node
 
@@ -31,6 +31,9 @@ ALLOWED_EDGE_TYPES = {
     "IN_RUN",
     "FOLDS",
     "USED_IN_RUN",
+    "HAS_PART",
+    "NEXT_PART",
+    "SPLIT_FROM",
 }
 
 @router.get("")
@@ -163,3 +166,52 @@ def delete_edge(thread_id: str, edge_id: str):
         s.delete(e)
         s.commit()
         return {"ok": True, "deleted_edge_id": edge_id}
+
+
+@router.delete("/{thread_id}/nodes/{node_id}")
+def delete_node(thread_id: str, node_id: str):
+    with Session(engine) as s:
+        t = s.get(Thread, thread_id)
+        if not t:
+            raise HTTPException(404, "thread not found")
+
+        n = s.get(Node, node_id)
+        if not n or n.thread_id != thread_id:
+            raise HTTPException(404, "node not found")
+
+        outgoing = s.exec(
+            select(Edge)
+            .where(Edge.thread_id == thread_id)
+            .where(Edge.from_id == node_id)
+        ).all()
+        incoming = s.exec(
+            select(Edge)
+            .where(Edge.thread_id == thread_id)
+            .where(Edge.to_id == node_id)
+        ).all()
+        edge_by_id = {e.id: e for e in outgoing}
+        for e in incoming:
+            edge_by_id[e.id] = e
+        for e in edge_by_id.values():
+            s.delete(e)
+
+        sets = s.exec(select(ContextSet).where(ContextSet.thread_id == thread_id)).all()
+        for cs in sets:
+            active = jload(cs.active_node_ids_json, [])
+            next_active = [nid for nid in active if nid != node_id]
+            if len(next_active) == len(active):
+                continue
+            cs.active_node_ids_json = jdump(next_active)
+            s.add(cs)
+
+        ne = s.get(NodeEmbedding, node_id)
+        if ne:
+            s.delete(ne)
+
+        s.delete(n)
+        s.commit()
+        return {
+            "ok": True,
+            "deleted_node_id": node_id,
+            "deleted_edge_count": len(edge_by_id),
+        }
