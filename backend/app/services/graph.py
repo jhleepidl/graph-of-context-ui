@@ -1,7 +1,6 @@
 from __future__ import annotations
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from sqlmodel import Session, select
 
 from app.models import Node, Edge
@@ -28,35 +27,44 @@ def get_last_node(session: Session, thread_id: str) -> Optional[Node]:
     stmt = select(Node).where(Node.thread_id == thread_id).order_by(Node.created_at.desc()).limit(1)
     return session.exec(stmt).first()
 
-def _parse_dt(v: Any) -> Optional[datetime]:
-    if not isinstance(v, str):
-        return None
-    s = v.strip()
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        return None
 
-def _to_int(v: Any, default: int = 0) -> int:
-    try:
-        return int(v)
-    except Exception:
-        return default
+def replace_ids_in_order(active_ids: List[str], old_id: str, new_ids: List[str]) -> List[str]:
+    replaced = False
+    expanded: List[str] = []
+
+    for nid in active_ids:
+        if nid == old_id:
+            if not replaced:
+                expanded.extend(new_ids)
+                replaced = True
+            continue
+        expanded.append(nid)
+
+    if not replaced:
+        expanded.extend(new_ids)
+
+    seen = set()
+    out: List[str] = []
+    for nid in expanded:
+        if nid in seen:
+            continue
+        seen.add(nid)
+        out.append(nid)
+    return out
+
 
 def compile_active_context(session: Session, thread_id: str, active_ids: List[str]) -> str:
     active_nodes: List[Node] = []
-    active_set = set(active_ids)
-
+    seen_active = set()
     for nid in active_ids:
+        if nid in seen_active:
+            continue
+        seen_active.add(nid)
         n = session.get(Node, nid)
         if not n or n.thread_id != thread_id:
             continue
         active_nodes.append(n)
+    active_set = {n.id for n in active_nodes}
 
     parent_to_children: Dict[str, set] = {}
 
@@ -81,16 +89,6 @@ def compile_active_context(session: Session, thread_id: str, active_ids: List[st
     excluded_parent_ids = {pid for pid, children in parent_to_children.items() if children}
 
     kept_nodes = [n for n in active_nodes if n.id not in excluded_parent_ids]
-
-    def sort_key(n: Node):
-        meta = jload(n.payload_json, {})
-        origin_dt = _parse_dt(meta.get("origin_created_at"))
-        chunk_index = meta.get("chunk_index")
-        if origin_dt is not None and chunk_index is not None:
-            return (origin_dt, _to_int(chunk_index, 0), n.created_at, n.id)
-        return (n.created_at, 0, n.created_at, n.id)
-
-    kept_nodes.sort(key=sort_key)
 
     parts: List[str] = []
     for n in kept_nodes:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
@@ -8,9 +9,11 @@ from app.db import engine
 from app.models import Node, Edge, ContextSet
 from app.schemas import FoldCreate
 from app.llm import call_openai
-from app.services.graph import add_edge, get_last_node
+from app.services.embedding import ensure_node_embedding
+from app.services.graph import add_edge, get_last_node, replace_ids_in_order
 
 router = APIRouter(prefix="/api", tags=["folds"])
+logger = logging.getLogger(__name__)
 FOLD_SUMMARY_MODEL = get_env("GOC_FOLD_SUMMARY_MODEL", "gpt-5-nano") or "gpt-5-nano"
 
 def jdump(x) -> str:
@@ -66,8 +69,14 @@ def create_fold(body: FoldCreate):
 
         s.commit()
         s.refresh(fold)
+        warning = None
+        try:
+            ensure_node_embedding(s, fold, commit=True)
+        except Exception as e:
+            warning = f"embedding failed: {e}"
+            logger.exception("fold embedding failed (thread_id=%s, fold_id=%s)", body.thread_id, fold.id)
 
-        return {"ok": True, "fold_id": fold.id}
+        return {"ok": True, "fold_id": fold.id, "warning": warning}
 
 @router.post("/context_sets/{context_set_id}/unfold/{fold_id}")
 def unfold(context_set_id: str, fold_id: str):
@@ -85,13 +94,7 @@ def unfold(context_set_id: str, fold_id: str):
         ).all()
         members = [e.to_id for e in sorted(edges, key=lambda x: jload(x.payload_json, {}).get("index", 0))]
 
-        active = [nid for nid in jload(cs.active_node_ids_json, []) if nid != fold_id]
-        seen = set(active)
-        for nid in members:
-            if nid in seen:
-                continue
-            active.append(nid)
-            seen.add(nid)
+        active = replace_ids_in_order(jload(cs.active_node_ids_json, []), fold_id, members)
 
         cs.active_node_ids_json = jdump(active)
         s.add(cs)

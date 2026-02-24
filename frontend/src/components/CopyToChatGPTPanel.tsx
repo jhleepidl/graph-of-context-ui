@@ -54,34 +54,12 @@ function shortId(id: string): string {
   return id.slice(0, 6)
 }
 
-function nodeSortKey(n: ContextNode): [number, number, number, string] {
-  let payload: any = {}
+function parsePayload(payloadJson?: string | null): Record<string, any> {
   try {
-    payload = JSON.parse(n.payload_json || '{}')
+    return JSON.parse(payloadJson || '{}')
   } catch {
-    payload = {}
+    return {}
   }
-  const createdMs = Date.parse(n.created_at || '')
-  const created = Number.isFinite(createdMs) ? createdMs : 0
-
-  const originRaw = typeof payload.origin_created_at === 'string' ? payload.origin_created_at : null
-  const originMs = originRaw ? Date.parse(originRaw) : NaN
-  const origin = Number.isFinite(originMs) ? originMs : created
-
-  const chunkIndexRaw = Number(payload.chunk_index)
-  const chunkIndex = Number.isFinite(chunkIndexRaw) ? chunkIndexRaw : 0
-  return [origin, chunkIndex, created, n.id]
-}
-
-function byCreatedAtAsc(a: ContextNode, b: ContextNode): number {
-  const ak = nodeSortKey(a)
-  const bk = nodeSortKey(b)
-  if (ak[0] !== bk[0]) return ak[0] - bk[0]
-  if (ak[1] !== bk[1]) return ak[1] - bk[1]
-  if (ak[2] !== bk[2]) return ak[2] - bk[2]
-  if (ak[3] < bk[3]) return -1
-  if (ak[3] > bk[3]) return 1
-  return 0
 }
 
 function formatScore(score: number): string {
@@ -111,18 +89,38 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
   const [tokenMethod, setTokenMethod] = useState<'tiktoken' | 'heuristic' | ''>('')
   const [tokenStatus, setTokenStatus] = useState('')
 
+  const orderedActiveNodes = useMemo(() => {
+    const seen = new Set<string>()
+    const orderedUnique = activeNodes.filter((node) => {
+      if (!node?.id) return false
+      if (seen.has(node.id)) return false
+      seen.add(node.id)
+      return true
+    })
+
+    const activeSet = new Set(orderedUnique.map((n) => n.id))
+    const excludedParents = new Set<string>()
+    for (const node of orderedUnique) {
+      const payload = parsePayload(node.payload_json)
+      const parentId = typeof payload.parent_id === 'string' ? payload.parent_id : ''
+      if (parentId && activeSet.has(parentId)) {
+        excludedParents.add(parentId)
+      }
+    }
+    return orderedUnique.filter((node) => !excludedParents.has(node.id))
+  }, [activeNodes])
+
   const contextSection = useMemo(() => {
-    const sorted = [...activeNodes].sort(byCreatedAtAsc)
-    if (sorted.length === 0) {
+    if (orderedActiveNodes.length === 0) {
       return '(active context is empty)'
     }
-    return sorted
+    return orderedActiveNodes
       .map((n) => {
         const body = (n.text || '').trim() || '(empty)'
         return `[NODE ${shortId(n.id)} type=${n.type || 'Unknown'}]\n${body}`
       })
       .join('\n\n')
-  }, [activeNodes])
+  }, [orderedActiveNodes])
 
   const builtPrompt = useMemo(() => {
     const req = userRequest.trim() || '(write request here)'

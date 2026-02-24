@@ -10,7 +10,7 @@ from app.db import engine
 from app.models import ContextSet, Edge, Node
 from app.schemas import SplitNodeRequest, SplitNodeResponse
 from app.services.embedding import ensure_node_embedding
-from app.services.graph import add_edge, jdump, jload
+from app.services.graph import add_edge, jdump, jload, replace_ids_in_order
 
 router = APIRouter(prefix="/api", tags=["nodes"])
 
@@ -505,13 +505,14 @@ def split_node(node_id: str, body: SplitNodeRequest):
 
             active = jload(cs.active_node_ids_json, [])
             if body.replace_in_active:
-                active = [nid for nid in active if nid != parent.id]
-            seen_active = set(active)
-            for child in created_nodes:
-                if child.id in seen_active:
-                    continue
-                active.append(child.id)
-                seen_active.add(child.id)
+                active = replace_ids_in_order(active, parent.id, [child.id for child in created_nodes])
+            else:
+                seen_active = set(active)
+                for child in created_nodes:
+                    if child.id in seen_active:
+                        continue
+                    active.append(child.id)
+                    seen_active.add(child.id)
             cs.active_node_ids_json = jdump(active)
             s.add(cs)
 

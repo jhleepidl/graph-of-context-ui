@@ -32,7 +32,9 @@ def call_openai(instructions: str, user_input: str, model: Optional[str] = None)
     )
     return resp.output_text
 
-def _hash_embed(text: str, dim: int = 256) -> List[float]:
+def _hash_embed(text: str, dim: Optional[int] = None) -> List[float]:
+    if dim is None:
+        dim = GOC_EMBED_DIM
     vec = np.zeros(dim, dtype=np.float32)
     for token in text.lower().split():
         h = hashlib.md5(token.encode("utf-8")).digest()
@@ -47,7 +49,7 @@ def embed_text(text: str) -> List[float]:
     if not text:
         return []
     if not llm_available():
-        return _hash_embed(text)
+        return _hash_embed(text, dim=GOC_EMBED_DIM)
 
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)

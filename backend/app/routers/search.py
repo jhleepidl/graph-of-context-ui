@@ -15,7 +15,7 @@ def search(thread_id: str, q: str = Query(min_length=1), k: int = 10):
         t = s.get(Thread, thread_id)
         if not t:
             raise HTTPException(404, "thread not found")
-        results = search_nodes(s, thread_id, q, k=k)
+        results, coverage = search_nodes(s, thread_id, q, k=k)
         out = []
         for node, score in results:
             snippet = (node.text or "").replace("\n", " ")
@@ -26,4 +26,4 @@ def search(thread_id: str, q: str = Query(min_length=1), k: int = 10):
                 node_type=node.type,
                 snippet=snippet
             ).model_dump())
-        return {"ok": True, "results": out}
+        return {"ok": True, "results": out, "coverage": coverage}

@@ -21,6 +21,18 @@ def _norm(vec: List[float]) -> List[float]:
     n = np.linalg.norm(v) + 1e-9
     return (v / n).astype(np.float32).tolist()
 
+
+def _validate_dim(vec: List[float], *, where: str) -> List[float]:
+    if not vec:
+        return []
+    if len(vec) != EMBED_DIM:
+        raise ValueError(
+            f"{where}: embedding dim mismatch (expected {EMBED_DIM}, got {len(vec)}). "
+            "Check GOC_EMBED_DIM and embedding source consistency."
+        )
+    return vec
+
+
 class VectorIndex:
     def upsert(self, thread_id: str, node_id: str, vec: List[float]) -> None:
         raise NotImplementedError
@@ -28,17 +40,22 @@ class VectorIndex:
     def search(self, thread_id: str, qvec: List[float], k: int) -> List[Tuple[str, float]]:
         raise NotImplementedError
 
+    def rebuild_thread(self, thread_id: str, vectors: List[Tuple[str, List[float]]]) -> Dict[str, int]:
+        raise NotImplementedError
+
 class BruteForceIndex(VectorIndex):
     def __init__(self):
         self.store: Dict[str, Dict[str, np.ndarray]] = {}
 
     def upsert(self, thread_id: str, node_id: str, vec: List[float]) -> None:
+        vec = _validate_dim(vec, where="vector upsert")
         vec = _norm(vec)
         if not vec:
             return
         self.store.setdefault(thread_id, {})[node_id] = np.asarray(vec, dtype=np.float32)
 
     def search(self, thread_id: str, qvec: List[float], k: int) -> List[Tuple[str, float]]:
+        qvec = _validate_dim(qvec, where="vector search query")
         qvec = _norm(qvec)
         if not qvec:
             return []
@@ -47,6 +64,26 @@ class BruteForceIndex(VectorIndex):
         scored = [(nid, float(np.dot(q, v))) for nid, v in items.items()]
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:max(1, min(k, 50))]
+
+    def rebuild_thread(self, thread_id: str, vectors: List[Tuple[str, List[float]]]) -> Dict[str, int]:
+        next_store: Dict[str, np.ndarray] = {}
+        seen = set()
+        skipped = 0
+        for node_id, vec in vectors:
+            if node_id in seen:
+                skipped += 1
+                continue
+            seen.add(node_id)
+            if len(vec) != EMBED_DIM:
+                skipped += 1
+                continue
+            normed = _norm(vec)
+            if not normed:
+                skipped += 1
+                continue
+            next_store[node_id] = np.asarray(normed, dtype=np.float32)
+        self.store[thread_id] = next_store
+        return {"indexed": len(next_store), "skipped": skipped}
 
 class FaissIndex(VectorIndex):
     def __init__(self):
@@ -66,7 +103,13 @@ class FaissIndex(VectorIndex):
             return
         idx_path, map_path = self._paths(thread_id)
         if os.path.exists(idx_path) and os.path.exists(map_path):
-            self.indices[thread_id] = self.faiss.read_index(idx_path)
+            idx = self.faiss.read_index(idx_path)
+            if getattr(idx, "d", EMBED_DIM) != EMBED_DIM:
+                raise ValueError(
+                    f"faiss index dim mismatch for thread {thread_id}: "
+                    f"expected {EMBED_DIM}, got {getattr(idx, 'd', 'unknown')}."
+                )
+            self.indices[thread_id] = idx
             with open(map_path, "r", encoding="utf-8") as f:
                 self.idmaps[thread_id] = json.load(f)
         else:
@@ -80,6 +123,7 @@ class FaissIndex(VectorIndex):
             json.dump(self.idmaps[thread_id], f, ensure_ascii=False)
 
     def upsert(self, thread_id: str, node_id: str, vec: List[float]) -> None:
+        vec = _validate_dim(vec, where="vector upsert")
         vec = _norm(vec)
         if not vec:
             return
@@ -93,6 +137,7 @@ class FaissIndex(VectorIndex):
         self._persist(thread_id)
 
     def search(self, thread_id: str, qvec: List[float], k: int) -> List[Tuple[str, float]]:
+        qvec = _validate_dim(qvec, where="vector search query")
         qvec = _norm(qvec)
         if not qvec:
             return []
@@ -109,6 +154,36 @@ class FaissIndex(VectorIndex):
             if 0 <= idx < len(self.idmaps[thread_id]):
                 out.append((self.idmaps[thread_id][idx], float(score)))
         return out
+
+    def rebuild_thread(self, thread_id: str, vectors: List[Tuple[str, List[float]]]) -> Dict[str, int]:
+        seen = set()
+        idmap: List[str] = []
+        rows: List[List[float]] = []
+        skipped = 0
+
+        for node_id, vec in vectors:
+            if node_id in seen:
+                skipped += 1
+                continue
+            seen.add(node_id)
+            if len(vec) != EMBED_DIM:
+                skipped += 1
+                continue
+            normed = _norm(vec)
+            if not normed:
+                skipped += 1
+                continue
+            idmap.append(node_id)
+            rows.append(normed)
+
+        index = self.faiss.IndexFlatIP(EMBED_DIM)
+        if rows:
+            index.add(np.asarray(rows, dtype=np.float32))
+
+        self.indices[thread_id] = index
+        self.idmaps[thread_id] = idmap
+        self._persist(thread_id)
+        return {"indexed": len(idmap), "skipped": skipped}
 
 def get_index() -> VectorIndex:
     if VECTOR_BACKEND == "bruteforce":

@@ -1,14 +1,16 @@
 from __future__ import annotations
 import json
+import logging
 from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import Thread, ContextSet, Node, Edge, NodeEmbedding
 from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
-from app.services.graph import add_edge, get_last_node
+from app.services.embedding import rebuild_thread_index
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
+logger = logging.getLogger(__name__)
 
 
 def jdump(x):
@@ -210,8 +212,25 @@ def delete_node(thread_id: str, node_id: str):
 
         s.delete(n)
         s.commit()
+        warning = None
+        try:
+            rebuild_thread_index(s, thread_id)
+        except Exception as e:
+            warning = f"index rebuild failed: {e}"
+            logger.exception("index rebuild failed after node delete (thread_id=%s, node_id=%s)", thread_id, node_id)
         return {
             "ok": True,
             "deleted_node_id": node_id,
             "deleted_edge_count": len(edge_by_id),
+            "warning": warning,
         }
+
+
+@router.post("/{thread_id}/rebuild_index")
+def rebuild_index(thread_id: str):
+    with Session(engine) as s:
+        t = s.get(Thread, thread_id)
+        if not t:
+            raise HTTPException(404, "thread not found")
+        stats = rebuild_thread_index(s, thread_id)
+        return {"ok": True, "rebuild": stats}

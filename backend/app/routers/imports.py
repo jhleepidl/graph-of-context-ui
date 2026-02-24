@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -9,9 +10,11 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import ContextSet, Node, Thread
 from app.schemas import ChatGPTImportRequest
+from app.services.embedding import ensure_nodes_embeddings
 from app.services.graph import add_edge, get_last_node, jdump, jload
 
 router = APIRouter(prefix="/api", tags=["imports"])
+logger = logging.getLogger(__name__)
 
 SECTION_TAGS = ("FINAL", "DECISIONS", "ASSUMPTIONS", "PLAN", "CONTEXT_CANDIDATES")
 SECTION_HEADER_RE = re.compile(
@@ -182,6 +185,13 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
             s.add(cs)
 
         s.commit()
+        warning = None
+        if created_order:
+            try:
+                ensure_nodes_embeddings(s, created_order, commit=True)
+            except Exception as e:
+                warning = f"embedding failed: {e}"
+                logger.exception("import embedding failed (thread_id=%s)", thread_id)
 
         return {
             "ok": True,
@@ -194,4 +204,5 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
             },
             "created_order": [n.id for n in created_order],
             "reply_to_used": reply_to_used,
+            "warning": warning,
         }

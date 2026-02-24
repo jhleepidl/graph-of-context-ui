@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactFlow, {
   Background,
   Controls,
@@ -140,6 +140,32 @@ function mergeNodePositions(prev: RFNode[], next: RFNode[]): RFNode[] {
   })
 }
 
+function getNodeCenter(nodes: RFNode[]): { x: number; y: number } | null {
+  if (!nodes.length) return null
+
+  let minX = Number.POSITIVE_INFINITY
+  let minY = Number.POSITIVE_INFINITY
+  let maxX = Number.NEGATIVE_INFINITY
+  let maxY = Number.NEGATIVE_INFINITY
+
+  for (const n of nodes) {
+    const x = n.positionAbsolute?.x ?? n.position.x
+    const y = n.positionAbsolute?.y ?? n.position.y
+    const width = typeof n.width === 'number' ? n.width : 230
+    const height = typeof n.height === 'number' ? n.height : 100
+
+    if (x < minX) minX = x
+    if (y < minY) minY = y
+    if (x + width > maxX) maxX = x + width
+    if (y + height > maxY) maxY = y + height
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+    return null
+  }
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+}
+
 const EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
 const nodeTypes = { contextNode: GraphNode }
 
@@ -162,6 +188,8 @@ export default function GraphPanel({
   const [zoom, setZoom] = useState(1)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [lockedPanX, setLockedPanX] = useState<number | null>(null)
+  const lastZoomRef = useRef<number | null>(null)
+  const skipNextMoveRef = useRef(false)
   const autoDetailByZoom = zoom >= 1.6
   const nodesById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
   const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) : null
@@ -340,11 +368,36 @@ export default function GraphPanel({
     rfInstance.fitView({ padding: 0.2, duration: 0 })
     const v = rfInstance.getViewport()
     setLockedPanX(v.x)
+    lastZoomRef.current = v.zoom
   }, [rfInstance, graphSignature])
 
   const handleMove = useCallback((_evt: any, viewport: { x: number; y: number; zoom: number }) => {
     setZoom(viewport.zoom)
-    if (!rfInstance || lockedPanX == null) return
+
+    if (skipNextMoveRef.current) {
+      skipNextMoveRef.current = false
+      lastZoomRef.current = viewport.zoom
+      return
+    }
+
+    if (!rfInstance) return
+
+    const prevZoom = lastZoomRef.current
+    const zoomChanged = prevZoom == null || Math.abs(viewport.zoom - prevZoom) > 0.0001
+    lastZoomRef.current = viewport.zoom
+
+    if (zoomChanged) {
+      const center = getNodeCenter(rfInstance.getNodes())
+      if (center) {
+        skipNextMoveRef.current = true
+        rfInstance.setCenter(center.x, center.y, { zoom: viewport.zoom, duration: 0 })
+        const v = rfInstance.getViewport()
+        setLockedPanX(v.x)
+        return
+      }
+    }
+
+    if (lockedPanX == null) return
     if (Math.abs(viewport.x - lockedPanX) > 0.5) {
       rfInstance.setViewport({ x: lockedPanX, y: viewport.y, zoom: viewport.zoom }, { duration: 0 })
     }
