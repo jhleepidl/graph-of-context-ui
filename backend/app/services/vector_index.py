@@ -43,6 +43,9 @@ class VectorIndex:
     def rebuild_thread(self, thread_id: str, vectors: List[Tuple[str, List[float]]]) -> Dict[str, int]:
         raise NotImplementedError
 
+    def remove_thread(self, thread_id: str) -> None:
+        raise NotImplementedError
+
 class BruteForceIndex(VectorIndex):
     def __init__(self):
         self.store: Dict[str, Dict[str, np.ndarray]] = {}
@@ -84,6 +87,9 @@ class BruteForceIndex(VectorIndex):
             next_store[node_id] = np.asarray(normed, dtype=np.float32)
         self.store[thread_id] = next_store
         return {"indexed": len(next_store), "skipped": skipped}
+
+    def remove_thread(self, thread_id: str) -> None:
+        self.store.pop(thread_id, None)
 
 class FaissIndex(VectorIndex):
     def __init__(self):
@@ -184,6 +190,15 @@ class FaissIndex(VectorIndex):
         self.idmaps[thread_id] = idmap
         self._persist(thread_id)
         return {"indexed": len(idmap), "skipped": skipped}
+
+    def remove_thread(self, thread_id: str) -> None:
+        self.indices.pop(thread_id, None)
+        self.idmaps.pop(thread_id, None)
+        idx_path, map_path = self._paths(thread_id)
+        if os.path.exists(idx_path):
+            os.remove(idx_path)
+        if os.path.exists(map_path):
+            os.remove(map_path)
 
 def get_index() -> VectorIndex:
     if VECTOR_BACKEND == "bruteforce":

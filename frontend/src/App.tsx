@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import Timeline from './components/Timeline'
 import GraphPanel from './components/GraphPanel'
@@ -20,6 +20,7 @@ export default function App() {
   const [activeIds, setActiveIds] = useState<string[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [detailNodeId, setDetailNodeId] = useState<string | null>(null)
+  const switchSeqRef = useRef(0)
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
@@ -70,43 +71,67 @@ export default function App() {
     if (!tid) {
       const t = await api.createThread('Demo Thread')
       tid = t.id
+      const refreshed = await api.threads()
+      setThreads(refreshed)
     }
-    setThreadId(tid)
     return tid
   }
 
   async function loadCtxSets(tid: string) {
     const sets = await api.ctxSets(tid)
-    setCtxSets(sets)
+    let nextSets = sets
     let cid = sets[0]?.id
     if (!cid) {
       const cs = await api.createCtx(tid, 'default')
+      nextSets = [...sets, cs]
       cid = cs.id
     }
-    setCtxId(cid)
-    return cid
+    return { sets: nextSets, cid }
+  }
+
+  function clearThreadScopedState() {
+    setCtxSets([])
+    setCtxId(null)
+    setNodes([])
+    setEdges([])
+    setActiveIds([])
+    setSelectedIds([])
+    setDetailNodeId(null)
+  }
+
+  async function switchThread(nextThreadId: string) {
+    if (!nextThreadId) return
+    const seq = ++switchSeqRef.current
+
+    setThreadId(nextThreadId)
+    clearThreadScopedState()
+
+    try {
+      const { sets, cid } = await loadCtxSets(nextThreadId)
+      if (switchSeqRef.current !== seq) return
+
+      setCtxSets(sets)
+      setCtxId(cid)
+
+      const g = await api.graph(nextThreadId)
+      if (switchSeqRef.current !== seq) return
+      setNodes(g.nodes)
+      setEdges(g.edges)
+
+      const ctx = await api.ctx(cid)
+      if (switchSeqRef.current !== seq) return
+      setActiveIds(ctx.active_node_ids || [])
+    } catch (e) {
+      console.error('failed to switch thread', e)
+    }
   }
 
   useEffect(() => {
     (async () => {
       const tid = await loadThreads()
-      const cid = await loadCtxSets(tid)
-      await reloadAll(tid, cid)
+      await switchThread(tid)
     })()
   }, [])
-
-  useEffect(() => {
-    if (!threadId) return
-    (async () => {
-      const cid = await loadCtxSets(threadId)
-      await reloadAll(threadId, cid)
-    })()
-  }, [threadId])
-
-  useEffect(() => {
-    if (!threadId || !ctxId) return
-    reloadAll(threadId, ctxId)
-  }, [ctxId])
 
   async function toggleActive(nodeId: string, nextActive: boolean) {
     if (!ctxId) return
@@ -182,6 +207,33 @@ export default function App() {
     }
   }
 
+  async function handleDeleteCurrentThread() {
+    if (!threadId) return
+    const cur = threads.find((t) => t.id === threadId)
+    const label = cur ? `${cur.title} (${cur.id.slice(0, 6)})` : threadId.slice(0, 6)
+    const ok = window.confirm(`현재 thread를 삭제할까요?\n${label}`)
+    if (!ok) return
+
+    try {
+      await api.deleteThread(threadId)
+      const ts = await api.threads()
+      setThreads(ts)
+
+      if (ts.length === 0) {
+        const created = await api.createThread('New Thread')
+        const refreshed = await api.threads()
+        setThreads(refreshed)
+        await switchThread(created.id)
+        return
+      }
+
+      await switchThread(ts[0].id)
+    } catch (e) {
+      console.error('failed to delete thread', e)
+      alert('Thread 삭제에 실패했습니다.')
+    }
+  }
+
   return (
     <div className="wrap">
       <div className="col">
@@ -190,10 +242,13 @@ export default function App() {
             const t = await api.createThread('New Thread')
             const ts = await api.threads()
             setThreads(ts)
-            setThreadId(t.id)
+            await switchThread(t.id)
           }}>New Thread</button>
+          <button className="danger" onClick={handleDeleteCurrentThread} disabled={!threadId}>Delete Thread</button>
 
-          <select value={threadId || ''} onChange={(e) => setThreadId(e.target.value)} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
+          <select value={threadId || ''} onChange={async (e) => {
+            await switchThread(e.target.value)
+          }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
             {threads.map(t => (
               <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0,6)})</option>
             ))}
@@ -201,7 +256,13 @@ export default function App() {
         </div>
 
         <div className="row">
-          <select value={ctxId || ''} onChange={(e) => setCtxId(e.target.value)} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
+          <select value={ctxId || ''} onChange={async (e) => {
+            const nextCtxId = e.target.value
+            setCtxId(nextCtxId)
+            if (threadId && nextCtxId) {
+              await reloadAll(threadId, nextCtxId)
+            }
+          }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
             {ctxSets.map(c => (
               <option key={c.id} value={c.id}>{c.name} ({c.id.slice(0,6)})</option>
             ))}
@@ -210,8 +271,11 @@ export default function App() {
             if (!threadId) return
             const name = prompt('ContextSet name?', 'alt')
             if (!name) return
-            await api.createCtx(threadId, name)
-            await loadCtxSets(threadId)
+            const created = await api.createCtx(threadId, name)
+            const sets = await api.ctxSets(threadId)
+            setCtxSets(sets)
+            setCtxId(created.id)
+            await reloadAll(threadId, created.id)
           }}>New ContextSet</button>
         </div>
 

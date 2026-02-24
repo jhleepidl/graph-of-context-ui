@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import Thread, ContextSet, Node, Edge, NodeEmbedding
 from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
-from app.services.embedding import rebuild_thread_index
+from app.services.embedding import rebuild_thread_index, remove_thread_index
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 logger = logging.getLogger(__name__)
@@ -36,6 +36,8 @@ ALLOWED_EDGE_TYPES = {
     "HAS_PART",
     "NEXT_PART",
     "SPLIT_FROM",
+    "ATTACHED_TO",
+    "REFERENCES",
 }
 
 @router.get("")
@@ -56,6 +58,47 @@ def create_thread(body: ThreadCreate):
         s.add(cs)
         s.commit()
     return t.model_dump()
+
+
+@router.delete("/{thread_id}")
+def delete_thread(thread_id: str):
+    with Session(engine) as s:
+        t = s.get(Thread, thread_id)
+        if not t:
+            raise HTTPException(404, "thread not found")
+
+        edges = s.exec(select(Edge).where(Edge.thread_id == thread_id)).all()
+        nodes = s.exec(select(Node).where(Node.thread_id == thread_id)).all()
+        ctx_sets = s.exec(select(ContextSet).where(ContextSet.thread_id == thread_id)).all()
+        embeddings = s.exec(select(NodeEmbedding).where(NodeEmbedding.thread_id == thread_id)).all()
+
+        for e in edges:
+            s.delete(e)
+        for ne in embeddings:
+            s.delete(ne)
+        for n in nodes:
+            s.delete(n)
+        for cs in ctx_sets:
+            s.delete(cs)
+        s.delete(t)
+        s.commit()
+
+    warning = None
+    try:
+        remove_thread_index(thread_id)
+    except Exception as e:
+        warning = f"thread index cleanup failed: {e}"
+        logger.exception("thread index cleanup failed (thread_id=%s)", thread_id)
+
+    return {
+        "ok": True,
+        "deleted_thread_id": thread_id,
+        "deleted_node_count": len(nodes),
+        "deleted_edge_count": len(edges),
+        "deleted_context_set_count": len(ctx_sets),
+        "deleted_embedding_count": len(embeddings),
+        "warning": warning,
+    }
 
 @router.get("/{thread_id}/graph")
 def get_graph(thread_id: str):

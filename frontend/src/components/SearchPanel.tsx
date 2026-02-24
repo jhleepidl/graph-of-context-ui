@@ -1,5 +1,15 @@
 import React, { useState } from 'react'
 
+function pillClassForType(type?: string): string {
+  if (type === 'Resource') return 'pill--resource'
+  if (type === 'Fold') return 'pill--fold'
+  if (type === 'Decision') return 'pill--decision'
+  if (type === 'Assumption') return 'pill--assumption'
+  if (type === 'Plan') return 'pill--plan'
+  if (type === 'ContextCandidate') return 'pill--candidate'
+  return 'pill--default'
+}
+
 type Item = { node_id: string, score: number, node_type: string, snippet: string }
 
 type Props = {
@@ -31,7 +41,7 @@ export default function SearchPanel({ onSearch, onActivate }: Props) {
       {items.map(it => (
         <div key={it.node_id} className="card">
           <div className="muted">score: {it.score.toFixed(3)}</div>
-          <div><span className="pill">{it.node_type}</span> {it.snippet}</div>
+          <div><span className={`pill pillType ${pillClassForType(it.node_type)}`}>{it.node_type}</span> {it.snippet}</div>
           <div className="row" style={{ marginTop: 6 }}>
             <button onClick={() => onActivate(it.node_id)}>Add to Active</button>
           </div>

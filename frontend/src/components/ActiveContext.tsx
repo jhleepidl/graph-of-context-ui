@@ -1,5 +1,15 @@
 import React from 'react'
 
+function pillClassForType(type?: string): string {
+  if (type === 'Resource') return 'pill--resource'
+  if (type === 'Fold') return 'pill--fold'
+  if (type === 'Decision') return 'pill--decision'
+  if (type === 'Assumption') return 'pill--assumption'
+  if (type === 'Plan') return 'pill--plan'
+  if (type === 'ContextCandidate') return 'pill--candidate'
+  return 'pill--default'
+}
+
 type Props = {
   activeIds: string[]
   nodesById: Map<string, any>
@@ -142,7 +152,7 @@ export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold
             >
               <div className="muted">{n.created_at}</div>
               <div>
-                <span className="pill">{n.type}</span>
+                <span className={`pill pillType ${pillClassForType(n.type)}`}>{n.type}</span>
                 {partCountByParent[id] > 0 && <span className="pill">parts: {partCountByParent[id]}</span>}
                 {(n.text || '').slice(0, 220)}
               </div>

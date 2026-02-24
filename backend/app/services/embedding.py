@@ -260,6 +260,10 @@ def rebuild_thread_index(session: Session, thread_id: str) -> Dict[str, int]:
     }
 
 
+def remove_thread_index(thread_id: str) -> None:
+    _index.remove_thread(thread_id)
+
+
 def search_nodes(
     session: Session,
     thread_id: str,

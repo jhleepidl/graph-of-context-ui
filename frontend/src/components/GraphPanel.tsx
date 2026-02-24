@@ -35,11 +35,24 @@ type GraphNodeData = {
   text: string
   createdAt?: string
   active: boolean
+  toneClass?: string
 }
 
 function previewText(text: string, max = 80): string {
   const compact = (text || '').replace(/\s+/g, ' ').trim()
   return compact.length > max ? `${compact.slice(0, max)}...` : compact
+}
+
+function nodeToneClass(typeLabel: string, role?: string): string {
+  if (typeLabel === 'Resource') return 'tone-resource'
+  if (typeLabel === 'Fold') return 'tone-fold'
+  if (typeLabel === 'Decision') return 'tone-decision'
+  if (typeLabel === 'Assumption') return 'tone-assumption'
+  if (typeLabel === 'Plan') return 'tone-plan'
+  if (typeLabel === 'ContextCandidate') return 'tone-candidate'
+  if (typeLabel === 'Message' && role === 'user') return 'tone-user'
+  if (typeLabel === 'Message' && role === 'assistant') return 'tone-assistant'
+  return 'tone-default'
 }
 
 function GraphNode({ data }: NodeProps<GraphNodeData>) {
@@ -56,7 +69,7 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
 
   return (
     <div
-      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''}`}
+      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'}`}
       draggable
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
@@ -64,8 +77,8 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
     >
       <Handle type="target" position={Position.Top} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
       <div className="graphNodeTitle">
-        <span className="pill">{data.typeLabel}{data.role ? `/${data.role}` : ''}</span>
-        {data.active && <span className="pill">ACTIVE</span>}
+        <span className={`pill pillType ${(data.toneClass || 'tone-default').replace('tone-', 'pill--')}`}>{data.typeLabel}{data.role ? `/${data.role}` : ''}</span>
+        {data.active && <span className="pill pillActive">ACTIVE</span>}
       </div>
       <div className="graphNodeSnippet">{previewText(data.text)}</div>
       <div className="graphNodeMeta">{data.createdAt || ''}</div>
@@ -86,7 +99,9 @@ function edgePriority(t: string): number {
   if (t === 'HAS_PART') return 5
   if (t === 'NEXT_PART') return 6
   if (t === 'SPLIT_FROM') return 7
-  return 8
+  if (t === 'ATTACHED_TO') return 8
+  if (t === 'REFERENCES') return 9
+  return 10
 }
 
 function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
@@ -98,6 +113,8 @@ function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; str
   if (edgeType === 'HAS_PART') return { stroke: '#7c3aed', strokeWidth: 1.6 }
   if (edgeType === 'NEXT_PART') return { stroke: '#a855f7', strokeWidth: 1.4, strokeDasharray: '4 3' }
   if (edgeType === 'SPLIT_FROM') return { stroke: '#ec4899', strokeWidth: 1.3, strokeDasharray: '3 4' }
+  if (edgeType === 'ATTACHED_TO') return { stroke: '#0891b2', strokeWidth: 1.6, strokeDasharray: '6 4' }
+  if (edgeType === 'REFERENCES') return { stroke: '#f97316', strokeWidth: 1.5, strokeDasharray: '5 4' }
   return { stroke: '#9ca3af', strokeWidth: 1.4 }
 }
 
@@ -166,7 +183,7 @@ function getNodeCenter(nodes: RFNode[]): { x: number; y: number } | null {
   return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
 }
 
-const EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
+const EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
 const nodeTypes = { contextNode: GraphNode }
 
 export default function GraphPanel({
@@ -185,6 +202,7 @@ export default function GraphPanel({
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const [newEdgeType, setNewEdgeType] = useState('NEXT')
   const [showFoldMembers, setShowFoldMembers] = useState(false)
+  const [nodeTypeFilter, setNodeTypeFilter] = useState<'all' | 'resources' | 'non_resources'>('all')
   const [zoom, setZoom] = useState(1)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [lockedPanX, setLockedPanX] = useState<number | null>(null)
@@ -195,8 +213,14 @@ export default function GraphPanel({
   const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) : null
 
   const visibleNodeIds = useMemo(() => {
+    const passesTypeFilter = (n: any) => {
+      if (nodeTypeFilter === 'resources') return n.type === 'Resource'
+      if (nodeTypeFilter === 'non_resources') return n.type !== 'Resource'
+      return true
+    }
+
     if (showFoldMembers || autoDetailByZoom) {
-      return new Set(nodes.map((n) => n.id))
+      return new Set(nodes.filter(passesTypeFilter).map((n) => n.id))
     }
     const foldIds = new Set(nodes.filter((n) => n.type === 'Fold').map((n) => n.id))
     const hidden = new Set<string>()
@@ -207,10 +231,10 @@ export default function GraphPanel({
     }
     const out = new Set<string>()
     for (const n of nodes) {
-      if (!hidden.has(n.id)) out.add(n.id)
+      if (!hidden.has(n.id) && passesTypeFilter(n)) out.add(n.id)
     }
     return out
-  }, [nodes, edges, showFoldMembers, autoDetailByZoom])
+  }, [nodes, edges, showFoldMembers, autoDetailByZoom, nodeTypeFilter])
 
   const desiredNodes = useMemo(() => {
     const ordered = [...nodes]
@@ -238,6 +262,7 @@ export default function GraphPanel({
           text: n.text || '',
           createdAt: n.created_at,
           active,
+          toneClass: nodeToneClass(n.type, roleFromNode(n)),
         },
         style: {
           width: 230,
@@ -451,6 +476,12 @@ export default function GraphPanel({
           {EDGE_TYPE_OPTIONS.map((t) => (
             <option key={t} value={t}>{t}</option>
           ))}
+        </select>
+        <span className="muted">노드 필터</span>
+        <select value={nodeTypeFilter} onChange={(e) => setNodeTypeFilter(e.target.value as any)}>
+          <option value="all">all</option>
+          <option value="resources">resources only</option>
+          <option value="non_resources">exclude resources</option>
         </select>
         <button onClick={() => setShowFoldMembers((v) => !v)}>
           {showFoldMembers ? 'Fold 멤버 숨기기' : 'Fold 상세 보기'}

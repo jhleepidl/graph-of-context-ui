@@ -10,6 +10,17 @@ class MessageCreate(BaseModel):
     text: str
     reply_to: Optional[str] = None
 
+class ResourceNodeCreate(BaseModel):
+    name: str
+    summary: Optional[str] = None
+    resource_kind: str = "file"  # file | link | image | table | doc | code | other
+    mime_type: Optional[str] = None
+    uri: Optional[str] = None
+    source: Literal["chatgpt_upload", "manual", "link", "unknown"] = "chatgpt_upload"
+    attach_to: Optional[str] = None
+    context_set_id: Optional[str] = None
+    auto_activate: bool = True
+
 class ContextSetCreate(BaseModel):
     thread_id: str
     name: str = "default"

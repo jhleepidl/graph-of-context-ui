@@ -22,6 +22,8 @@ export const api = {
   threads: () => j<any[]>(fetch(apiUrl('/api/threads'))),
   createThread: (title?: string) =>
     j<any>(fetch(apiUrl('/api/threads'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })),
+  deleteThread: (threadId: string) =>
+    j<any>(fetch(apiUrl(`/api/threads/${threadId}`), { method: 'DELETE' })),
 
   graph: (threadId: string) => j<any>(fetch(apiUrl(`/api/threads/${threadId}/graph`))),
   saveNodeLayout: (threadId: string, positions: Array<{ id: string; x: number; y: number }>) =>
@@ -47,6 +49,27 @@ export const api = {
 
   addMessage: (threadId: string, role: 'user'|'assistant', text: string, reply_to?: string) =>
     j<any>(fetch(apiUrl(`/api/threads/${threadId}/messages`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role, text, reply_to })})),
+
+  createResource: (
+    threadId: string,
+    body: {
+      name: string
+      summary?: string | null
+      resource_kind?: string
+      mime_type?: string | null
+      uri?: string | null
+      source?: 'chatgpt_upload' | 'manual' | 'link' | 'unknown'
+      attach_to?: string | null
+      context_set_id?: string | null
+      auto_activate?: boolean
+    },
+  ) => j<any>(
+    fetch(apiUrl(`/api/threads/${threadId}/resources`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
 
   getNode: (nodeId: string) =>
     j<any>(fetch(apiUrl(`/api/nodes/${nodeId}`))),

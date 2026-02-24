@@ -67,6 +67,23 @@ function formatScore(score: number): string {
   return score.toFixed(4)
 }
 
+function formatResourceLine(n: ContextNode): string {
+  const payload = parsePayload(n.payload_json)
+  const name = (payload.name || '').toString().trim() || `resource-${shortId(n.id)}`
+  const kind = (payload.resource_kind || 'file').toString()
+  const source = (payload.source || 'unknown').toString()
+  const uri = (payload.uri || '').toString().trim()
+  const summary = (payload.summary || n.text || '').toString().trim()
+
+  const lines = [`- ${name} (kind=${kind}, source=${source}, id=${shortId(n.id)})`]
+  if (uri) lines.push(`  - uri: ${uri}`)
+  if (summary) {
+    const compact = summary.replace(/\s+/g, ' ').trim()
+    lines.push(`  - summary: ${compact.slice(0, 320)}${compact.length > 320 ? '...' : ''}`)
+  }
+  return lines.join('\n')
+}
+
 export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: Props) {
   const [userRequest, setUserRequest] = useState('')
   const [status, setStatus] = useState('')
@@ -89,6 +106,12 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
   const [tokenMethod, setTokenMethod] = useState<'tiktoken' | 'heuristic' | ''>('')
   const [tokenStatus, setTokenStatus] = useState('')
 
+  const [resourceName, setResourceName] = useState('')
+  const [resourceKind, setResourceKind] = useState<'file' | 'link' | 'image' | 'table' | 'doc' | 'code' | 'other'>('file')
+  const [resourceUri, setResourceUri] = useState('')
+  const [resourceSummary, setResourceSummary] = useState('')
+  const [resourceStatus, setResourceStatus] = useState('')
+
   const orderedActiveNodes = useMemo(() => {
     const seen = new Set<string>()
     const orderedUnique = activeNodes.filter((node) => {
@@ -110,17 +133,25 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
     return orderedUnique.filter((node) => !excludedParents.has(node.id))
   }, [activeNodes])
 
+  const resourceNodes = useMemo(() => orderedActiveNodes.filter((n) => (n.type || '') === 'Resource'), [orderedActiveNodes])
+  const activeContextNodes = useMemo(() => orderedActiveNodes.filter((n) => (n.type || '') !== 'Resource'), [orderedActiveNodes])
+
+  const resourcesSection = useMemo(() => {
+    if (resourceNodes.length === 0) return '(none)'
+    return resourceNodes.map(formatResourceLine).join('\n')
+  }, [resourceNodes])
+
   const contextSection = useMemo(() => {
-    if (orderedActiveNodes.length === 0) {
+    if (activeContextNodes.length === 0) {
       return '(active context is empty)'
     }
-    return orderedActiveNodes
+    return activeContextNodes
       .map((n) => {
         const body = (n.text || '').trim() || '(empty)'
         return `[NODE ${shortId(n.id)} type=${n.type || 'Unknown'}]\n${body}`
       })
       .join('\n\n')
-  }, [orderedActiveNodes])
+  }, [activeContextNodes])
 
   const builtPrompt = useMemo(() => {
     const req = userRequest.trim() || '(write request here)'
@@ -129,13 +160,16 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
       '',
       TAGGED_FORMAT,
       '',
+      '[RESOURCES]',
+      resourcesSection,
+      '',
       '[ACTIVE CONTEXT]',
       contextSection,
       '',
       '[USER REQUEST]',
       req,
     ].join('\n')
-  }, [contextSection, userRequest])
+  }, [contextSection, resourcesSection, userRequest])
 
   const bootstrapPrompt = useMemo(() => {
     return [
@@ -146,10 +180,13 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
       '',
       TAGGED_FORMAT,
       '',
+      '[RESOURCES]',
+      resourcesSection,
+      '',
       '[ACTIVE CONTEXT]',
       contextSection,
     ].join('\n')
-  }, [contextSection])
+  }, [contextSection, resourcesSection])
 
   const usageRatio = useMemo(() => {
     if (fullPromptTokens == null) return 0
@@ -343,6 +380,50 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
     }
   }
 
+  async function handleCreateResourceNode() {
+    const name = resourceName.trim()
+    const summary = resourceSummary.trim()
+    if (!name) {
+      setResourceStatus('파일명/리소스명을 입력하세요.')
+      return
+    }
+    if (!threadId) {
+      setResourceStatus('thread가 선택되지 않았습니다.')
+      return
+    }
+    try {
+      const out = await api.createResource(threadId, {
+        name,
+        summary: summary || null,
+        resource_kind: resourceKind,
+        uri: resourceUri.trim() || null,
+        source: resourceKind === 'link' ? 'link' : 'chatgpt_upload',
+        attach_to: lastUserRequestNodeId,
+        context_set_id: ctxId,
+        auto_activate: true,
+      })
+      await onAfterMutation()
+      const nid = out?.node?.id ? shortId(out.node.id) : '-'
+      setResourceStatus(`Resource 노드 추가 완료 (${nid})${lastUserRequestNodeId ? ' · 최근 USER REQUEST에 연결' : ''}`)
+      setResourceName('')
+      setResourceUri('')
+      setResourceSummary('')
+    } catch (e: any) {
+      setResourceStatus(`실패: ${e?.message || String(e)}`)
+    }
+  }
+
+  function insertResourceTemplate(kind: typeof resourceKind) {
+    setResourceKind(kind)
+    if (!resourceSummary.trim()) {
+      setResourceSummary(
+        kind === 'file'
+          ? '이 리소스가 답변에 어떤 영향을 줬는지(핵심 섹션/제약/숫자/주의사항)를 3~5줄로 적으세요.'
+          : '링크/리소스의 핵심 내용과 이 대화에서 필요한 포인트를 요약하세요.'
+      )
+    }
+  }
+
   async function handleSuggestContext() {
     const q = userRequest.trim()
     if (!q) {
@@ -411,7 +492,7 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
   return (
     <div>
       <h3>Copy to ChatGPT</h3>
-      <div className="muted">템플릿은 영어지만 답변은 한국어로 하도록 프롬프트에 포함됩니다.</div>
+      <div className="muted">템플릿은 영어지만 답변은 한국어로 하도록 프롬프트에 포함됩니다. Active Resource는 [RESOURCES] 섹션으로 자동 포함됩니다. (현재 {resourceNodes.length}개)</div>
       <textarea
         value={userRequest}
         onChange={(e) => setUserRequest(e.target.value)}
@@ -468,7 +549,7 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
                       checked={checked}
                       onChange={() => toggleSuggestionSelection(item.node_id)}
                     />
-                    <span className="pill">{item.node_type}</span>
+                    <span className={`pill pillType ${item.node_type === "Resource" ? "pill--resource" : "pill--default"}`}>{item.node_type}</span>
                   </label>
                   <button onClick={() => handleAddSuggested(item.node_id)}>Add</button>
                 </div>
@@ -508,6 +589,45 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
       </div>
       {usageRatio > 0.8 && <div className="muted" style={{ color: '#b91c1c' }}>경고: 컨텍스트 윈도우의 80%를 넘었습니다.</div>}
       {tokenStatus && <div className="muted">{tokenStatus}</div>}
+
+      <h3>Resource Notes (Attachments/Links)</h3>
+      <div className="muted">ChatGPT 웹 첨부파일은 자동 수집이 어렵기 때문에, 파일명/요약만 Resource 노드로 기록해 두는 방식입니다. 필요하면 최근 USER REQUEST와 ATTACHED_TO edge로 연결됩니다.</div>
+      <div className="row">
+        <input
+          value={resourceName}
+          onChange={(e) => setResourceName(e.target.value)}
+          placeholder="예: requirements_v3.pdf"
+          style={{ flex: 1, padding: 8, borderRadius: 10, border: '1px solid #e5e7eb' }}
+        />
+        <select value={resourceKind} onChange={(e) => setResourceKind(e.target.value as any)} style={{ padding: 8, borderRadius: 10, border: '1px solid #e5e7eb' }}>
+          <option value="file">file</option>
+          <option value="link">link</option>
+          <option value="image">image</option>
+          <option value="table">table</option>
+          <option value="doc">doc</option>
+          <option value="code">code</option>
+          <option value="other">other</option>
+        </select>
+      </div>
+      <div className="row">
+        <input
+          value={resourceUri}
+          onChange={(e) => setResourceUri(e.target.value)}
+          placeholder="링크/경로(선택)"
+          style={{ flex: 1, padding: 8, borderRadius: 10, border: '1px solid #e5e7eb' }}
+        />
+        <button onClick={() => insertResourceTemplate('file')}>첨부파일 템플릿</button>
+        <button onClick={() => insertResourceTemplate('link')}>링크 템플릿</button>
+      </div>
+      <textarea
+        value={resourceSummary}
+        onChange={(e) => setResourceSummary(e.target.value)}
+        placeholder="이 리소스의 핵심 요약 / 답변에 영향 준 포인트 / 재사용시 주의점"
+      />
+      <div className="row">
+        <button onClick={handleCreateResourceNode}>Add Resource Node</button>
+        {resourceStatus && <div className="muted">{resourceStatus}</div>}
+      </div>
 
       <h3>Create Context Node</h3>
       <textarea
