@@ -11,6 +11,7 @@ import ReactFlow, {
   Edge as RFEdge,
   Position,
   ReactFlowInstance,
+  SelectionMode,
   useNodesState,
   useEdgesState,
 } from 'reactflow'
@@ -22,10 +23,14 @@ type Props = {
   activeNodeIds: string[]
   selectedNodeIds?: string[]
   onSelectionChange: (ids: string[]) => void
-  onNodeClick?: (nodeId: string) => void
+  onNodeOpenDetail?: (nodeId: string) => void
   onCreateEdge?: (sourceId: string, targetId: string, edgeType: string) => void | Promise<void>
   onDeleteEdges?: (edgeIds: string[]) => void | Promise<void>
   onDeleteNodes?: (nodeIds: string[]) => void | Promise<void>
+  onFoldSelected?: (nodeIds: string[]) => void | Promise<void>
+  onActivateNodes?: (nodeIds: string[]) => void | Promise<void>
+  onDeactivateNodes?: (nodeIds: string[]) => void | Promise<void>
+  onCommitUnfold?: (foldId: string) => void | Promise<void>
 }
 
 type GraphNodeData = {
@@ -36,6 +41,32 @@ type GraphNodeData = {
   createdAt?: string
   active: boolean
   toneClass?: string
+  expandedFold?: boolean
+  expandedMember?: boolean
+  pendingLinkSource?: boolean
+}
+
+type ViewportState = {
+  x: number
+  y: number
+  zoom: number
+}
+
+type Bounds = {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+  centerX: number
+  centerY: number
+}
+
+const LEGACY_EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'RELATED', 'SUPPORTS', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
+const LINK_EDGE_TYPE_OPTIONS = ['RELATED', 'REPLY_TO', 'SUPPORTS', 'REFERENCES', 'ATTACHED_TO']
+const nodeTypes = { contextNode: GraphNode }
+
+function shortId(id: string): string {
+  return id.slice(0, 6)
 }
 
 function previewText(text: string, max = 80): string {
@@ -53,78 +84,6 @@ function nodeToneClass(typeLabel: string, role?: string): string {
   if (typeLabel === 'Message' && role === 'user') return 'tone-user'
   if (typeLabel === 'Message' && role === 'assistant') return 'tone-assistant'
   return 'tone-default'
-}
-
-function GraphNode({ data }: NodeProps<GraphNodeData>) {
-  function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
-    e.dataTransfer.setData('application/x-goc-node-id', data.id)
-    e.dataTransfer.setData('text/plain', data.id)
-    e.dataTransfer.effectAllowed = 'copyMove'
-    ;(window as any).__goc_drag_node_id = data.id
-  }
-
-  function handleDragEnd() {
-    ;(window as any).__goc_drag_node_id = ''
-  }
-
-  return (
-    <div
-      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'}`}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      title="드래그해서 Active Context로 추가"
-    >
-      <Handle type="target" position={Position.Top} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
-      <div className="graphNodeTitle">
-        <span className={`pill pillType ${(data.toneClass || 'tone-default').replace('tone-', 'pill--')}`}>{data.typeLabel}{data.role ? `/${data.role}` : ''}</span>
-        {data.active && <span className="pill pillActive">ACTIVE</span>}
-      </div>
-      <div className="graphNodeSnippet">{previewText(data.text)}</div>
-      <div className="graphNodeMeta">{data.createdAt || ''}</div>
-      <div className="graphNodeDragToActive">
-        Active로 드래그
-      </div>
-      <Handle type="source" position={Position.Bottom} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
-    </div>
-  )
-}
-
-function edgePriority(t: string): number {
-  if (t === 'NEXT') return 0
-  if (t === 'REPLY_TO') return 1
-  if (t === 'IN_RUN') return 2
-  if (t === 'USED_IN_RUN') return 3
-  if (t === 'FOLDS') return 4
-  if (t === 'HAS_PART') return 5
-  if (t === 'NEXT_PART') return 6
-  if (t === 'SPLIT_FROM') return 7
-  if (t === 'ATTACHED_TO') return 8
-  if (t === 'REFERENCES') return 9
-  return 10
-}
-
-function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
-  if (edgeType === 'NEXT') return { stroke: '#4b5563', strokeWidth: 2 }
-  if (edgeType === 'REPLY_TO') return { stroke: '#60a5fa', strokeWidth: 1.6, strokeDasharray: '4 4' }
-  if (edgeType === 'IN_RUN') return { stroke: '#0ea5e9', strokeWidth: 1.5, strokeDasharray: '3 4' }
-  if (edgeType === 'USED_IN_RUN') return { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '3 4' }
-  if (edgeType === 'FOLDS') return { stroke: '#10b981', strokeWidth: 1.5 }
-  if (edgeType === 'HAS_PART') return { stroke: '#7c3aed', strokeWidth: 1.6 }
-  if (edgeType === 'NEXT_PART') return { stroke: '#a855f7', strokeWidth: 1.4, strokeDasharray: '4 3' }
-  if (edgeType === 'SPLIT_FROM') return { stroke: '#ec4899', strokeWidth: 1.3, strokeDasharray: '3 4' }
-  if (edgeType === 'ATTACHED_TO') return { stroke: '#0891b2', strokeWidth: 1.6, strokeDasharray: '6 4' }
-  if (edgeType === 'REFERENCES') return { stroke: '#f97316', strokeWidth: 1.5, strokeDasharray: '5 4' }
-  return { stroke: '#9ca3af', strokeWidth: 1.4 }
-}
-
-function virtualEdgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity: number } {
-  const base = edgeStyle(edgeType)
-  return {
-    ...base,
-    opacity: 0.72,
-    strokeDasharray: base.strokeDasharray || '2 4',
-  }
 }
 
 function roleFromNode(n: any): string {
@@ -145,6 +104,66 @@ function payloadPretty(s: string | undefined): string {
   }
 }
 
+function parseEdgeIndex(edge: any): number {
+  try {
+    const payload = JSON.parse(edge?.payload_json || '{}')
+    const n = Number(payload?.index)
+    return Number.isFinite(n) ? n : 0
+  } catch {
+    return 0
+  }
+}
+
+function edgePriority(t: string): number {
+  if (t === 'NEXT') return 0
+  if (t === 'REPLY_TO') return 1
+  if (t === 'RELATED') return 2
+  if (t === 'SUPPORTS') return 3
+  if (t === 'REFERENCES') return 4
+  if (t === 'ATTACHED_TO') return 5
+  if (t === 'IN_RUN') return 6
+  if (t === 'USED_IN_RUN') return 7
+  if (t === 'FOLDS') return 8
+  if (t === 'HAS_PART') return 9
+  if (t === 'NEXT_PART') return 10
+  if (t === 'SPLIT_FROM') return 11
+  return 12
+}
+
+function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
+  if (edgeType === 'NEXT') return { stroke: '#4b5563', strokeWidth: 2 }
+  if (edgeType === 'REPLY_TO') return { stroke: '#60a5fa', strokeWidth: 1.6, strokeDasharray: '4 4' }
+  if (edgeType === 'RELATED') return { stroke: '#0ea5e9', strokeWidth: 1.6 }
+  if (edgeType === 'SUPPORTS') return { stroke: '#22c55e', strokeWidth: 1.6 }
+  if (edgeType === 'REFERENCES') return { stroke: '#f97316', strokeWidth: 1.5, strokeDasharray: '5 4' }
+  if (edgeType === 'ATTACHED_TO') return { stroke: '#0891b2', strokeWidth: 1.6, strokeDasharray: '6 4' }
+  if (edgeType === 'IN_RUN') return { stroke: '#0284c7', strokeWidth: 1.5, strokeDasharray: '3 4' }
+  if (edgeType === 'USED_IN_RUN') return { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '3 4' }
+  if (edgeType === 'FOLDS') return { stroke: '#10b981', strokeWidth: 1.5 }
+  if (edgeType === 'HAS_PART') return { stroke: '#7c3aed', strokeWidth: 1.6 }
+  if (edgeType === 'NEXT_PART') return { stroke: '#a855f7', strokeWidth: 1.4, strokeDasharray: '4 3' }
+  if (edgeType === 'SPLIT_FROM') return { stroke: '#ec4899', strokeWidth: 1.3, strokeDasharray: '3 4' }
+  return { stroke: '#9ca3af', strokeWidth: 1.4 }
+}
+
+function virtualEdgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity: number } {
+  const base = edgeStyle(edgeType)
+  return {
+    ...base,
+    opacity: 0.72,
+    strokeDasharray: base.strokeDasharray || '2 4',
+  }
+}
+
+function viewFoldEdgeStyle(): { stroke: string; strokeWidth: number; strokeDasharray: string; opacity: number } {
+  return {
+    stroke: '#059669',
+    strokeWidth: 1.3,
+    strokeDasharray: '4 4',
+    opacity: 0.66,
+  }
+}
+
 function mergeNodePositions(prev: RFNode[], next: RFNode[]): RFNode[] {
   const prevById = new Map(prev.map((n) => [n.id, n]))
   return next.map((n) => {
@@ -158,6 +177,12 @@ function mergeNodePositions(prev: RFNode[], next: RFNode[]): RFNode[] {
 }
 
 function getNodeCenter(nodes: RFNode[]): { x: number; y: number } | null {
+  const bounds = getBounds(nodes)
+  if (!bounds) return null
+  return { x: bounds.centerX, y: bounds.centerY }
+}
+
+function getBounds(nodes: RFNode[]): Bounds | null {
   if (!nodes.length) return null
 
   let minX = Number.POSITIVE_INFINITY
@@ -180,11 +205,59 @@ function getNodeCenter(nodes: RFNode[]): { x: number; y: number } | null {
   if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
     return null
   }
-  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }
+
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2,
+  }
 }
 
-const EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
-const nodeTypes = { contextNode: GraphNode }
+function getSelectedBounds(nodes: RFNode[], selectedIds: string[]): Bounds | null {
+  if (selectedIds.length === 0) return null
+  const selectedSet = new Set(selectedIds)
+  const selectedNodes = nodes.filter((n) => selectedSet.has(n.id))
+  return getBounds(selectedNodes)
+}
+
+function GraphNode({ data }: NodeProps<GraphNodeData>) {
+  function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
+    e.dataTransfer.setData('application/x-goc-node-id', data.id)
+    e.dataTransfer.setData('text/plain', data.id)
+    e.dataTransfer.effectAllowed = 'copyMove'
+    ;(window as any).__goc_drag_node_id = data.id
+  }
+
+  function handleDragEnd() {
+    ;(window as any).__goc_drag_node_id = ''
+  }
+
+  return (
+    <div
+      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''}`}
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      title="드래그: Active에 추가 · 클릭: 선택 · 더블클릭: 상세/분할 또는 Fold view-unfold"
+    >
+      <Handle type="target" position={Position.Top} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
+      <span className={`graphNodeActiveDot ${data.active ? 'on' : 'off'}`} />
+      {data.pendingLinkSource && <span className="graphNodeLinkSourceBadge">Link source</span>}
+      <div className="graphNodeTitle">
+        <span className={`pill pillType ${(data.toneClass || 'tone-default').replace('tone-', 'pill--')}`}>{data.typeLabel}{data.role ? `/${data.role}` : ''}</span>
+        {data.expandedFold && <span className="pill">view expanded</span>}
+        {data.expandedMember && <span className="pill">member</span>}
+      </div>
+      <div className="graphNodeSnippet">{previewText(data.text)}</div>
+      <div className="graphNodeMeta">{data.createdAt || ''}</div>
+      <div className="graphNodeDragToActive">Active로 드래그</div>
+      <Handle type="source" position={Position.Bottom} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
+    </div>
+  )
+}
 
 export default function GraphPanel({
   nodes,
@@ -192,25 +265,139 @@ export default function GraphPanel({
   activeNodeIds,
   selectedNodeIds = [],
   onSelectionChange,
-  onNodeClick,
+  onNodeOpenDetail,
   onCreateEdge,
   onDeleteEdges,
   onDeleteNodes,
+  onFoldSelected,
+  onActivateNodes,
+  onDeactivateNodes,
+  onCommitUnfold,
 }: Props) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([])
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
+
   const [newEdgeType, setNewEdgeType] = useState('NEXT')
   const [showFoldMembers, setShowFoldMembers] = useState(false)
   const [nodeTypeFilter, setNodeTypeFilter] = useState<'all' | 'resources' | 'non_resources'>('all')
   const [zoom, setZoom] = useState(1)
+  const [viewport, setViewport] = useState<ViewportState>({ x: 0, y: 0, zoom: 1 })
+
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const [lockedPanX, setLockedPanX] = useState<number | null>(null)
+
+  const [viewExpandedFoldIds, setViewExpandedFoldIds] = useState<string[]>([])
+  const [viewExpandedMembersByFoldId, setViewExpandedMembersByFoldId] = useState<Record<string, string[]>>({})
+
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
+  const [linkType, setLinkType] = useState('RELATED')
+  const [linkDirection, setLinkDirection] = useState<'ab' | 'ba'>('ab')
+  const [pendingLinkSourceId, setPendingLinkSourceId] = useState<string | null>(null)
+
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState('')
+
+  const wrapRef = useRef<HTMLDivElement | null>(null)
   const lastZoomRef = useRef<number | null>(null)
   const skipNextMoveRef = useRef(false)
+
   const autoDetailByZoom = zoom >= 1.6
+  const activeSet = useMemo(() => new Set(activeNodeIds), [activeNodeIds])
+  const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
+
   const nodesById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
-  const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) : null
+  const selectedNodes = useMemo(() => selectedNodeIds.map((id) => nodesById.get(id)).filter(Boolean), [selectedNodeIds, nodesById])
+  const singleSelectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null
+  const singleSelectedFoldId = singleSelectedNode && singleSelectedNode.type === 'Fold' ? singleSelectedNode.id : null
+
+  const hasInactiveSelected = useMemo(() => selectedNodeIds.some((id) => !activeSet.has(id)), [selectedNodeIds, activeSet])
+  const hasActiveSelected = useMemo(() => selectedNodeIds.some((id) => activeSet.has(id)), [selectedNodeIds, activeSet])
+
+  const foldMembersByFoldId = useMemo(() => {
+    const byFold = new Map<string, string[]>()
+    const foldEdges = [...edges]
+      .filter((e: any) => e.type === 'FOLDS')
+      .sort((a: any, b: any) => {
+        const ia = parseEdgeIndex(a)
+        const ib = parseEdgeIndex(b)
+        if (ia !== ib) return ia - ib
+        const av = a.created_at || ''
+        const bv = b.created_at || ''
+        if (av < bv) return -1
+        if (av > bv) return 1
+        return (a.id || '').localeCompare(b.id || '')
+      })
+
+    for (const e of foldEdges) {
+      const foldId = e.from_id
+      const memberId = e.to_id
+      if (!foldId || !memberId) continue
+      const arr = byFold.get(foldId) || []
+      arr.push(memberId)
+      byFold.set(foldId, arr)
+    }
+
+    return byFold
+  }, [edges])
+
+  const memberToFold = useMemo(() => {
+    const out = new Map<string, string>()
+    for (const [foldId, members] of foldMembersByFoldId.entries()) {
+      for (const memberId of members) {
+        if (!out.has(memberId)) {
+          out.set(memberId, foldId)
+        }
+      }
+    }
+    return out
+  }, [foldMembersByFoldId])
+
+  const expandedFoldSet = useMemo(() => new Set(viewExpandedFoldIds), [viewExpandedFoldIds])
+  const expandedMemberSet = useMemo(() => {
+    const out = new Set<string>()
+    for (const foldId of viewExpandedFoldIds) {
+      const members = viewExpandedMembersByFoldId[foldId] || foldMembersByFoldId.get(foldId) || []
+      for (const memberId of members) out.add(memberId)
+    }
+    return out
+  }, [viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId])
+
+  useEffect(() => {
+    const validFoldIds = new Set(foldMembersByFoldId.keys())
+
+    setViewExpandedFoldIds((prev) => {
+      const next = prev.filter((id) => validFoldIds.has(id))
+      if (next.length === prev.length && next.every((id, i) => prev[i] === id)) {
+        return prev
+      }
+      return next
+    })
+
+    setViewExpandedMembersByFoldId((prev) => {
+      let changed = false
+      const next: Record<string, string[]> = {}
+      for (const foldId of Object.keys(prev)) {
+        if (!validFoldIds.has(foldId)) {
+          changed = true
+          continue
+        }
+        const members = prev[foldId] || []
+        const validMembers = new Set(foldMembersByFoldId.get(foldId) || [])
+        const filtered = members.filter((m) => validMembers.has(m))
+        if (filtered.length !== members.length) changed = true
+        next[foldId] = filtered
+      }
+      return changed ? next : prev
+    })
+  }, [foldMembersByFoldId])
+
+  useEffect(() => {
+    if (selectedNodeIds.length > 0) return
+    setMenuOpen(false)
+    setLinkPopoverOpen(false)
+    setPendingLinkSourceId(null)
+  }, [selectedNodeIds])
 
   const visibleNodeIds = useMemo(() => {
     const passesTypeFilter = (n: any) => {
@@ -222,58 +409,97 @@ export default function GraphPanel({
     if (showFoldMembers || autoDetailByZoom) {
       return new Set(nodes.filter(passesTypeFilter).map((n) => n.id))
     }
-    const foldIds = new Set(nodes.filter((n) => n.type === 'Fold').map((n) => n.id))
-    const hidden = new Set<string>()
-    for (const e of edges) {
-      if (e.type === 'FOLDS' && foldIds.has(e.from_id)) {
-        hidden.add(e.to_id)
-      }
-    }
+
     const out = new Set<string>()
     for (const n of nodes) {
-      if (!hidden.has(n.id) && passesTypeFilter(n)) out.add(n.id)
+      if (!passesTypeFilter(n)) continue
+      const foldId = memberToFold.get(n.id)
+      if (!foldId) {
+        out.add(n.id)
+        continue
+      }
+      if (expandedFoldSet.has(foldId)) {
+        out.add(n.id)
+      }
     }
     return out
-  }, [nodes, edges, showFoldMembers, autoDetailByZoom, nodeTypeFilter])
+  }, [nodes, showFoldMembers, autoDetailByZoom, nodeTypeFilter, memberToFold, expandedFoldSet])
 
   const desiredNodes = useMemo(() => {
     const ordered = [...nodes]
       .filter((n) => visibleNodeIds.has(n.id))
       .sort((a, b) => {
-      const av = a.created_at || ''
-      const bv = b.created_at || ''
-      if (av < bv) return -1
-      if (av > bv) return 1
-      return (a.id || '').localeCompare(b.id || '')
-    })
-    return ordered.map((n: any, i: number) => {
-      const active = activeNodeIds.includes(n.id)
-      const x = 240
-      const y = 80 + i * 130
+        const av = a.created_at || ''
+        const bv = b.created_at || ''
+        if (av < bv) return -1
+        if (av > bv) return 1
+        return (a.id || '').localeCompare(b.id || '')
+      })
+
+    const positionById = new Map<string, { x: number; y: number }>()
+    for (let i = 0; i < ordered.length; i += 1) {
+      positionById.set(ordered[i].id, { x: 250, y: 90 + i * 140 })
+    }
+
+    for (const foldId of viewExpandedFoldIds) {
+      if (!visibleNodeIds.has(foldId)) continue
+      const foldPos = positionById.get(foldId)
+      if (!foldPos) continue
+
+      const members = (viewExpandedMembersByFoldId[foldId] || foldMembersByFoldId.get(foldId) || [])
+        .filter((memberId) => visibleNodeIds.has(memberId))
+
+      const count = members.length
+      if (count === 0) continue
+
+      for (let i = 0; i < count; i += 1) {
+        const memberId = members[i]
+        const t = count === 1 ? 0.5 : i / (count - 1)
+        const angle = (-0.72 + 1.44 * t) * Math.PI * 0.72
+        const radius = 180 + Math.floor(i / 6) * 58
+        positionById.set(memberId, {
+          x: foldPos.x + 300 + Math.cos(angle) * radius * 0.7,
+          y: foldPos.y + Math.sin(angle) * radius,
+        })
+      }
+    }
+
+    return ordered.map((n: any) => {
+      const role = roleFromNode(n)
+      const active = activeSet.has(n.id)
+      const expandedFold = expandedFoldSet.has(n.id)
+      const expandedMember = expandedMemberSet.has(n.id)
+
       return {
         id: n.id,
         type: 'contextNode',
-        position: { x, y },
+        className: `${expandedFold ? 'is-expanded-fold' : ''} ${expandedMember ? 'is-expanded-member' : ''}`.trim(),
+        position: positionById.get(n.id) || { x: 250, y: 90 },
+        selected: selectedSet.has(n.id),
         draggable: false,
         data: {
           id: n.id,
           typeLabel: n.type,
-          role: roleFromNode(n),
+          role,
           text: n.text || '',
           createdAt: n.created_at,
           active,
-          toneClass: nodeToneClass(n.type, roleFromNode(n)),
+          toneClass: nodeToneClass(n.type, role),
+          expandedFold,
+          expandedMember,
+          pendingLinkSource: pendingLinkSourceId === n.id,
         },
         style: {
           width: 230,
-        }
+        },
       }
     })
-  }, [nodes, activeNodeIds, visibleNodeIds])
+  }, [nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId])
 
   const desiredEdges = useMemo(() => {
-    const hideFoldMembers = !(showFoldMembers || autoDetailByZoom)
+    const collapsedMode = !(showFoldMembers || autoDetailByZoom)
     const nodeIds = visibleNodeIds
+
     const sortedEdges = [...edges].sort((a: any, b: any) => {
       const p = edgePriority(a.type) - edgePriority(b.type)
       if (p !== 0) return p
@@ -283,29 +509,6 @@ export default function GraphPanel({
       if (av > bv) return 1
       return (a.id || '').localeCompare(b.id || '')
     })
-
-    if (!hideFoldMembers) {
-      return sortedEdges
-        .filter((e: any) => nodeIds.has(e.from_id) && nodeIds.has(e.to_id))
-        .map((e: any) => ({
-          id: e.id,
-          source: e.from_id,
-          target: e.to_id,
-          type: 'smoothstep',
-          label: e.type,
-          style: edgeStyle(e.type),
-          deletable: true,
-          selectable: true,
-        }))
-    }
-
-    const memberToFold = new Map<string, string>()
-    for (const e of edges) {
-      if (e.type !== 'FOLDS') continue
-      if (!memberToFold.has(e.to_id)) {
-        memberToFold.set(e.to_id, e.from_id)
-      }
-    }
 
     const projectNodeId = (id: string): string | null => {
       if (nodeIds.has(id)) return id
@@ -318,7 +521,53 @@ export default function GraphPanel({
     const virtualMap = new Map<string, { source: string; target: string; type: string; count: number; created_at: string }>()
 
     for (const e of sortedEdges) {
-      if (e.type === 'FOLDS') continue
+      if (e.type === 'FOLDS') {
+        if (collapsedMode) {
+          if (expandedFoldSet.has(e.from_id) && nodeIds.has(e.from_id) && nodeIds.has(e.to_id)) {
+            out.push({
+              id: `view-fold:${e.id}`,
+              source: e.from_id,
+              target: e.to_id,
+              type: 'smoothstep',
+              label: 'FOLDS',
+              style: viewFoldEdgeStyle(),
+              deletable: false,
+              selectable: false,
+            })
+          }
+          continue
+        }
+
+        if (nodeIds.has(e.from_id) && nodeIds.has(e.to_id)) {
+          out.push({
+            id: e.id,
+            source: e.from_id,
+            target: e.to_id,
+            type: 'smoothstep',
+            label: e.type,
+            style: edgeStyle(e.type),
+            deletable: true,
+            selectable: true,
+          })
+        }
+        continue
+      }
+
+      if (!collapsedMode) {
+        if (nodeIds.has(e.from_id) && nodeIds.has(e.to_id)) {
+          out.push({
+            id: e.id,
+            source: e.from_id,
+            target: e.to_id,
+            type: 'smoothstep',
+            label: e.type,
+            style: edgeStyle(e.type),
+            deletable: true,
+            selectable: true,
+          })
+        }
+        continue
+      }
 
       const source = projectNodeId(e.from_id)
       const target = projectNodeId(e.to_id)
@@ -373,7 +622,7 @@ export default function GraphPanel({
     }
 
     return out
-  }, [visibleNodeIds, edges, showFoldMembers, autoDetailByZoom])
+  }, [visibleNodeIds, edges, showFoldMembers, autoDetailByZoom, memberToFold, expandedFoldSet])
 
   useEffect(() => {
     setRfNodes((prev) => mergeNodePositions(prev, desiredNodes as RFNode[]))
@@ -383,66 +632,174 @@ export default function GraphPanel({
     setRfEdges(desiredEdges as RFEdge[])
   }, [desiredEdges, setRfEdges])
 
+  useEffect(() => {
+    setRfNodes((prev) => {
+      let changed = false
+      const next = prev.map((n) => {
+        const shouldSelected = selectedSet.has(n.id)
+        if (n.selected === shouldSelected) return n
+        changed = true
+        return { ...n, selected: shouldSelected }
+      })
+      return changed ? next : prev
+    })
+  }, [selectedSet, setRfNodes])
+
   const graphSignature = useMemo(
-    () => nodes.map((n: any) => n.id).sort().join(','),
-    [nodes]
+    () => `${nodes.map((n: any) => n.id).sort().join(',')}|${edges.map((e: any) => e.id).sort().join(',')}`,
+    [nodes, edges],
   )
 
   useEffect(() => {
     if (!rfInstance || !rfNodes.length) return
     rfInstance.fitView({ padding: 0.2, duration: 0 })
     const v = rfInstance.getViewport()
-    setLockedPanX(v.x)
+    setViewport({ x: v.x, y: v.y, zoom: v.zoom })
+    setZoom(v.zoom)
     lastZoomRef.current = v.zoom
   }, [rfInstance, graphSignature])
 
-  const handleMove = useCallback((_evt: any, viewport: { x: number; y: number; zoom: number }) => {
-    setZoom(viewport.zoom)
+  const selectionBounds = useMemo(() => {
+    if (!rfInstance || selectedNodeIds.length === 0) return null
+    return getSelectedBounds(rfInstance.getNodes(), selectedNodeIds)
+  }, [rfInstance, rfNodes, selectedNodeIds])
+
+  const selectionAnchor = useMemo(() => {
+    if (!selectionBounds) return null
+    return {
+      x: selectionBounds.centerX * viewport.zoom + viewport.x,
+      y: selectionBounds.centerY * viewport.zoom + viewport.y,
+    }
+  }, [selectionBounds, viewport])
+
+  const selectionHull = useMemo(() => {
+    if (!selectionBounds || selectedNodeIds.length < 2) return null
+    const padding = 14
+    const left = selectionBounds.minX * viewport.zoom + viewport.x - padding
+    const top = selectionBounds.minY * viewport.zoom + viewport.y - padding
+    const width = (selectionBounds.maxX - selectionBounds.minX) * viewport.zoom + padding * 2
+    const height = (selectionBounds.maxY - selectionBounds.minY) * viewport.zoom + padding * 2
+    return {
+      left,
+      top,
+      width,
+      height,
+      centerX: left + width / 2,
+      centerY: top + height / 2,
+    }
+  }, [selectionBounds, selectedNodeIds.length, viewport])
+
+  const executeAction = useCallback(async (fn: () => Promise<void> | void) => {
+    setActionError('')
+    try {
+      setActionBusy(true)
+      await fn()
+    } catch (e: any) {
+      setActionError(e?.message || String(e))
+    } finally {
+      setActionBusy(false)
+    }
+  }, [])
+
+  const resolveFoldMembers = useCallback((foldId: string): string[] => {
+    return [...(foldMembersByFoldId.get(foldId) || [])]
+  }, [foldMembersByFoldId])
+
+  const toggleViewUnfold = useCallback((foldId: string) => {
+    const members = resolveFoldMembers(foldId)
+    setViewExpandedMembersByFoldId((prev) => ({
+      ...prev,
+      [foldId]: members,
+    }))
+    setViewExpandedFoldIds((prev) => {
+      if (prev.includes(foldId)) {
+        return prev.filter((id) => id !== foldId)
+      }
+      return [...prev, foldId]
+    })
+  }, [resolveFoldMembers])
+
+  const handleMove = useCallback((_evt: any, nextViewport: { x: number; y: number; zoom: number }) => {
+    setZoom(nextViewport.zoom)
+    setViewport({ x: nextViewport.x, y: nextViewport.y, zoom: nextViewport.zoom })
 
     if (skipNextMoveRef.current) {
       skipNextMoveRef.current = false
-      lastZoomRef.current = viewport.zoom
+      lastZoomRef.current = nextViewport.zoom
       return
     }
 
     if (!rfInstance) return
 
     const prevZoom = lastZoomRef.current
-    const zoomChanged = prevZoom == null || Math.abs(viewport.zoom - prevZoom) > 0.0001
-    lastZoomRef.current = viewport.zoom
+    const zoomChanged = prevZoom == null || Math.abs(nextViewport.zoom - prevZoom) > 0.0001
+    lastZoomRef.current = nextViewport.zoom
 
     if (zoomChanged) {
       const center = getNodeCenter(rfInstance.getNodes())
       if (center) {
         skipNextMoveRef.current = true
-        rfInstance.setCenter(center.x, center.y, { zoom: viewport.zoom, duration: 0 })
+        rfInstance.setCenter(center.x, center.y, { zoom: nextViewport.zoom, duration: 0 })
         const v = rfInstance.getViewport()
-        setLockedPanX(v.x)
-        return
+        setViewport({ x: v.x, y: v.y, zoom: v.zoom })
       }
     }
-
-    if (lockedPanX == null) return
-    if (Math.abs(viewport.x - lockedPanX) > 0.5) {
-      rfInstance.setViewport({ x: lockedPanX, y: viewport.y, zoom: viewport.zoom }, { duration: 0 })
-    }
-  }, [rfInstance, lockedPanX])
+  }, [rfInstance])
 
   const handleSelectionChange = useCallback((sel: { nodes?: { id: string }[] } | null | undefined) => {
     const ids = (sel?.nodes || []).map((n) => n.id)
     onSelectionChange(ids)
+    if (ids.length > 0) {
+      setSelectedNodeId(ids[ids.length - 1])
+    }
   }, [onSelectionChange])
 
-  const handleNodeClick = useCallback((_evt: any, node: any) => {
-    setSelectedNodeId(node?.id || null)
-    if (onNodeClick && node?.id) {
-      onNodeClick(node.id)
+  const handleNodeClick = useCallback((evt: any, node: any) => {
+    if (!node?.id) return
+
+    wrapRef.current?.focus()
+    setSelectedNodeId(node.id)
+
+    if (pendingLinkSourceId && pendingLinkSourceId !== node.id) {
+      onSelectionChange([pendingLinkSourceId, node.id])
+      setPendingLinkSourceId(null)
+      setMenuOpen(false)
+      setLinkPopoverOpen(true)
+      setLinkDirection('ab')
+      return
     }
-  }, [onNodeClick])
+
+    const shiftPressed = Boolean(evt?.shiftKey)
+    if (shiftPressed) {
+      if (selectedSet.has(node.id)) {
+        const next = selectedNodeIds.filter((id) => id !== node.id)
+        onSelectionChange(next)
+      } else {
+        onSelectionChange([...selectedNodeIds, node.id])
+      }
+      return
+    }
+
+    onSelectionChange([node.id])
+  }, [pendingLinkSourceId, onSelectionChange, selectedSet, selectedNodeIds])
+
+  const handleNodeDoubleClick = useCallback((_evt: any, node: any) => {
+    if (!node?.id) return
+    const n = nodesById.get(node.id)
+    if (n?.type === 'Fold') {
+      toggleViewUnfold(node.id)
+      return
+    }
+    if (onNodeOpenDetail) onNodeOpenDetail(node.id)
+  }, [nodesById, onNodeOpenDetail, toggleViewUnfold])
 
   const handlePaneClick = useCallback(() => {
     setSelectedNodeId(null)
-  }, [])
+    setMenuOpen(false)
+    setLinkPopoverOpen(false)
+    setPendingLinkSourceId(null)
+    onSelectionChange([])
+  }, [onSelectionChange])
 
   const handleConnect = useCallback((conn: Connection) => {
     if (!onCreateEdge) return
@@ -455,7 +812,7 @@ export default function GraphPanel({
     if (!onDeleteEdges) return
     const ids = deletedEdges
       .map((e) => e.id)
-      .filter((id): id is string => Boolean(id) && !id.startsWith('virtual:'))
+      .filter((id): id is string => Boolean(id) && !id.startsWith('virtual:') && !id.startsWith('view-fold:'))
     if (ids.length === 0) return
     onDeleteEdges(ids)
   }, [onDeleteEdges])
@@ -468,65 +825,303 @@ export default function GraphPanel({
     onDeleteNodes(selectedNodeIds)
   }, [onDeleteNodes, selectedNodeIds])
 
+  const handleActivateSelected = useCallback(() => {
+    if (!onActivateNodes || selectedNodeIds.length === 0) return
+    void executeAction(async () => {
+      await onActivateNodes(selectedNodeIds)
+      setMenuOpen(false)
+    })
+  }, [onActivateNodes, selectedNodeIds, executeAction])
+
+  const handleDeactivateSelected = useCallback(() => {
+    if (!onDeactivateNodes || selectedNodeIds.length === 0) return
+    void executeAction(async () => {
+      await onDeactivateNodes(selectedNodeIds)
+      setMenuOpen(false)
+    })
+  }, [onDeactivateNodes, selectedNodeIds, executeAction])
+
+  const handleFoldSelected = useCallback(() => {
+    if (!onFoldSelected || selectedNodeIds.length < 2) return
+    void executeAction(async () => {
+      await onFoldSelected(selectedNodeIds)
+      setMenuOpen(false)
+    })
+  }, [onFoldSelected, selectedNodeIds, executeAction])
+
+  const handleOpenDetail = useCallback(() => {
+    if (!onNodeOpenDetail || !singleSelectedNode) return
+    onNodeOpenDetail(singleSelectedNode.id)
+    setMenuOpen(false)
+  }, [onNodeOpenDetail, singleSelectedNode])
+
+  const handleToggleViewUnfoldSelectedFold = useCallback(() => {
+    if (!singleSelectedFoldId) return
+    toggleViewUnfold(singleSelectedFoldId)
+    setMenuOpen(false)
+  }, [singleSelectedFoldId, toggleViewUnfold])
+
+  const handleCommitUnfoldSelectedFold = useCallback(() => {
+    if (!singleSelectedFoldId || !onCommitUnfold) return
+    void executeAction(async () => {
+      await onCommitUnfold(singleSelectedFoldId)
+      setMenuOpen(false)
+    })
+  }, [singleSelectedFoldId, onCommitUnfold, executeAction])
+
+  const handleStartLinkFromSingle = useCallback(() => {
+    if (!singleSelectedNode) return
+    setPendingLinkSourceId(singleSelectedNode.id)
+    setMenuOpen(false)
+  }, [singleSelectedNode])
+
+  const handleOpenLinkPopover = useCallback(() => {
+    if (selectedNodeIds.length !== 2) return
+    setLinkDirection('ab')
+    setLinkPopoverOpen(true)
+    setMenuOpen(false)
+  }, [selectedNodeIds.length])
+
+  const handleSubmitLink = useCallback(() => {
+    if (!onCreateEdge || selectedNodeIds.length !== 2) return
+    const a = selectedNodeIds[0]
+    const b = selectedNodeIds[1]
+    const sourceId = linkDirection === 'ab' ? a : b
+    const targetId = linkDirection === 'ab' ? b : a
+
+    void executeAction(async () => {
+      await onCreateEdge(sourceId, targetId, linkType)
+      setLinkPopoverOpen(false)
+    })
+  }, [onCreateEdge, selectedNodeIds, linkDirection, linkType, executeAction])
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+      return
+    }
+
+    const key = e.key.toLowerCase()
+    if (key === 'escape') {
+      e.preventDefault()
+      setMenuOpen(false)
+      setLinkPopoverOpen(false)
+      setPendingLinkSourceId(null)
+      onSelectionChange([])
+      return
+    }
+
+    if (key === 'enter' && menuOpen && selectedNodeIds.length === 1) {
+      e.preventDefault()
+      handleOpenDetail()
+      return
+    }
+
+    if (key === 'f' && selectedNodeIds.length >= 2) {
+      e.preventDefault()
+      handleFoldSelected()
+      return
+    }
+
+    if (key === 'u' && singleSelectedFoldId) {
+      e.preventDefault()
+      handleToggleViewUnfoldSelectedFold()
+      return
+    }
+
+    if (key === 'a' && selectedNodeIds.length > 0) {
+      e.preventDefault()
+      handleActivateSelected()
+      return
+    }
+
+    if (key === 'd' && selectedNodeIds.length === 1) {
+      e.preventDefault()
+      handleOpenDetail()
+      return
+    }
+
+    if ((key === 'delete' || key === 'backspace') && selectedNodeIds.length > 0 && onDeleteNodes) {
+      e.preventDefault()
+      handleDeleteSelectedNodes()
+    }
+  }, [onSelectionChange, menuOpen, selectedNodeIds, singleSelectedFoldId, onDeleteNodes, handleFoldSelected, handleToggleViewUnfoldSelectedFold, handleActivateSelected, handleOpenDetail, handleDeleteSelectedNodes])
+
+  const selectedPair = selectedNodeIds.length === 2 ? [selectedNodeIds[0], selectedNodeIds[1]] as const : null
+
   return (
-    <div className="graphWrap">
+    <div
+      className="graphWrap"
+      ref={wrapRef}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onMouseDown={() => wrapRef.current?.focus()}
+    >
       <div className="graphTools">
-        <span className="muted">새 Edge Type</span>
-        <select value={newEdgeType} onChange={(e) => setNewEdgeType(e.target.value)}>
-          {EDGE_TYPE_OPTIONS.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-        <span className="muted">노드 필터</span>
+        <button onClick={() => setShowFoldMembers((v) => !v)}>
+          {showFoldMembers ? 'Hide Fold Members' : 'Show Fold Members'}
+        </button>
+
+        <span className="muted">Node Filter</span>
         <select value={nodeTypeFilter} onChange={(e) => setNodeTypeFilter(e.target.value as any)}>
           <option value="all">all</option>
           <option value="resources">resources only</option>
           <option value="non_resources">exclude resources</option>
         </select>
-        <button onClick={() => setShowFoldMembers((v) => !v)}>
-          {showFoldMembers ? 'Fold 멤버 숨기기' : 'Fold 상세 보기'}
-        </button>
-        <button
-          className="danger"
-          onClick={handleDeleteSelectedNodes}
-          disabled={selectedNodeIds.length === 0}
-          title={selectedNodeIds.length === 0 ? '삭제할 노드를 먼저 선택하세요.' : '선택 노드 삭제'}
-        >
-          Delete selected nodes ({selectedNodeIds.length})
-        </button>
-        <span className="muted">Zoom {zoom.toFixed(2)} {autoDetailByZoom ? '(자동 상세)' : ''}</span>
-        <span className="muted">노드 카드 드래그: Active 추가 / 핸들 드래그: edge 추가 / edge 선택 후 Delete: 삭제 / 드래그 선택: Fold 대상 선택</span>
-        <span className="muted">Fold 축약 상태에서는 멤버의 외부 연결이 Fold 노드로 자동 연결되어 표시됩니다.</span>
+
+        <span className="muted">Zoom {zoom.toFixed(2)} {autoDetailByZoom ? '(auto detail)' : ''}</span>
+
+        <details className="graphLegacyControls">
+          <summary>Legacy edge controls</summary>
+          <div className="row" style={{ marginBottom: 0 }}>
+            <span className="muted">Edge Type</span>
+            <select value={newEdgeType} onChange={(e) => setNewEdgeType(e.target.value)}>
+              {LEGACY_EDGE_TYPE_OPTIONS.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
+        </details>
+
+        <span className="muted">Click=select, Shift+click=toggle, double-click=detail/fold-view, Space+drag=pan, Esc=clear</span>
+        {pendingLinkSourceId && <span className="pill">Link source: {shortId(pendingLinkSourceId)} (대상 노드 클릭)</span>}
       </div>
-      {selectedNode && (
+
+      {selectedNodeId && nodesById.get(selectedNodeId) && (
         <div className="graphDetail">
-          <div><b>{selectedNode.type}</b> <span className="muted">({selectedNode.id.slice(0, 6)})</span></div>
-          <div className="muted">{selectedNode.created_at}</div>
-          <pre>{selectedNode.text || '(empty)'}</pre>
-          <pre>{payloadPretty(selectedNode.payload_json)}</pre>
+          <div><b>{nodesById.get(selectedNodeId).type}</b> <span className="muted">({shortId(selectedNodeId)})</span></div>
+          <div className="muted">{nodesById.get(selectedNodeId).created_at}</div>
+          <pre>{nodesById.get(selectedNodeId).text || '(empty)'}</pre>
+          <pre>{payloadPretty(nodesById.get(selectedNodeId).payload_json)}</pre>
         </div>
       )}
+
       <div className="graphCanvas">
-      <ReactFlow
-        nodes={rfNodes}
-        edges={rfEdges}
-        nodesDraggable={false}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onInit={setRfInstance}
-        onMove={handleMove}
-        onSelectionChange={handleSelectionChange}
-        onNodeClick={handleNodeClick}
-        onPaneClick={handlePaneClick}
-        onConnect={handleConnect}
-        onEdgesDelete={handleEdgesDelete}
-        deleteKeyCode={['Backspace', 'Delete']}
-      >
-        <Background />
-        <MiniMap />
-        <Controls />
-      </ReactFlow>
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          nodesDraggable={false}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onInit={setRfInstance}
+          onMove={handleMove}
+          onSelectionChange={handleSelectionChange}
+          onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeDoubleClick}
+          onPaneClick={handlePaneClick}
+          onConnect={handleConnect}
+          onEdgesDelete={handleEdgesDelete}
+          selectionOnDrag
+          selectionMode={SelectionMode.Partial}
+          multiSelectionKeyCode={['Shift']}
+          panOnDrag
+          panActivationKeyCode={['Space']}
+          deleteKeyCode={['Backspace', 'Delete']}
+        >
+          <Background />
+          <MiniMap />
+          <Controls />
+        </ReactFlow>
+
+        {selectionHull && (
+          <>
+            <div
+              className="selectionHull"
+              style={{
+                left: selectionHull.left,
+                top: selectionHull.top,
+                width: selectionHull.width,
+                height: selectionHull.height,
+              }}
+            />
+            <div
+              className="selectionCountBadge"
+              style={{
+                left: selectionHull.centerX,
+                top: selectionHull.centerY,
+              }}
+            >
+              {selectedNodeIds.length} selected
+            </div>
+          </>
+        )}
+
+        {selectionAnchor && selectedNodeIds.length > 0 && (
+          <>
+            <button
+              className="selectionMenuTrigger"
+              style={{ left: selectionAnchor.x + 18, top: selectionAnchor.y - 18 }}
+              onClick={() => {
+                setMenuOpen((v) => !v)
+                setLinkPopoverOpen(false)
+              }}
+              title="Selection actions"
+            >
+              ●
+            </button>
+
+            {menuOpen && (
+              <div className="selectionContextMenu" style={{ left: selectionAnchor.x + 52, top: selectionAnchor.y - 20 }}>
+                {selectedNodeIds.length === 1 && (
+                  <>
+                    <button onClick={handleOpenDetail} disabled={!singleSelectedNode}>Open Detail / Split</button>
+                    {hasInactiveSelected && <button onClick={handleActivateSelected} disabled={actionBusy}>Activate</button>}
+                    {hasActiveSelected && <button onClick={handleDeactivateSelected} disabled={actionBusy}>Deactivate</button>}
+                    {singleSelectedFoldId && (
+                      <button onClick={handleToggleViewUnfoldSelectedFold}>
+                        {expandedFoldSet.has(singleSelectedFoldId) ? 'Fold (view-only) collapse' : 'Unfold (view-only)'}
+                      </button>
+                    )}
+                    {singleSelectedFoldId && (
+                      <button onClick={handleCommitUnfoldSelectedFold} disabled={!onCommitUnfold || actionBusy}>Unfold into Active</button>
+                    )}
+                    <button onClick={handleStartLinkFromSingle}>Start Link</button>
+                    <button onClick={() => onSelectionChange([])}>Clear selection</button>
+                  </>
+                )}
+
+                {selectedNodeIds.length >= 2 && (
+                  <>
+                    <button onClick={handleFoldSelected} disabled={!onFoldSelected || selectedNodeIds.length < 2 || actionBusy}>Fold selected</button>
+                    {hasInactiveSelected && <button onClick={handleActivateSelected} disabled={!onActivateNodes || actionBusy}>Activate selected</button>}
+                    {hasActiveSelected && <button onClick={handleDeactivateSelected} disabled={!onDeactivateNodes || actionBusy}>Deactivate selected</button>}
+                    <button onClick={handleOpenLinkPopover} disabled={selectedNodeIds.length !== 2}>Link...</button>
+                    <button onClick={() => onSelectionChange([])}>Clear selection</button>
+                  </>
+                )}
+
+                {actionError && <div className="menuError">{actionError}</div>}
+              </div>
+            )}
+
+            {linkPopoverOpen && selectedPair && (
+              <div className="linkPopover" style={{ left: selectionAnchor.x + 52, top: selectionAnchor.y + 112 }}>
+                <div className="muted" style={{ marginBottom: 6 }}>Link selected nodes</div>
+                <div className="row" style={{ marginBottom: 6 }}>
+                  <span className="muted">Edge type</span>
+                  <select value={linkType} onChange={(e) => setLinkType(e.target.value)}>
+                    {LINK_EDGE_TYPE_OPTIONS.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="row" style={{ marginBottom: 6 }}>
+                  <span className="muted">Direction</span>
+                  <select value={linkDirection} onChange={(e) => setLinkDirection(e.target.value as 'ab' | 'ba')}>
+                    <option value="ab">{shortId(selectedPair[0])} → {shortId(selectedPair[1])}</option>
+                    <option value="ba">{shortId(selectedPair[1])} → {shortId(selectedPair[0])}</option>
+                  </select>
+                </div>
+                <div className="row" style={{ marginBottom: 0 }}>
+                  <button className="primary" onClick={handleSubmitLink} disabled={!onCreateEdge || actionBusy}>Create Link</button>
+                  <button onClick={() => setLinkPopoverOpen(false)}>Close</button>
+                </div>
+                {actionError && <div className="menuError">{actionError}</div>}
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   )

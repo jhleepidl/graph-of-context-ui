@@ -134,6 +134,18 @@ export const api = {
   run: (ctxId: string, user_message: string) =>
     j<any>(fetch(apiUrl('/api/runs'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ context_set_id: ctxId, user_message })})),
 
+
+  hierarchyPreview: (
+    threadId: string,
+    body: { context_set_id?: string | null; node_ids?: string[] | null; max_leaf_size?: number },
+  ) => j<any>(
+    fetch(apiUrl(`/api/threads/${threadId}/hierarchy_preview`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
+
   search: (threadId: string, q: string, k = 10) =>
     j<any>(fetch(apiUrl(`/api/threads/${threadId}/search?q=${encodeURIComponent(q)}&k=${k}`))),
 

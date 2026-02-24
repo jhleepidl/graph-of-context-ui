@@ -84,7 +84,7 @@ function formatResourceLine(n: ContextNode): string {
   return lines.join('\n')
 }
 
-export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: Props) {
+function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: Props) {
   const [userRequest, setUserRequest] = useState('')
   const [status, setStatus] = useState('')
   const [userRequestStatus, setUserRequestStatus] = useState('')
@@ -653,3 +653,5 @@ export default function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAft
     </div>
   )
 }
+
+export default CopyToChatGPTPanel

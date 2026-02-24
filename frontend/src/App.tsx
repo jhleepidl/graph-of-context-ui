@@ -24,6 +24,7 @@ export default function App() {
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
+  const selectedFoldIds = useMemo(() => selectedIds.filter((id) => nodesById.get(id)?.type === 'Fold'), [selectedIds, nodesById])
   const partCountByParent = useMemo(() => {
     const out: Record<string, number> = {}
     for (const e of edges) {
@@ -151,9 +152,8 @@ export default function App() {
     }
   }
 
-  async function foldSelected() {
+  async function foldNodeIds(ids: string[]) {
     if (!threadId || !ctxId) return
-    const ids = selectedIds
     if (ids.length < 2) {
       alert('그래프에서 2개 이상 노드를 선택하세요.')
       return
@@ -162,13 +162,32 @@ export default function App() {
     // MVP UX: 원본 off, fold on
     await api.deactivate(ctxId, ids)
     await api.activate(ctxId, [res.fold_id])
-    setSelectedIds([])
+    setSelectedIds([res.fold_id])
     await reloadAll()
+  }
+
+  async function activateNodeIds(nodeIds: string[]) {
+    if (!ctxId || nodeIds.length === 0) return
+    await api.activate(ctxId, nodeIds)
+    await reloadAll()
+  }
+
+  async function deactivateNodeIds(nodeIds: string[]) {
+    if (!ctxId || nodeIds.length === 0) return
+    await api.deactivate(ctxId, nodeIds)
+    await reloadAll()
+  }
+
+  async function foldSelected() {
+    await foldNodeIds(selectedIds)
   }
 
   async function unfoldFold(foldId: string) {
     if (!ctxId) return
-    await api.unfold(ctxId, foldId)
+    const out = await api.unfold(ctxId, foldId)
+    if (Array.isArray(out?.members) && out.members.length > 0) {
+      setSelectedIds(out.members)
+    }
     await reloadAll()
   }
 
@@ -205,6 +224,21 @@ export default function App() {
       console.error('failed to delete nodes', e)
       await reloadAll(threadId, ctxId || undefined)
     }
+  }
+
+
+  async function activateSelected() {
+    await activateNodeIds(selectedIds)
+  }
+
+  async function unfoldSelectedFolds() {
+    if (!ctxId) return
+    if (selectedFoldIds.length === 0) return
+    for (const foldId of selectedFoldIds) {
+      await api.unfold(ctxId, foldId)
+    }
+    setSelectedIds([])
+    await reloadAll()
   }
 
   async function handleDeleteCurrentThread() {
@@ -305,19 +339,54 @@ export default function App() {
       </div>
 
       <div className="col">
-        <GraphPanel
-          nodes={nodes}
-          edges={edges}
-          activeNodeIds={activeIds}
-          selectedNodeIds={selectedIds}
-          onSelectionChange={handleSelectionChange}
-          onNodeClick={(id) => setDetailNodeId(id)}
-          onCreateEdge={handleCreateEdge}
-          onDeleteEdges={handleDeleteEdges}
-          onDeleteNodes={handleDeleteNodes}
-        />
+        <div className="card selectionActionBar">
+          <div className="row" style={{ marginBottom: 6 }}>
+            <b>Fallback Actions</b>
+            <span className="pill">selected: {selectedIds.length}</span>
+            {selectedFoldIds.length > 0 && <span className="pill pill--fold">folds: {selectedFoldIds.length}</span>}
+          </div>
+          <div className="row" style={{ marginBottom: 0 }}>
+            <button onClick={foldSelected} disabled={selectedIds.length < 2} title={selectedIds.length < 2 ? '그래프에서 2개 이상 선택하세요.' : '선택 노드를 Fold로 묶기'}>Fold selected</button>
+            <button onClick={() => selectedIds.length === 1 && setDetailNodeId(selectedIds[0])} disabled={selectedIds.length !== 1} title={selectedIds.length === 1 ? '선택 노드 상세/분할' : '노드를 1개 선택하세요.'}>Open detail / split</button>
+            <button onClick={unfoldSelectedFolds} disabled={selectedFoldIds.length === 0 || !ctxId} title={selectedFoldIds.length ? '선택 Fold 노드를 펼쳐 Active에 반영' : 'Fold 노드를 선택하세요.'}>Unfold selected folds</button>
+            <button onClick={activateSelected} disabled={selectedIds.length === 0 || !ctxId}>Add selected to Active</button>
+            <button onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0}>Clear selection</button>
+          </div>
+          <div className="muted" style={{ marginTop: 6 }}>
+            그래프 위 컨텍스트 메뉴가 기본 동선이며, 이 영역은 보조 동작입니다.
+          </div>
+        </div>
+        <div className="graphWorkspace">
+          <GraphPanel
+            nodes={nodes}
+            edges={edges}
+            activeNodeIds={activeIds}
+            selectedNodeIds={selectedIds}
+            onSelectionChange={handleSelectionChange}
+            onNodeOpenDetail={(id) => setDetailNodeId(id)}
+            onCreateEdge={handleCreateEdge}
+            onDeleteEdges={handleDeleteEdges}
+            onDeleteNodes={handleDeleteNodes}
+            onFoldSelected={foldNodeIds}
+            onActivateNodes={activateNodeIds}
+            onDeactivateNodes={deactivateNodeIds}
+            onCommitUnfold={unfoldFold}
+          />
+          {detailNodeId && (
+            <NodeDetailModal
+              nodeId={detailNodeId}
+              threadId={threadId}
+              ctxId={ctxId}
+              mode="drawer"
+              onClose={() => setDetailNodeId(null)}
+              onAfterMutation={async () => {
+                await reloadAll()
+              }}
+            />
+          )}
+        </div>
         <div className="muted" style={{ marginTop: 8 }}>
-          그래프에서 드래그 멀티 선택으로 Fold 대상 지정, 핸들 드래그로 Edge 추가/삭제
+          그래프에서 직접 선택/단축키/컨텍스트 액션으로 Fold·Unfold·Split·Activate·Link를 수행하세요.
         </div>
       </div>
 
@@ -356,17 +425,6 @@ export default function App() {
           return out.response_text || ''
         }} />
       </div>
-      {detailNodeId && (
-        <NodeDetailModal
-          nodeId={detailNodeId}
-          threadId={threadId}
-          ctxId={ctxId}
-          onClose={() => setDetailNodeId(null)}
-          onAfterMutation={async () => {
-            await reloadAll()
-          }}
-        />
-      )}
     </div>
   )
 }

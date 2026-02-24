@@ -12,6 +12,7 @@ from app.routers.search import router as search_router
 from app.routers.imports import router as imports_router
 from app.routers.tokens import router as tokens_router
 from app.routers.nodes import router as nodes_router
+from app.routers.hierarchy import router as hierarchy_router
 
 app = FastAPI(title="Graph-of-Context MVP API")
 
@@ -36,3 +37,5 @@ app.include_router(search_router)
 app.include_router(imports_router)
 app.include_router(tokens_router)
 app.include_router(nodes_router)
+
+app.include_router(hierarchy_router)

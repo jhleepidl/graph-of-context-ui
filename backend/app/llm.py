@@ -23,13 +23,21 @@ def call_openai(instructions: str, user_input: str, model: Optional[str] = None)
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)
     model_name = model or OPENAI_MODEL
-    resp = client.responses.create(
-        model=model_name,
-        instructions=instructions,
-        input=user_input,
-        truncation="disabled",
-        temperature=0.2,
-    )
+    req = {
+        "model": model_name,
+        "instructions": instructions,
+        "input": user_input,
+        "truncation": "disabled",
+        "temperature": 0.2,
+    }
+    try:
+        resp = client.responses.create(**req)
+    except Exception as e:
+        msg = str(e)
+        if "Unsupported parameter: 'temperature'" not in msg:
+            raise
+        req.pop("temperature", None)
+        resp = client.responses.create(**req)
     return resp.output_text
 
 def _hash_embed(text: str, dim: Optional[int] = None) -> List[float]:

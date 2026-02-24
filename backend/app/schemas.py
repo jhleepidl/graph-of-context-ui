@@ -96,3 +96,9 @@ class SplitNodeResponse(BaseModel):
     parent_id: str
     created_ids: List[str]
     strategy_used: str
+
+
+class HierarchyPreviewRequest(BaseModel):
+    context_set_id: Optional[str] = None
+    node_ids: Optional[List[str]] = None
+    max_leaf_size: int = 6

@@ -110,6 +110,7 @@ export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold
   return (
     <div>
       <h3>Active Context</h3>
+      <div className="muted" style={{ marginBottom: 8 }}>카드 클릭으로 팝업이 열리지 않습니다. 버튼으로 상세/분할, 드래그로 순서 변경.</div>
       <div
         className="dropZone addZone"
         onDragOver={(e) => e.preventDefault()}
@@ -145,7 +146,6 @@ export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold
             <div
               className={`card ${draggingId === id ? 'dragging' : ''}`}
               draggable
-              onClick={() => onOpenNode(id)}
               onDragStart={(e) => handleDragStart(e, id)}
               onDragEnd={handleDragEnd}
               title="드래그해서 순서 재배치 가능"
@@ -159,7 +159,7 @@ export default function ActiveContext({ activeIds, nodesById, onRemove, onUnfold
               <div className="row" style={{ marginTop: 6 }}>
                 <button className="danger" onClick={(e) => { e.stopPropagation(); onRemove(id) }}>Remove</button>
                 {n.type === 'Fold' && <button onClick={(e) => { e.stopPropagation(); onUnfold(id) }}>Unfold</button>}
-                <button onClick={(e) => { e.stopPropagation(); onOpenNode(id) }}>Replace with parts</button>
+                <button onClick={(e) => { e.stopPropagation(); onOpenNode(id) }}>Detail / Split</button>
               </div>
             </div>
             <div

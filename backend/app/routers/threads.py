@@ -27,6 +27,8 @@ def jload(s: str, default):
 ALLOWED_EDGE_TYPES = {
     "NEXT",
     "REPLY_TO",
+    "RELATED",
+    "SUPPORTS",
     "INVOKES",
     "RETURNS",
     "USES",

@@ -41,7 +41,6 @@ export default function Timeline({ nodes, activeIds, onToggle, onOpenNode, partC
           key={n.id}
           className="card"
           draggable
-          onClick={() => onOpenNode(n.id)}
           onDragStart={(e) => handleDragStart(e, n.id)}
           onDragEnd={handleDragEnd}
           title="드래그해서 Active Context에 추가 가능"
@@ -61,6 +60,7 @@ export default function Timeline({ nodes, activeIds, onToggle, onOpenNode, partC
                 onChange={(e) => onToggle(n.id, e.target.checked)}
               /> Active
             </label>
+            <button onClick={(e) => { e.stopPropagation(); onOpenNode(n.id) }}>Detail / Split</button>
           </div>
         </div>
       ))}
