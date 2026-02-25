@@ -136,8 +136,19 @@ export default function App() {
 
   async function toggleActive(nodeId: string, nextActive: boolean) {
     if (!ctxId) return
-    if (nextActive) await api.activate(ctxId, [nodeId])
-    else await api.deactivate(ctxId, [nodeId])
+    if (nextActive) {
+      const out = await api.activate(ctxId, [nodeId])
+      if (Array.isArray(out?.active_node_ids)) {
+        setActiveIds(out.active_node_ids)
+        return
+      }
+    } else {
+      const out = await api.deactivate(ctxId, [nodeId])
+      if (Array.isArray(out?.active_node_ids)) {
+        setActiveIds(out.active_node_ids)
+        return
+      }
+    }
     await reloadAll()
   }
 
@@ -168,13 +179,21 @@ export default function App() {
 
   async function activateNodeIds(nodeIds: string[]) {
     if (!ctxId || nodeIds.length === 0) return
-    await api.activate(ctxId, nodeIds)
+    const out = await api.activate(ctxId, nodeIds)
+    if (Array.isArray(out?.active_node_ids)) {
+      setActiveIds(out.active_node_ids)
+      return
+    }
     await reloadAll()
   }
 
   async function deactivateNodeIds(nodeIds: string[]) {
     if (!ctxId || nodeIds.length === 0) return
-    await api.deactivate(ctxId, nodeIds)
+    const out = await api.deactivate(ctxId, nodeIds)
+    if (Array.isArray(out?.active_node_ids)) {
+      setActiveIds(out.active_node_ids)
+      return
+    }
     await reloadAll()
   }
 
@@ -187,6 +206,10 @@ export default function App() {
     const out = await api.unfold(ctxId, foldId)
     if (Array.isArray(out?.members) && out.members.length > 0) {
       setSelectedIds(out.members)
+    }
+    if (Array.isArray(out?.active_node_ids)) {
+      setActiveIds(out.active_node_ids)
+      return
     }
     await reloadAll()
   }
@@ -226,6 +249,44 @@ export default function App() {
     }
   }
 
+
+  const saveGraphLayoutPositions = useCallback(async (positions: Array<{ id: string; x: number; y: number }>) => {
+    if (!threadId) return
+    await api.saveNodeLayout(threadId, positions)
+  }, [threadId])
+
+
+  const replaceActiveContext = useCallback(async (nextNodeIds: string[]) => {
+    if (!ctxId) return
+    const deduped = nextNodeIds.filter((id, idx) => id && nextNodeIds.indexOf(id) === idx)
+    try {
+      const current = activeIds
+      const nextSet = new Set(deduped)
+      const currentSet = new Set(current)
+      const toRemove = current.filter((id) => !nextSet.has(id))
+      const toAdd = deduped.filter((id) => !currentSet.has(id))
+
+      if (toRemove.length > 0) {
+        const out = await api.deactivate(ctxId, toRemove)
+        if (Array.isArray(out?.active_node_ids)) {
+          setActiveIds(out.active_node_ids)
+        }
+      }
+
+      if (toAdd.length > 0) {
+        const out = await api.activate(ctxId, toAdd)
+        if (Array.isArray(out?.active_node_ids)) {
+          setActiveIds(out.active_node_ids)
+        }
+      }
+
+      await api.reorderActive(ctxId, deduped)
+      setActiveIds(deduped)
+    } catch (e) {
+      console.error('failed to replace active context', e)
+      await reloadAll()
+    }
+  }, [ctxId, activeIds])
 
   async function activateSelected() {
     await activateNodeIds(selectedIds)
@@ -371,6 +432,8 @@ export default function App() {
             onActivateNodes={activateNodeIds}
             onDeactivateNodes={deactivateNodeIds}
             onCommitUnfold={unfoldFold}
+            onSaveLayout={saveGraphLayoutPositions}
+            layoutScopeKey={threadId}
           />
           {detailNodeId && (
             <NodeDetailModal
@@ -409,11 +472,14 @@ export default function App() {
         <hr />
         <CopyToChatGPTPanel
           activeNodes={activeNodes}
+          allNodes={nodes}
+          edges={edges}
           threadId={threadId}
           ctxId={ctxId}
           onAfterMutation={async () => {
             await reloadAll()
           }}
+          onReplaceActive={replaceActiveContext}
         />
 
         <hr />

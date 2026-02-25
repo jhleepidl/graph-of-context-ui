@@ -31,6 +31,8 @@ type Props = {
   onActivateNodes?: (nodeIds: string[]) => void | Promise<void>
   onDeactivateNodes?: (nodeIds: string[]) => void | Promise<void>
   onCommitUnfold?: (foldId: string) => void | Promise<void>
+  onSaveLayout?: (positions: Array<{ id: string; x: number; y: number }>) => void | Promise<void>
+  layoutScopeKey?: string | null
 }
 
 type GraphNodeData = {
@@ -44,6 +46,7 @@ type GraphNodeData = {
   expandedFold?: boolean
   expandedMember?: boolean
   pendingLinkSource?: boolean
+  layoutEditable?: boolean
 }
 
 type ViewportState = {
@@ -93,6 +96,19 @@ function roleFromNode(n: any): string {
     return payload?.role || ''
   } catch (_) {
     return ''
+  }
+}
+
+function readNodeUiPosition(n: any): { x: number; y: number } | null {
+  try {
+    const payload = JSON.parse(n?.payload_json || '{}')
+    const pos = payload?._ui_pos
+    const x = Number(pos?.x)
+    const y = Number(pos?.y)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+    return { x, y }
+  } catch (_) {
+    return null
   }
 }
 
@@ -224,24 +240,22 @@ function getSelectedBounds(nodes: RFNode[], selectedIds: string[]): Bounds | nul
 }
 
 function GraphNode({ data }: NodeProps<GraphNodeData>) {
-  function handleDragStart(e: React.DragEvent<HTMLDivElement>) {
+  function handleActiveDragStart(e: React.DragEvent<HTMLButtonElement>) {
+    e.stopPropagation()
     e.dataTransfer.setData('application/x-goc-node-id', data.id)
     e.dataTransfer.setData('text/plain', data.id)
     e.dataTransfer.effectAllowed = 'copyMove'
     ;(window as any).__goc_drag_node_id = data.id
   }
 
-  function handleDragEnd() {
+  function handleActiveDragEnd() {
     ;(window as any).__goc_drag_node_id = ''
   }
 
   return (
     <div
-      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''}`}
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      title="드래그: Active에 추가 · 클릭: 선택 · 더블클릭: 상세/분할 또는 Fold view-unfold"
+      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''} ${data.layoutEditable ? 'isLayoutEditable' : ''}`}
+      title="클릭: 선택 · 더블클릭: 상세/분할 또는 Fold view-unfold · 카드 이동: 노드 드래그 · Active 추가: 아래 버튼 드래그"
     >
       <Handle type="target" position={Position.Top} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
       <span className={`graphNodeActiveDot ${data.active ? 'on' : 'off'}`} />
@@ -253,7 +267,17 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
       </div>
       <div className="graphNodeSnippet">{previewText(data.text)}</div>
       <div className="graphNodeMeta">{data.createdAt || ''}</div>
-      <div className="graphNodeDragToActive">Active로 드래그</div>
+      <button
+        className="graphNodeDragToActive nodrag nopan"
+        draggable
+        onDragStart={handleActiveDragStart}
+        onDragEnd={handleActiveDragEnd}
+        onMouseDown={(e) => e.stopPropagation()}
+        type="button"
+        title="드래그해서 Active Context에 추가"
+      >
+        + Active로 드래그
+      </button>
       <Handle type="source" position={Position.Bottom} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
     </div>
   )
@@ -273,6 +297,8 @@ export default function GraphPanel({
   onActivateNodes,
   onDeactivateNodes,
   onCommitUnfold,
+  onSaveLayout,
+  layoutScopeKey,
 }: Props) {
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState([])
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState([])
@@ -297,10 +323,18 @@ export default function GraphPanel({
 
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState('')
+  const [layoutMode, setLayoutMode] = useState<'manual' | 'auto'>('manual')
+  const [manualPositionsById, setManualPositionsById] = useState<Record<string, { x: number; y: number }>>({})
+  const [layoutSaving, setLayoutSaving] = useState(false)
+  const [layoutSaveError, setLayoutSaveError] = useState('')
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const lastZoomRef = useRef<number | null>(null)
   const skipNextMoveRef = useRef(false)
+  const layoutSaveTimerRef = useRef<number | null>(null)
+  const pendingLayoutPositionsRef = useRef<Array<{ id: string; x: number; y: number }> | null>(null)
+  const lastSavedLayoutHashRef = useRef<string>('')
+  const initialFitDoneRef = useRef(false)
 
   const autoDetailByZoom = zoom >= 1.6
   const activeSet = useMemo(() => new Set(activeNodeIds), [activeNodeIds])
@@ -392,6 +426,107 @@ export default function GraphPanel({
     })
   }, [foldMembersByFoldId])
 
+
+  useEffect(() => {
+    initialFitDoneRef.current = false
+    lastSavedLayoutHashRef.current = ''
+    setLayoutSaveError('')
+    setManualPositionsById({})
+    if (layoutSaveTimerRef.current != null) {
+      window.clearTimeout(layoutSaveTimerRef.current)
+      layoutSaveTimerRef.current = null
+    }
+    pendingLayoutPositionsRef.current = null
+  }, [layoutScopeKey])
+
+  useEffect(() => {
+    setManualPositionsById((prev) => {
+      let changed = false
+      const next = { ...prev }
+      const validIds = new Set(nodes.map((n) => n.id))
+
+      for (const n of nodes) {
+        if (next[n.id]) continue
+        const uiPos = readNodeUiPosition(n)
+        if (!uiPos) continue
+        next[n.id] = uiPos
+        changed = true
+      }
+
+      for (const id of Object.keys(next)) {
+        if (validIds.has(id)) continue
+        delete next[id]
+        changed = true
+      }
+
+      return changed ? next : prev
+    })
+  }, [nodes])
+
+  useEffect(() => {
+    return () => {
+      if (layoutSaveTimerRef.current != null) {
+        window.clearTimeout(layoutSaveTimerRef.current)
+        layoutSaveTimerRef.current = null
+      }
+    }
+  }, [])
+
+  const flushQueuedLayoutSave = useCallback(async () => {
+    if (!onSaveLayout) return
+    const positions = pendingLayoutPositionsRef.current
+    if (!positions || positions.length === 0) return
+
+    const hash = positions
+      .map((p) => `${p.id}:${Math.round(p.x)}:${Math.round(p.y)}`)
+      .sort()
+      .join('|')
+
+    if (hash && hash === lastSavedLayoutHashRef.current) {
+      pendingLayoutPositionsRef.current = null
+      return
+    }
+
+    setLayoutSaving(true)
+    setLayoutSaveError('')
+    try {
+      await onSaveLayout(positions)
+      lastSavedLayoutHashRef.current = hash
+      pendingLayoutPositionsRef.current = null
+    } catch (e: any) {
+      setLayoutSaveError(e?.message || String(e))
+    } finally {
+      setLayoutSaving(false)
+    }
+  }, [onSaveLayout])
+
+  const queueLayoutSave = useCallback((positions: Array<{ id: string; x: number; y: number }>) => {
+    if (!onSaveLayout) return
+    pendingLayoutPositionsRef.current = positions
+    if (layoutSaveTimerRef.current != null) {
+      window.clearTimeout(layoutSaveTimerRef.current)
+    }
+    layoutSaveTimerRef.current = window.setTimeout(() => {
+      layoutSaveTimerRef.current = null
+      void flushQueuedLayoutSave()
+    }, 650)
+  }, [onSaveLayout, flushQueuedLayoutSave])
+
+  const saveCurrentLayoutNow = useCallback(() => {
+    if (!rfInstance || !onSaveLayout) return
+    const positions = rfInstance.getNodes().map((n) => ({
+      id: n.id,
+      x: n.position.x,
+      y: n.position.y,
+    }))
+    pendingLayoutPositionsRef.current = positions
+    if (layoutSaveTimerRef.current != null) {
+      window.clearTimeout(layoutSaveTimerRef.current)
+      layoutSaveTimerRef.current = null
+    }
+    void flushQueuedLayoutSave()
+  }, [rfInstance, onSaveLayout, flushQueuedLayoutSave])
+
   useEffect(() => {
     if (selectedNodeIds.length > 0) return
     setMenuOpen(false)
@@ -436,14 +571,14 @@ export default function GraphPanel({
         return (a.id || '').localeCompare(b.id || '')
       })
 
-    const positionById = new Map<string, { x: number; y: number }>()
+    const autoPositionById = new Map<string, { x: number; y: number }>()
     for (let i = 0; i < ordered.length; i += 1) {
-      positionById.set(ordered[i].id, { x: 250, y: 90 + i * 140 })
+      autoPositionById.set(ordered[i].id, { x: 250, y: 90 + i * 140 })
     }
 
     for (const foldId of viewExpandedFoldIds) {
       if (!visibleNodeIds.has(foldId)) continue
-      const foldPos = positionById.get(foldId)
+      const foldPos = autoPositionById.get(foldId)
       if (!foldPos) continue
 
       const members = (viewExpandedMembersByFoldId[foldId] || foldMembersByFoldId.get(foldId) || [])
@@ -457,7 +592,7 @@ export default function GraphPanel({
         const t = count === 1 ? 0.5 : i / (count - 1)
         const angle = (-0.72 + 1.44 * t) * Math.PI * 0.72
         const radius = 180 + Math.floor(i / 6) * 58
-        positionById.set(memberId, {
+        autoPositionById.set(memberId, {
           x: foldPos.x + 300 + Math.cos(angle) * radius * 0.7,
           y: foldPos.y + Math.sin(angle) * radius,
         })
@@ -474,9 +609,9 @@ export default function GraphPanel({
         id: n.id,
         type: 'contextNode',
         className: `${expandedFold ? 'is-expanded-fold' : ''} ${expandedMember ? 'is-expanded-member' : ''}`.trim(),
-        position: positionById.get(n.id) || { x: 250, y: 90 },
+        position: (layoutMode === 'manual' ? (manualPositionsById[n.id] || readNodeUiPosition(n)) : null) || autoPositionById.get(n.id) || { x: 250, y: 90 },
         selected: selectedSet.has(n.id),
-        draggable: false,
+        draggable: layoutMode === 'manual',
         data: {
           id: n.id,
           typeLabel: n.type,
@@ -488,13 +623,14 @@ export default function GraphPanel({
           expandedFold,
           expandedMember,
           pendingLinkSource: pendingLinkSourceId === n.id,
+          layoutEditable: layoutMode === 'manual',
         },
         style: {
           width: 230,
         },
       }
     })
-  }, [nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId])
+  }, [nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId, layoutMode, manualPositionsById])
 
   const desiredEdges = useMemo(() => {
     const collapsedMode = !(showFoldMembers || autoDetailByZoom)
@@ -650,14 +786,25 @@ export default function GraphPanel({
     [nodes, edges],
   )
 
+  const fitViewNow = useCallback(() => {
+    if (!rfInstance || !rfNodes.length) return
+    rfInstance.fitView({ padding: 0.2, duration: 180 })
+    const v = rfInstance.getViewport()
+    setViewport({ x: v.x, y: v.y, zoom: v.zoom })
+    setZoom(v.zoom)
+    lastZoomRef.current = v.zoom
+  }, [rfInstance, rfNodes.length])
+
   useEffect(() => {
     if (!rfInstance || !rfNodes.length) return
+    if (initialFitDoneRef.current) return
+    initialFitDoneRef.current = true
     rfInstance.fitView({ padding: 0.2, duration: 0 })
     const v = rfInstance.getViewport()
     setViewport({ x: v.x, y: v.y, zoom: v.zoom })
     setZoom(v.zoom)
     lastZoomRef.current = v.zoom
-  }, [rfInstance, graphSignature])
+  }, [rfInstance, graphSignature, rfNodes.length])
 
   const selectionBounds = useMemo(() => {
     if (!rfInstance || selectedNodeIds.length === 0) return null
@@ -745,6 +892,24 @@ export default function GraphPanel({
       }
     }
   }, [rfInstance])
+
+  const handleNodeDragStop = useCallback((_evt: any, node: any) => {
+    if (layoutMode !== 'manual') return
+    if (!node?.id) return
+
+    setManualPositionsById((prev) => ({
+      ...prev,
+      [node.id]: { x: node.position.x, y: node.position.y },
+    }))
+
+    if (!rfInstance || !onSaveLayout) return
+    const positions = rfInstance.getNodes().map((n) => ({
+      id: n.id,
+      x: n.position.x,
+      y: n.position.y,
+    }))
+    queueLayoutSave(positions)
+  }, [layoutMode, rfInstance, onSaveLayout, queueLayoutSave])
 
   const handleSelectionChange = useCallback((sel: { nodes?: { id: string }[] } | null | undefined) => {
     const ids = (sel?.nodes || []).map((n) => n.id)
@@ -962,6 +1127,19 @@ export default function GraphPanel({
           {showFoldMembers ? 'Hide Fold Members' : 'Show Fold Members'}
         </button>
 
+        <button
+          onClick={() => setLayoutMode((prev) => (prev === 'manual' ? 'auto' : 'manual'))}
+          title={layoutMode === 'manual' ? '자동 정렬 모드로 전환' : '수동 배치/저장 모드로 전환'}
+        >
+          Layout: {layoutMode === 'manual' ? 'Manual' : 'Auto'}
+        </button>
+        <button onClick={fitViewNow} disabled={!rfNodes.length}>Fit View</button>
+        {layoutMode === 'manual' && (
+          <button onClick={saveCurrentLayoutNow} disabled={!onSaveLayout || !rfNodes.length || layoutSaving}>
+            {layoutSaving ? 'Saving...' : 'Save Layout'}
+          </button>
+        )}
+
         <span className="muted">Node Filter</span>
         <select value={nodeTypeFilter} onChange={(e) => setNodeTypeFilter(e.target.value as any)}>
           <option value="all">all</option>
@@ -984,6 +1162,9 @@ export default function GraphPanel({
         </details>
 
         <span className="muted">Click=select, Shift+click=toggle, double-click=detail/fold-view, Space+drag=pan, Esc=clear</span>
+        {layoutMode === 'manual' && onSaveLayout && <span className="muted">드래그 후 레이아웃 자동 저장(650ms debounce)</span>}
+        {layoutSaveError && <span className="pill graphStatusPill graphStatusPill--error">Layout save failed</span>}
+        {layoutSaving && <span className="pill graphStatusPill">Saving layout…</span>}
         {pendingLinkSourceId && <span className="pill">Link source: {shortId(pendingLinkSourceId)} (대상 노드 클릭)</span>}
       </div>
 
@@ -1000,7 +1181,7 @@ export default function GraphPanel({
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
-          nodesDraggable={false}
+          nodesDraggable={layoutMode === 'manual'}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -1009,6 +1190,7 @@ export default function GraphPanel({
           onSelectionChange={handleSelectionChange}
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
+          onNodeDragStop={handleNodeDragStop}
           onPaneClick={handlePaneClick}
           onConnect={handleConnect}
           onEdgesDelete={handleEdgesDelete}

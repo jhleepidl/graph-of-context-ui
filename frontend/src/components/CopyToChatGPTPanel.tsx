@@ -1,5 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import {
+  applyManualPriorityRules,
+  buildDependencyMap,
+  manualRuleLabel,
+  manualRulePillClass,
+  nodeTypePillClass,
+  pickBudgetedNodes,
+  priorityBucketLabel,
+  priorityBucketPillClass,
+  scoreNodesForRequest,
+  type ManualPriorityRule,
+  type NodePriorityScore,
+} from '../utils/contextPriority'
 
 type ContextNode = {
   id: string
@@ -9,11 +22,16 @@ type ContextNode = {
   payload_json?: string | null
 }
 
+type EdgeLike = { id?: string; from_id: string; to_id: string; type?: string | null }
+
 type Props = {
   activeNodes: ContextNode[]
+  allNodes?: ContextNode[]
+  edges?: EdgeLike[]
   threadId: string | null
   ctxId: string | null
   onAfterMutation: () => Promise<void>
+  onReplaceActive?: (nodeIds: string[]) => Promise<void>
 }
 
 type SearchResult = {
@@ -67,6 +85,11 @@ function formatScore(score: number): string {
   return score.toFixed(4)
 }
 
+function formatPct01(v: number): string {
+  if (!Number.isFinite(v)) return '-'
+  return `${Math.round(v * 100)}%`
+}
+
 function formatResourceLine(n: ContextNode): string {
   const payload = parsePayload(n.payload_json)
   const name = (payload.name || '').toString().trim() || `resource-${shortId(n.id)}`
@@ -84,7 +107,7 @@ function formatResourceLine(n: ContextNode): string {
   return lines.join('\n')
 }
 
-function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: Props) {
+function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, ctxId, onAfterMutation, onReplaceActive }: Props) {
   const [userRequest, setUserRequest] = useState('')
   const [status, setStatus] = useState('')
   const [userRequestStatus, setUserRequestStatus] = useState('')
@@ -112,6 +135,10 @@ function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: P
   const [resourceSummary, setResourceSummary] = useState('')
   const [resourceStatus, setResourceStatus] = useState('')
 
+  const [priorityBudgetTokens, setPriorityBudgetTokens] = useState('2000')
+  const [priorityStatus, setPriorityStatus] = useState('')
+  const [priorityRules, setPriorityRules] = useState<Record<string, ManualPriorityRule>>({})
+
   const orderedActiveNodes = useMemo(() => {
     const seen = new Set<string>()
     const orderedUnique = activeNodes.filter((node) => {
@@ -135,6 +162,87 @@ function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: P
 
   const resourceNodes = useMemo(() => orderedActiveNodes.filter((n) => (n.type || '') === 'Resource'), [orderedActiveNodes])
   const activeContextNodes = useMemo(() => orderedActiveNodes.filter((n) => (n.type || '') !== 'Resource'), [orderedActiveNodes])
+
+  const analyzableAllNodes = useMemo(() => {
+    const base = (allNodes && allNodes.length > 0 ? allNodes : activeNodes)
+      .filter((n): n is ContextNode => Boolean(n && n.id))
+    const seen = new Set<string>()
+    return base.filter((n) => {
+      if (seen.has(n.id)) return false
+      seen.add(n.id)
+      return true
+    })
+  }, [allNodes, activeNodes])
+
+  const activeIdSet = useMemo(() => new Set(orderedActiveNodes.map((n) => n.id)), [orderedActiveNodes])
+
+  const baseScoredAllNodes = useMemo(() => {
+    return scoreNodesForRequest(analyzableAllNodes, userRequest)
+  }, [analyzableAllNodes, userRequest])
+
+  const scoredAllNodes = useMemo(() => {
+    return applyManualPriorityRules(baseScoredAllNodes, priorityRules)
+  }, [baseScoredAllNodes, priorityRules])
+
+  const scoreByNodeId = useMemo(() => new Map(scoredAllNodes.map((s) => [s.node.id, s])), [scoredAllNodes])
+
+  const dependencyMap = useMemo(() => {
+    return buildDependencyMap(edges)
+  }, [edges])
+
+  const alwaysIncludeIdSet = useMemo(() => new Set(Object.entries(priorityRules).filter(([, v]) => v === 'always').map(([k]) => k)), [priorityRules])
+  const neverIncludeIdSet = useMemo(() => new Set(Object.entries(priorityRules).filter(([, v]) => v === 'never').map(([k]) => k)), [priorityRules])
+  const pinnedIdSet = useMemo(() => new Set(Object.entries(priorityRules).filter(([, v]) => v === 'pin').map(([k]) => k)), [priorityRules])
+
+  const scoredActiveContextNodes = useMemo(() => {
+    return activeContextNodes
+      .map((n) => scoreByNodeId.get(n.id))
+      .filter((v): v is NodePriorityScore => Boolean(v))
+      .sort((a, b) => {
+        const ar = a.manualRule === 'always' ? 3 : a.manualRule === 'pin' ? 2 : a.manualRule === 'never' ? -1 : 0
+        const br = b.manualRule === 'always' ? 3 : b.manualRule === 'pin' ? 2 : b.manualRule === 'never' ? -1 : 0
+        if (ar !== br) return br - ar
+        return b.priority - a.priority
+      })
+  }, [activeContextNodes, scoreByNodeId])
+
+  const scoredMissingCandidates = useMemo(() => {
+    return scoredAllNodes
+      .filter((s) => !activeIdSet.has(s.node.id))
+      .filter((s) => (s.node.type || '') !== 'Resource')
+      .sort((a, b) => {
+        const ar = a.manualRule === 'always' ? 3 : a.manualRule === 'pin' ? 2 : a.manualRule === 'never' ? -1 : 0
+        const br = b.manualRule === 'always' ? 3 : b.manualRule === 'pin' ? 2 : b.manualRule === 'never' ? -1 : 0
+        if (ar !== br) return br - ar
+        return (b.priority + b.omissionRisk * 0.35) - (a.priority + a.omissionRisk * 0.35)
+      })
+  }, [scoredAllNodes, activeIdSet])
+
+  const highRiskMissingCandidates = useMemo(() => {
+    return scoredMissingCandidates
+      .filter((s) => s.manualRule === 'always' || (s.bucket !== 'skippable' && (s.relevance >= 0.12 || s.locality >= 0.58)))
+      .slice(0, 8)
+  }, [scoredMissingCandidates])
+
+  const priorityBudgetValue = useMemo(() => {
+    const n = Number(priorityBudgetTokens)
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  }, [priorityBudgetTokens])
+
+  const budgetSelection = useMemo(() => {
+    if (!priorityBudgetValue || scoredActiveContextNodes.length === 0) return null
+    return pickBudgetedNodes(scoredActiveContextNodes, priorityBudgetValue, {
+      dependencyMap,
+      alwaysIncludeIds: alwaysIncludeIdSet,
+      neverIncludeIds: neverIncludeIdSet,
+      pinnedIds: pinnedIdSet,
+    })
+  }, [priorityBudgetValue, scoredActiveContextNodes, dependencyMap, alwaysIncludeIdSet, neverIncludeIdSet, pinnedIdSet])
+
+  const budgetSelectedIdSet = useMemo(() => {
+    if (!budgetSelection) return new Set<string>()
+    return new Set(budgetSelection.selected.map((s) => s.node.id))
+  }, [budgetSelection])
 
   const resourcesSection = useMemo(() => {
     if (resourceNodes.length === 0) return '(none)'
@@ -209,6 +317,28 @@ function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: P
   }, [threadId])
 
   useEffect(() => {
+    if (!threadId) {
+      setPriorityRules({})
+      return
+    }
+    try {
+      const raw = localStorage.getItem(`goc:priorityRules:${threadId}`)
+      const parsed = raw ? JSON.parse(raw) : {}
+      if (parsed && typeof parsed === 'object') {
+        const next: Record<string, ManualPriorityRule> = {}
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v === 'pin' || v === 'always' || v === 'never') next[k] = v
+        }
+        setPriorityRules(next)
+      } else {
+        setPriorityRules({})
+      }
+    } catch {
+      setPriorityRules({})
+    }
+  }, [threadId])
+
+  useEffect(() => {
     const timer = window.setTimeout(async () => {
       try {
         setTokenStatus('')
@@ -234,6 +364,29 @@ function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: P
     } catch {
       // ignore storage failures
     }
+  }
+
+  function persistPriorityRules(next: Record<string, ManualPriorityRule>) {
+    setPriorityRules(next)
+    if (!threadId) return
+    try {
+      localStorage.setItem(`goc:priorityRules:${threadId}`, JSON.stringify(next))
+    } catch {
+      // ignore storage failures
+    }
+  }
+
+  function setNodePriorityRule(nodeId: string, rule: ManualPriorityRule | null) {
+    setPriorityStatus('')
+    const next = { ...priorityRules }
+    if (!rule) delete next[nodeId]
+    else next[nodeId] = rule
+    persistPriorityRules(next)
+  }
+
+  function clearPriorityRules() {
+    persistPriorityRules({})
+    setPriorityStatus('수동 우선순위 규칙을 초기화했습니다.')
   }
 
   async function copyWithFallback(text: string): Promise<void> {
@@ -489,6 +642,56 @@ function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: P
     })
   }
 
+  async function handleAddPriorityCandidate(nodeId: string) {
+    if (!ctxId) {
+      setPriorityStatus('활성화할 Context Set이 없습니다.')
+      return
+    }
+    try {
+      await api.activate(ctxId, [nodeId])
+      await onAfterMutation()
+      setPriorityStatus(`추천 노드를 Active에 추가: ${shortId(nodeId)}`)
+    } catch (e: any) {
+      setPriorityStatus(`추가 실패: ${e?.message || String(e)}`)
+    }
+  }
+
+  async function handleApplyPriorityBudget() {
+    if (!onReplaceActive) {
+      setPriorityStatus('Active 교체 콜백이 연결되지 않았습니다.')
+      return
+    }
+    if (!budgetSelection || priorityBudgetValue <= 0) {
+      setPriorityStatus('유효한 budget을 입력하세요.')
+      return
+    }
+
+    const resourceIds = orderedActiveNodes.filter((n) => (n.type || '') === 'Resource').map((n) => n.id)
+    const selectedIds = budgetSelection.selected.map((s) => s.node.id)
+    try {
+      await onReplaceActive([...resourceIds, ...selectedIds])
+      setPriorityStatus(`Budget 적용 완료: ${selectedIds.length}개 context + ${resourceIds.length}개 resource${budgetSelection.dependencyAddedIds.length ? ` · dependency ${budgetSelection.dependencyAddedIds.length}개 포함` : ''}`)
+    } catch (e: any) {
+      setPriorityStatus(`Budget 적용 실패: ${e?.message || String(e)}`)
+    }
+  }
+
+  function ruleOf(nodeId: string): ManualPriorityRule | null {
+    return priorityRules[nodeId] || null
+  }
+
+  function RuleButtons({ nodeId }: { nodeId: string }) {
+    const current = ruleOf(nodeId)
+    return (
+      <span className="ruleButtons">
+        <button className={`tiny ${current === 'pin' ? 'isActive' : ''}`} onClick={() => setNodePriorityRule(nodeId, current === 'pin' ? null : 'pin')}>Pin</button>
+        <button className={`tiny ${current === 'always' ? 'isActive' : ''}`} onClick={() => setNodePriorityRule(nodeId, current === 'always' ? null : 'always')}>Always</button>
+        <button className={`tiny ${current === 'never' ? 'isActive' : ''}`} onClick={() => setNodePriorityRule(nodeId, current === 'never' ? null : 'never')}>Never</button>
+        {current && <button className="tiny" onClick={() => setNodePriorityRule(nodeId, null)}>Clear</button>}
+      </span>
+    )
+  }
+
   return (
     <div>
       <h3>Copy to ChatGPT</h3>
@@ -551,13 +754,129 @@ function CopyToChatGPTPanel({ activeNodes, threadId, ctxId, onAfterMutation }: P
                     />
                     <span className={`pill pillType ${item.node_type === "Resource" ? "pill--resource" : "pill--default"}`}>{item.node_type}</span>
                   </label>
+                  {priorityRules[item.node_id] && <span className={`pill ${manualRulePillClass(priorityRules[item.node_id])}`}>{manualRuleLabel(priorityRules[item.node_id])}</span>}
                   <button onClick={() => handleAddSuggested(item.node_id)}>Add</button>
+                  <RuleButtons nodeId={item.node_id} />
                 </div>
-                <div className="muted">score={formatScore(item.score)} id={shortId(item.node_id)}</div>
+                <div className="muted">
+                  score={formatScore(item.score)} id={shortId(item.node_id)}
+                  {scoreByNodeId.get(item.node_id) ? ` · heuristic=${formatPct01(scoreByNodeId.get(item.node_id)!.priority)} (${priorityBucketLabel(scoreByNodeId.get(item.node_id)!.bucket)})` : ''}
+                </div>
                 <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{item.snippet || '(empty)'}</div>
               </div>
             )
           })}
+        </div>
+      )}
+
+      <h3>Context Prioritizer (Beta)</h3>
+      <div className="muted">
+        USER REQUEST 기준으로 각 노드의 로컬성/생략위험/관련도를 추정해 우선순위를 추천합니다. 절대판정이 아니라 추천기입니다.
+      </div>
+      <div className="row">
+        <span className="pill">active analyzed: {scoredActiveContextNodes.length}</span>
+        <span className="pill">missing candidates: {highRiskMissingCandidates.length}</span>
+        <span className="pill">budget: {priorityBudgetValue || '-'} tok</span>
+        <span className="pill">rules: {Object.keys(priorityRules).length}</span>
+        <button onClick={clearPriorityRules} disabled={Object.keys(priorityRules).length === 0}>Clear rules</button>
+        {priorityStatus && <span className="muted">{priorityStatus}</span>}
+      </div>
+      <div className="card">
+        <div className="row" style={{ marginBottom: 6 }}>
+          <b>Budget-based Active trim</b>
+          <input
+            value={priorityBudgetTokens}
+            onChange={(e) => setPriorityBudgetTokens(e.target.value.replace(/[^0-9]/g, ''))}
+            placeholder="2000"
+            style={{ width: 96, padding: 6 }}
+          />
+          <button onClick={() => setPriorityBudgetTokens('1000')}>1k</button>
+          <button onClick={() => setPriorityBudgetTokens('2000')}>2k</button>
+          <button onClick={() => setPriorityBudgetTokens('4000')}>4k</button>
+          <button onClick={handleApplyPriorityBudget} disabled={!budgetSelection || !onReplaceActive}>Apply to Active</button>
+        </div>
+        {budgetSelection ? (
+          <>
+            <div className="muted" style={{ marginBottom: 8 }}>
+              selected {budgetSelection.selected.length} / {scoredActiveContextNodes.length} nodes · approx {budgetSelection.usedTokens} tokens · deps {budgetSelection.dependencyAddedIds.length}
+            </div>
+            <div className="priorityList">
+              {budgetSelection.selected.slice(0, 6).map((s) => (
+                <div key={`budget-${s.node.id}`} className="priorityRow">
+                  <div className="priorityRowMain">
+                    <span className={`pill pillType ${nodeTypePillClass(s.node.type)}`}>{s.node.type || 'Unknown'}</span>
+                    <span className={`pill ${priorityBucketPillClass(s.bucket)}`}>{priorityBucketLabel(s.bucket)}</span>
+                    {s.manualRule && <span className={`pill ${manualRulePillClass(s.manualRule)}`}>{manualRuleLabel(s.manualRule)}</span>}
+                    {s.selectionTag && <span className="pill">{s.selectionTag}</span>}
+                    <span className="muted">{shortId(s.node.id)} · ~{s.estTokens}t</span>
+                  </div>
+                  <div className="prioritySnippet">{((s.node.text || '').trim() || '(empty)').slice(0, 220)}</div>
+                </div>
+              ))}
+            </div>
+            {budgetSelection.omitted.length > 0 && (
+              <div className="muted" style={{ marginTop: 8 }}>
+                제외 예정 상위: {budgetSelection.omitted.slice(0, 3).map((s) => `${shortId(s.node.id)}(${priorityBucketLabel(s.bucket)})`).join(', ')}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="muted">Budget 입력 후 Active context가 있으면 자동 선택 미리보기가 표시됩니다. (수동 규칙 + dependency-aware 적용)</div>
+        )}
+      </div>
+
+      {scoredActiveContextNodes.length > 0 && (
+        <div className="card">
+          <div className="row" style={{ marginBottom: 6 }}>
+            <b>Active node priority</b>
+            <span className="muted">현재 요청 기준 상위 {Math.min(8, scoredActiveContextNodes.length)}개</span>
+          </div>
+          <div className="priorityList">
+            {scoredActiveContextNodes.slice(0, 8).map((s) => (
+              <div key={`active-priority-${s.node.id}`} className={`priorityRow ${budgetSelection && !budgetSelectedIdSet.has(s.node.id) ? 'isDim' : ''}`}>
+                <div className="priorityRowMain">
+                  <span className={`pill pillType ${nodeTypePillClass(s.node.type)}`}>{s.node.type || 'Unknown'}</span>
+                  <span className={`pill ${priorityBucketPillClass(s.bucket)}`}>{priorityBucketLabel(s.bucket)}</span>
+                  {s.manualRule && <span className={`pill ${manualRulePillClass(s.manualRule)}`}>{manualRuleLabel(s.manualRule)}</span>}
+                  <span className="pill">P {formatPct01(s.priority)}</span>
+                  <span className="pill">L {formatPct01(s.locality)}</span>
+                  <span className="pill">R {formatPct01(s.relevance)}</span>
+                  <span className="pill">Risk {formatPct01(s.omissionRisk)}</span>
+                  <span className="muted">~{s.estTokens}t · {shortId(s.node.id)}</span>
+                  <RuleButtons nodeId={s.node.id} />
+                </div>
+                {s.reasons.length > 0 && <div className="muted">{s.reasons.join(' · ')}</div>}
+                <div className="prioritySnippet">{((s.node.text || '').trim() || '(empty)').slice(0, 240)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {highRiskMissingCandidates.length > 0 && (
+        <div className="card">
+          <div className="row" style={{ marginBottom: 6 }}>
+            <b>Missing but likely useful</b>
+            <span className="muted">Active에 없는 후보 (요청 기준)</span>
+          </div>
+          <div className="priorityList">
+            {highRiskMissingCandidates.map((s) => (
+              <div key={`missing-priority-${s.node.id}`} className="priorityRow">
+                <div className="priorityRowMain">
+                  <span className={`pill pillType ${nodeTypePillClass(s.node.type)}`}>{s.node.type || 'Unknown'}</span>
+                  <span className={`pill ${priorityBucketPillClass(s.bucket)}`}>{priorityBucketLabel(s.bucket)}</span>
+                  {s.manualRule && <span className={`pill ${manualRulePillClass(s.manualRule)}`}>{manualRuleLabel(s.manualRule)}</span>}
+                  <span className="pill">Risk {formatPct01(s.omissionRisk)}</span>
+                  <span className="pill">R {formatPct01(s.relevance)}</span>
+                  <span className="muted">~{s.estTokens}t · {shortId(s.node.id)}</span>
+                  <button onClick={() => handleAddPriorityCandidate(s.node.id)} disabled={!ctxId}>Add</button>
+                  <RuleButtons nodeId={s.node.id} />
+                </div>
+                {s.reasons.length > 0 && <div className="muted">{s.reasons.join(' · ')}</div>}
+                <div className="prioritySnippet">{((s.node.text || '').trim() || '(empty)').slice(0, 220)}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
