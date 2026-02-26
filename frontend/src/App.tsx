@@ -7,8 +7,29 @@ import RunPanel from './components/RunPanel'
 import SearchPanel from './components/SearchPanel'
 import CopyToChatGPTPanel from './components/CopyToChatGPTPanel'
 import NodeDetailModal from './components/NodeDetailModal'
+import ContextInspector from './components/ContextInspector'
+
+const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
+const LEFT_PANEL_MIN_WIDTH = 260
+const RIGHT_PANEL_MIN_WIDTH = 300
+const CENTER_PANEL_MIN_WIDTH = 520
+const RESIZER_WIDTH = 10
+
+type ResizeHandle = 'left' | 'right'
+type ResizeSession = {
+  handle: ResizeHandle
+  startX: number
+  startLeftWidth: number
+  startRightWidth: number
+  wrapWidth: number
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
 
 export default function App() {
+  const wrapRef = useRef<HTMLDivElement | null>(null)
   const [threads, setThreads] = useState<any[]>([])
   const [threadId, setThreadId] = useState<string | null>(null)
 
@@ -20,7 +41,27 @@ export default function App() {
   const [activeIds, setActiveIds] = useState<string[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [detailNodeId, setDetailNodeId] = useState<string | null>(null)
+  const [compiledInfo, setCompiledInfo] = useState<any | null>(null)
+  const [contextVersions, setContextVersions] = useState<any[]>([])
+  const [versionDiff, setVersionDiff] = useState<any | null>(null)
+  const [plannerResult, setPlannerResult] = useState<any | null>(null)
   const switchSeqRef = useRef(0)
+  const [panelWidths, setPanelWidths] = useState<{ left: number; right: number }>(() => {
+    try {
+      const raw = window.localStorage.getItem(PANEL_WIDTH_STORAGE_KEY)
+      if (!raw) return { left: 360, right: 360 }
+      const parsed = JSON.parse(raw)
+      const left = Number(parsed?.left)
+      const right = Number(parsed?.right)
+      return {
+        left: Number.isFinite(left) ? Math.round(left) : 360,
+        right: Number.isFinite(right) ? Math.round(right) : 360,
+      }
+    } catch {
+      return { left: 360, right: 360 }
+    }
+  })
+  const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null)
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
@@ -46,6 +87,23 @@ export default function App() {
     setSelectedIds((prev) => (isSameIdSet(prev, ids) ? prev : ids))
   }, [isSameIdSet])
 
+  async function refreshContextInspector(nextCtxId?: string) {
+    const cId = nextCtxId || ctxId
+    if (!cId) {
+      setCompiledInfo(null)
+      setContextVersions([])
+      setVersionDiff(null)
+      setPlannerResult(null)
+      return
+    }
+    const [compiled, versions] = await Promise.all([
+      api.ctxCompiled(cId, true),
+      api.ctxVersions(cId, 20),
+    ])
+    setCompiledInfo(compiled)
+    setContextVersions(versions?.versions || [])
+  }
+
   async function reloadGraph(nextThreadId?: string) {
     const tId = nextThreadId || threadId
     if (!tId) return
@@ -63,6 +121,7 @@ export default function App() {
 
     const ctx = await api.ctx(cId)
     setActiveIds(ctx.active_node_ids || [])
+    await refreshContextInspector(cId)
   }
 
   async function loadThreads() {
@@ -98,6 +157,10 @@ export default function App() {
     setActiveIds([])
     setSelectedIds([])
     setDetailNodeId(null)
+    setCompiledInfo(null)
+    setContextVersions([])
+    setVersionDiff(null)
+    setPlannerResult(null)
   }
 
   async function switchThread(nextThreadId: string) {
@@ -122,6 +185,13 @@ export default function App() {
       const ctx = await api.ctx(cid)
       if (switchSeqRef.current !== seq) return
       setActiveIds(ctx.active_node_ids || [])
+      const [compiled, versions] = await Promise.all([
+        api.ctxCompiled(cid, true),
+        api.ctxVersions(cid, 20),
+      ])
+      if (switchSeqRef.current !== seq) return
+      setCompiledInfo(compiled)
+      setContextVersions(versions?.versions || [])
     } catch (e) {
       console.error('failed to switch thread', e)
     }
@@ -134,18 +204,85 @@ export default function App() {
     })()
   }, [])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PANEL_WIDTH_STORAGE_KEY, JSON.stringify(panelWidths))
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [panelWidths])
+
+  useEffect(() => {
+    if (!resizeSession) return
+
+    function handleMouseMove(evt: MouseEvent) {
+      const dx = evt.clientX - resizeSession.startX
+      const totalResizerWidth = RESIZER_WIDTH * 2
+
+      if (resizeSession.handle === 'left') {
+        const maxLeft = resizeSession.wrapWidth - resizeSession.startRightWidth - CENTER_PANEL_MIN_WIDTH - totalResizerWidth
+        const upper = Math.max(LEFT_PANEL_MIN_WIDTH, maxLeft)
+        const nextLeft = Math.round(clamp(resizeSession.startLeftWidth + dx, LEFT_PANEL_MIN_WIDTH, upper))
+        setPanelWidths((prev) => (prev.left === nextLeft ? prev : { ...prev, left: nextLeft }))
+        return
+      }
+
+      const maxRight = resizeSession.wrapWidth - resizeSession.startLeftWidth - CENTER_PANEL_MIN_WIDTH - totalResizerWidth
+      const upper = Math.max(RIGHT_PANEL_MIN_WIDTH, maxRight)
+      const nextRight = Math.round(clamp(resizeSession.startRightWidth - dx, RIGHT_PANEL_MIN_WIDTH, upper))
+      setPanelWidths((prev) => (prev.right === nextRight ? prev : { ...prev, right: nextRight }))
+    }
+
+    function handleMouseUp() {
+      setResizeSession(null)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    document.body.classList.add('isResizingPanels')
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      document.body.classList.remove('isResizingPanels')
+    }
+  }, [resizeSession])
+
+  const startPanelResize = useCallback((handle: ResizeHandle, evt: React.MouseEvent<HTMLDivElement>) => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const rect = wrap.getBoundingClientRect()
+    setResizeSession({
+      handle,
+      startX: evt.clientX,
+      startLeftWidth: panelWidths.left,
+      startRightWidth: panelWidths.right,
+      wrapWidth: rect.width,
+    })
+    evt.preventDefault()
+  }, [panelWidths])
+
+  const wrapStyle = useMemo<React.CSSProperties>(() => {
+    return {
+      ['--left-panel-width' as any]: `${panelWidths.left}px`,
+      ['--right-panel-width' as any]: `${panelWidths.right}px`,
+    }
+  }, [panelWidths])
+
   async function toggleActive(nodeId: string, nextActive: boolean) {
     if (!ctxId) return
     if (nextActive) {
       const out = await api.activate(ctxId, [nodeId])
       if (Array.isArray(out?.active_node_ids)) {
         setActiveIds(out.active_node_ids)
+        await refreshContextInspector(ctxId)
         return
       }
     } else {
       const out = await api.deactivate(ctxId, [nodeId])
       if (Array.isArray(out?.active_node_ids)) {
         setActiveIds(out.active_node_ids)
+        await refreshContextInspector(ctxId)
         return
       }
     }
@@ -157,6 +294,7 @@ export default function App() {
     try {
       await api.reorderActive(ctxId, nodeIds)
       setActiveIds(nodeIds)
+      await refreshContextInspector(ctxId)
     } catch (e) {
       console.error('failed to reorder active nodes', e)
       await reloadAll()
@@ -170,7 +308,6 @@ export default function App() {
       return
     }
     const res = await api.fold(threadId, ids, 'Fold')
-    // MVP UX: 원본 off, fold on
     await api.deactivate(ctxId, ids)
     await api.activate(ctxId, [res.fold_id])
     setSelectedIds([res.fold_id])
@@ -182,6 +319,7 @@ export default function App() {
     const out = await api.activate(ctxId, nodeIds)
     if (Array.isArray(out?.active_node_ids)) {
       setActiveIds(out.active_node_ids)
+      await refreshContextInspector(ctxId)
       return
     }
     await reloadAll()
@@ -192,6 +330,7 @@ export default function App() {
     const out = await api.deactivate(ctxId, nodeIds)
     if (Array.isArray(out?.active_node_ids)) {
       setActiveIds(out.active_node_ids)
+      await refreshContextInspector(ctxId)
       return
     }
     await reloadAll()
@@ -203,12 +342,19 @@ export default function App() {
 
   async function unfoldFold(foldId: string) {
     if (!ctxId) return
-    const out = await api.unfold(ctxId, foldId)
+    const out = await api.unfold(ctxId, foldId, {
+      closure_edge_types: ['FOLDS', 'DEPENDS', 'HAS_PART', 'SPLIT_FROM', 'REFERENCES'],
+      closure_direction: 'both',
+      max_closure_nodes: 16,
+      replace_only_fold: true,
+      include_explain: true,
+    })
     if (Array.isArray(out?.members) && out.members.length > 0) {
       setSelectedIds(out.members)
     }
     if (Array.isArray(out?.active_node_ids)) {
       setActiveIds(out.active_node_ids)
+      await refreshContextInspector(ctxId)
       return
     }
     await reloadAll()
@@ -249,12 +395,10 @@ export default function App() {
     }
   }
 
-
   const saveGraphLayoutPositions = useCallback(async (positions: Array<{ id: string; x: number; y: number }>) => {
     if (!threadId) return
     await api.saveNodeLayout(threadId, positions)
   }, [threadId])
-
 
   const replaceActiveContext = useCallback(async (nextNodeIds: string[]) => {
     if (!ctxId) return
@@ -282,6 +426,7 @@ export default function App() {
 
       await api.reorderActive(ctxId, deduped)
       setActiveIds(deduped)
+      await refreshContextInspector(ctxId)
     } catch (e) {
       console.error('failed to replace active context', e)
       await reloadAll()
@@ -296,7 +441,13 @@ export default function App() {
     if (!ctxId) return
     if (selectedFoldIds.length === 0) return
     for (const foldId of selectedFoldIds) {
-      await api.unfold(ctxId, foldId)
+      await api.unfold(ctxId, foldId, {
+        closure_edge_types: ['FOLDS', 'DEPENDS', 'HAS_PART', 'SPLIT_FROM', 'REFERENCES'],
+        closure_direction: 'both',
+        max_closure_nodes: 16,
+        replace_only_fold: true,
+        include_explain: true,
+      })
     }
     setSelectedIds([])
     await reloadAll()
@@ -329,9 +480,46 @@ export default function App() {
     }
   }
 
+  async function loadVersionDiff(fromVersion: number, toVersion: number) {
+    if (!ctxId) return
+    const diff = await api.ctxVersionDiff(ctxId, fromVersion, toVersion)
+    setVersionDiff(diff)
+  }
+
+  async function previewPlanner(query: string, budgetTokens: number) {
+    if (!ctxId) return
+    const result = await api.previewUnfoldPlan(ctxId, {
+      query,
+      budget_tokens: budgetTokens,
+      top_k: 8,
+      max_candidates: 16,
+      closure_edge_types: ['DEPENDS', 'HAS_PART', 'SPLIT_FROM', 'REFERENCES'],
+      closure_direction: 'both',
+      max_closure_nodes: 12,
+    })
+    setPlannerResult(result)
+  }
+
+  async function applyPlannerSeeds(seedIds: string[], budgetTokens: number) {
+    if (!ctxId || seedIds.length === 0) return
+    const result = await api.applyUnfoldPlan(ctxId, {
+      seed_node_ids: seedIds,
+      budget_tokens: budgetTokens,
+      closure_edge_types: ['DEPENDS', 'HAS_PART', 'SPLIT_FROM', 'REFERENCES'],
+      closure_direction: 'both',
+      max_closure_nodes: 12,
+      include_explain: true,
+    })
+    if (Array.isArray(result?.active_node_ids)) {
+      setActiveIds(result.active_node_ids)
+    }
+    setPlannerResult(null)
+    await reloadAll()
+  }
+
   return (
-    <div className="wrap">
-      <div className="col">
+    <div className="wrap" ref={wrapRef} style={wrapStyle}>
+      <div className="col col-left">
         <div className="row">
           <button onClick={async () => {
             const t = await api.createThread('New Thread')
@@ -399,7 +587,15 @@ export default function App() {
         />
       </div>
 
-      <div className="col">
+      <div
+        className="panelResizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize left panel"
+        onMouseDown={(evt) => startPanelResize('left', evt)}
+      />
+
+      <div className="col col-center">
         <div className="card selectionActionBar">
           <div className="row" style={{ marginBottom: 6 }}>
             <b>Fallback Actions</b>
@@ -453,7 +649,15 @@ export default function App() {
         </div>
       </div>
 
-      <div className="col">
+      <div
+        className="panelResizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize right panel"
+        onMouseDown={(evt) => startPanelResize('right', evt)}
+      />
+
+      <div className="col col-right">
         <ActiveContext
           activeIds={activeIds}
           nodesById={nodesById}
@@ -467,6 +671,22 @@ export default function App() {
             await toggleActive(id, false)
           }}
           onUnfold={unfoldFold}
+        />
+
+        <ContextInspector
+          compiledText={compiledInfo?.compiled_text || ''}
+          excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
+          keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
+          versions={contextVersions}
+          versionDiff={versionDiff}
+          plannerResult={plannerResult}
+          nodesById={nodesById}
+          onRefresh={async () => {
+            await refreshContextInspector()
+          }}
+          onLoadDiff={loadVersionDiff}
+          onPlan={previewPlanner}
+          onApplySeeds={applyPlannerSeeds}
         />
 
         <hr />

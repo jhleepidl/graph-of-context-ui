@@ -2,13 +2,16 @@ from __future__ import annotations
 from typing import List, Literal, Optional
 from pydantic import BaseModel
 
+
 class ThreadCreate(BaseModel):
     title: Optional[str] = None
+
 
 class MessageCreate(BaseModel):
     role: str  # user | assistant
     text: str
     reply_to: Optional[str] = None
+
 
 class ResourceNodeCreate(BaseModel):
     name: str
@@ -21,21 +24,26 @@ class ResourceNodeCreate(BaseModel):
     context_set_id: Optional[str] = None
     auto_activate: bool = True
 
+
 class ContextSetCreate(BaseModel):
     thread_id: str
     name: str = "default"
 
+
 class ActivateNodes(BaseModel):
     node_ids: List[str]
+
 
 class FoldCreate(BaseModel):
     thread_id: str
     member_node_ids: List[str]
     title: Optional[str] = None
 
+
 class RunCreate(BaseModel):
     context_set_id: str
     user_message: str
+
 
 class SearchResponseItem(BaseModel):
     node_id: str
@@ -102,3 +110,30 @@ class HierarchyPreviewRequest(BaseModel):
     context_set_id: Optional[str] = None
     node_ids: Optional[List[str]] = None
     max_leaf_size: int = 6
+
+
+class UnfoldRequest(BaseModel):
+    closure_edge_types: Optional[List[str]] = None
+    closure_direction: Literal["out", "in", "both"] = "out"
+    max_closure_nodes: Optional[int] = None
+    replace_only_fold: bool = True
+    include_explain: bool = True
+
+
+class UnfoldPlanRequest(BaseModel):
+    query: str
+    top_k: int = 8
+    max_candidates: int = 16
+    budget_tokens: int = 1200
+    closure_edge_types: Optional[List[str]] = None
+    closure_direction: Literal["out", "in", "both"] = "both"
+    max_closure_nodes: Optional[int] = 12
+
+
+class ApplyUnfoldPlanRequest(BaseModel):
+    seed_node_ids: List[str]
+    budget_tokens: int = 1200
+    closure_edge_types: Optional[List[str]] = None
+    closure_direction: Literal["out", "in", "both"] = "both"
+    max_closure_nodes: Optional[int] = 12
+    include_explain: bool = True

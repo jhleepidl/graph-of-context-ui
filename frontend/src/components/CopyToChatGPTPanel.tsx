@@ -41,11 +41,41 @@ type SearchResult = {
   snippet: string
 }
 
+type PromptMode = 'free' | 'light' | 'full'
+
 const LANGUAGE_LOCK = '중요: 아래 포맷/규칙은 영어로 쓰여있지만, 너의 답변 내용은 반드시 한국어로 작성해라.'
 const BOOTSTRAP_NOTICE = '이 채팅은 새 대화다. 아래 ACTIVE CONTEXT를 앞으로의 대화에서 배경지식으로 사용해라.'
-const BOOTSTRAP_REPLY_RULE = 'TAGGED FORMAT으로 답하고, [FINAL]에는 짧은 확인 문장(한국어)만 작성하고 긴 본문은 쓰지 마라.'
+const BOOTSTRAP_REPLY_RULE = '지금은 긴 설명을 하지 말고, 이해했는지만 1~2문장으로 확인해라. 구조화 태그는 쓰지 마라.'
 
-const TAGGED_FORMAT = `Respond in the following TAGGED FORMAT exactly (sections optional, but keep [FINAL]):
+const FREE_CHAT_FORMAT = `Answer naturally in Korean.
+Use ONLY the ACTIVE CONTEXT below as the reliable source.
+Do not invent unsupported facts.
+If the context is insufficient, clearly say what is missing.`
+
+const LIGHT_STRUCTURED_FORMAT = `Preferred response format:
+
+[FINAL]
+<your main answer in Korean>
+
+Optional structured footer (only when useful for memory import):
+
+[MEMORY]
+- decision: ...
+- assumption: ...
+- next_step: ...
+- memory: ...
+
+[NEEDS_CONTEXT]
+- ...
+
+Rules:
+- Write the main answer naturally inside [FINAL].
+- Omit any empty section.
+- Do not create bullets just to fill the format.
+- Only include durable, reusable items in [MEMORY].
+- Use [NEEDS_CONTEXT] only when additional context is genuinely required.`
+
+const FULL_STRUCTURED_FORMAT = `Use this richer format only when explicit structure extraction is requested:
 
 [FINAL]
 <final answer in Korean>
@@ -63,10 +93,50 @@ const TAGGED_FORMAT = `Respond in the following TAGGED FORMAT exactly (sections 
 - ...
 
 Rules:
-- Bullets must start with "- "
-- Do not include any extra sections besides these.
-- Use ONLY the ACTIVE CONTEXT below. If insufficient, ask which context to add.
-- Keep it concise.`
+- Bullets must start with "- ".
+- Omit empty sections.
+- Use ONLY the ACTIVE CONTEXT below.
+- Keep each bullet concise and non-duplicative.`
+
+const STRUCTURING_PROMPT_TEMPLATE = `You are helping build a Graph-of-Context memory.
+Read the SOURCE ANSWER below and extract only durable items worth storing as reusable context.
+Do not restate the whole answer.
+Skip ephemeral phrasing, filler, and obvious repetitions.
+
+Output format:
+
+[MEMORY]
+- decision: ...
+- assumption: ...
+- next_step: ...
+- memory: ...
+
+[NEEDS_CONTEXT]
+- ...
+
+Rules:
+- Omit empty sections.
+- Only include durable items that would matter in a later turn.
+- Use [NEEDS_CONTEXT] only for genuinely missing context.
+- Keep bullets short and specific.`
+
+const PROMPT_MODE_META: Record<PromptMode, { label: string; description: string; instructions: string }> = {
+  free: {
+    label: 'Free chat',
+    description: '가장 자연스러운 응답. 구조화는 나중에 필요할 때만 별도 수행.',
+    instructions: FREE_CHAT_FORMAT,
+  },
+  light: {
+    label: 'Light structured',
+    description: '기본 추천. 자연스러운 답변 + 필요한 경우에만 얇은 구조화 footer.',
+    instructions: LIGHT_STRUCTURED_FORMAT,
+  },
+  full: {
+    label: 'Full extract',
+    description: '분석/정리 턴에서만 사용. 구조화 밀도가 높아 응답 자유도는 가장 낮음.',
+    instructions: FULL_STRUCTURED_FORMAT,
+  },
+}
 
 function shortId(id: string): string {
   return id.slice(0, 6)
@@ -107,7 +177,8 @@ function formatResourceLine(n: ContextNode): string {
   return lines.join('\n')
 }
 
-function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, ctxId, onAfterMutation, onReplaceActive }: Props) {
+export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, ctxId, onAfterMutation, onReplaceActive }: Props) {
+  const [promptMode, setPromptMode] = useState<PromptMode>('light')
   const [userRequest, setUserRequest] = useState('')
   const [status, setStatus] = useState('')
   const [userRequestStatus, setUserRequestStatus] = useState('')
@@ -117,6 +188,8 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
 
   const [pasteText, setPasteText] = useState('')
   const [pasteStatus, setPasteStatus] = useState('')
+  const [structureSourceText, setStructureSourceText] = useState('')
+  const [structureStatus, setStructureStatus] = useState('')
   const [manualContextText, setManualContextText] = useState('')
   const [manualStatus, setManualStatus] = useState('')
   const [suggestStatus, setSuggestStatus] = useState('')
@@ -261,12 +334,14 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
       .join('\n\n')
   }, [activeContextNodes])
 
+  const promptInstructions = useMemo(() => PROMPT_MODE_META[promptMode].instructions, [promptMode])
+
   const builtPrompt = useMemo(() => {
     const req = userRequest.trim() || '(write request here)'
     return [
       LANGUAGE_LOCK,
       '',
-      TAGGED_FORMAT,
+      promptInstructions,
       '',
       '[RESOURCES]',
       resourcesSection,
@@ -277,7 +352,7 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
       '[USER REQUEST]',
       req,
     ].join('\n')
-  }, [contextSection, resourcesSection, userRequest])
+  }, [contextSection, promptInstructions, resourcesSection, userRequest])
 
   const bootstrapPrompt = useMemo(() => {
     return [
@@ -286,8 +361,6 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
       BOOTSTRAP_NOTICE,
       BOOTSTRAP_REPLY_RULE,
       '',
-      TAGGED_FORMAT,
-      '',
       '[RESOURCES]',
       resourcesSection,
       '',
@@ -295,6 +368,17 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
       contextSection,
     ].join('\n')
   }, [contextSection, resourcesSection])
+
+  const structuringPrompt = useMemo(() => {
+    const sourceAnswer = structureSourceText.trim() || '(paste a source answer here)'
+    const req = userRequest.trim()
+    const lines = [LANGUAGE_LOCK, '', STRUCTURING_PROMPT_TEMPLATE]
+    if (req) {
+      lines.push('', '[SOURCE USER REQUEST]', req)
+    }
+    lines.push('', '[SOURCE ANSWER]', sourceAnswer)
+    return lines.join('\n')
+  }, [structureSourceText, userRequest])
 
   const usageRatio = useMemo(() => {
     if (fullPromptTokens == null) return 0
@@ -463,6 +547,31 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
     }
   }
 
+  function usePasteAsStructureSource() {
+    const raw = pasteText.trim()
+    if (!raw) {
+      setStructureStatus('붙여넣기 응답이 비어 있습니다.')
+      return
+    }
+    setStructureSourceText(raw)
+    setStructureStatus('현재 Paste 텍스트를 구조화 소스로 복사했습니다.')
+  }
+
+  async function copyStructuringPrompt() {
+    try {
+      const source = structureSourceText.trim()
+      if (!source) {
+        setStructureStatus('먼저 구조화할 답변을 붙여넣거나, 최근 응답을 가져와야 합니다.')
+        return
+      }
+      setPreviewText(structuringPrompt)
+      await copyWithFallback(structuringPrompt)
+      setStructureStatus('Structuring Prompt 복사됨')
+    } catch (e: any) {
+      setStructureStatus(`복사 실패: ${e?.message || String(e)}`)
+    }
+  }
+
   async function handleAddUserRequestContext() {
     const req = userRequest.trim()
     if (!req) {
@@ -498,19 +607,29 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
         auto_activate: true,
       })
       await onAfterMutation()
+      setStructureSourceText(raw)
 
       const created = imported.created || {}
       const decisionIds: string[] = created.decision_ids || []
       const assumptionIds: string[] = created.assumption_ids || []
       const planIds: string[] = created.plan_ids || []
       const candidateIds: string[] = created.candidate_ids || []
+      const memoryItemIds: string[] = created.memory_item_ids || []
       const finalCount = created.final_node_id ? 1 : 0
       const createdOrder = (imported.created_order || []).map((id: string) => shortId(id)).join(', ')
       const replyToUsed = imported.reply_to_used ? shortId(imported.reply_to_used) : '-'
+      const parseMode = imported.parse_mode || 'free'
 
       setPasteStatus(
-        `가져오기 완료 | FINAL ${finalCount}, DECISIONS ${decisionIds.length}, ASSUMPTIONS ${assumptionIds.length}, PLAN ${planIds.length}, CONTEXT_CANDIDATES ${candidateIds.length} | IDs: ${createdOrder || '-'} | reply_to: ${replyToUsed}`,
+        `가져오기 완료 | mode ${parseMode} | FINAL ${finalCount}, MEMORY ${memoryItemIds.length}, DECISIONS ${decisionIds.length}, ASSUMPTIONS ${assumptionIds.length}, PLAN ${planIds.length}, NEEDS_CONTEXT ${candidateIds.length} | IDs: ${createdOrder || '-'} | reply_to: ${replyToUsed}`,
       )
+      if (parseMode === 'free') {
+        setStructureStatus('자연어 응답을 assistant 메시지로 가져왔습니다. durable memory가 필요하면 Structuring Prompt를 복사해 한 번 더 구조화하세요.')
+      } else if (parseMode === 'light') {
+        setStructureStatus('Light structured 응답에서 durable memory를 함께 가져왔습니다.')
+      } else {
+        setStructureStatus('Full structured 응답을 가져왔습니다.')
+      }
       setPasteText('')
     } catch (e: any) {
       setPasteStatus(`실패: ${e?.message || String(e)}`)
@@ -695,7 +814,22 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
   return (
     <div>
       <h3>Copy to ChatGPT</h3>
-      <div className="muted">템플릿은 영어지만 답변은 한국어로 하도록 프롬프트에 포함됩니다. Active Resource는 [RESOURCES] 섹션으로 자동 포함됩니다. (현재 {resourceNodes.length}개)</div>
+      <div className="muted">기본 추천은 Light structured입니다. 답변은 자연스럽게 유지하면서, 필요할 때만 얇은 구조화 footer를 붙입니다. Active Resource는 [RESOURCES] 섹션으로 자동 포함됩니다. (현재 {resourceNodes.length}개)</div>
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="row" style={{ marginBottom: 8 }}>
+          <b>Response mode</b>
+          {(['free', 'light', 'full'] as PromptMode[]).map((mode) => (
+            <button
+              key={mode}
+              className={promptMode === mode ? 'primary' : ''}
+              onClick={() => setPromptMode(mode)}
+            >
+              {PROMPT_MODE_META[mode].label}
+            </button>
+          ))}
+        </div>
+        <div className="muted">{PROMPT_MODE_META[promptMode].description}</div>
+      </div>
       <textarea
         value={userRequest}
         onChange={(e) => setUserRequest(e.target.value)}
@@ -726,11 +860,24 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
       <textarea
         value={pasteText}
         onChange={(e) => setPasteText(e.target.value)}
-        placeholder="ChatGPT 응답을 붙여넣으세요. 백엔드에서 [FINAL]/[DECISIONS]...를 파싱해 구조화 노드로 가져옵니다."
+        placeholder="ChatGPT 응답을 붙여넣으세요. 자유 응답이면 assistant 메시지로, [MEMORY]/[NEEDS_CONTEXT] 또는 legacy 태그가 있으면 구조화 노드까지 함께 가져옵니다."
       />
       <div className="row">
         <button onClick={handlePasteFromChatGPT}>Paste from ChatGPT</button>
+        <button onClick={usePasteAsStructureSource}>Use paste as structuring source</button>
         {pasteStatus && <div className="muted">{pasteStatus}</div>}
+      </div>
+
+      <h3>Structure durable memory</h3>
+      <div className="muted">자유 대화로 진행한 뒤, 나중에 정말 남길 가치가 있는 응답만 다시 구조화하도록 요청하는 흐름입니다. 전체 답변 반복 대신 durable memory만 뽑아내도록 설계했습니다.</div>
+      <textarea
+        value={structureSourceText}
+        onChange={(e) => setStructureSourceText(e.target.value)}
+        placeholder="구조화할 source answer를 붙여넣으세요. 보통 방금 가져온 assistant 답변을 사용합니다."
+      />
+      <div className="row">
+        <button onClick={copyStructuringPrompt}>Copy Structuring Prompt</button>
+        {structureStatus && <div className="muted">{structureStatus}</div>}
       </div>
 
       <h3>Suggest Context</h3>
@@ -973,4 +1120,4 @@ function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges = [], threadId, 
   )
 }
 
-export default CopyToChatGPTPanel
+export { CopyToChatGPTPanel }

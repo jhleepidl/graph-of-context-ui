@@ -27,3 +27,11 @@ uvicorn app.main:app --reload --port 8000
 - Backend stores **normalized** embeddings in Postgres table `node_embeddings` (JSON text).
 - It also maintains a FAISS index **per thread** in `GOC_FAISS_DIR` (default: `./data/faiss`).
 - Search endpoint: `/api/threads/{thread_id}/search?q=...`
+
+
+## Added in this refactor
+- ContextSet version history (`ContextSetVersion`)
+- Compiled-context explain endpoint (`/api/context_sets/{id}/compiled`)
+- Version diff endpoints
+- Research-inspired recovery planner endpoints (`/unfold_plan`, `/apply_unfold_plan`)
+- Dependency-aware unfold with bounded closure

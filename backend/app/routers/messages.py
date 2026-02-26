@@ -7,14 +7,17 @@ from sqlmodel import Session
 from app.db import engine
 from app.models import Node, Thread, ContextSet
 from app.schemas import MessageCreate, ResourceNodeCreate
+from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, get_last_node
 from app.services.embedding import ensure_node_embedding
 
 router = APIRouter(prefix="/api", tags=["messages"])
 logger = logging.getLogger(__name__)
 
+
 def jdump(x) -> str:
     return json.dumps(x, ensure_ascii=False)
+
 
 @router.post("/threads/{thread_id}/messages")
 def add_message(thread_id: str, body: MessageCreate):
@@ -29,7 +32,8 @@ def add_message(thread_id: str, body: MessageCreate):
         last = get_last_node(s, thread_id)
         n = Node(thread_id=thread_id, type="Message", text=body.text, payload_json=jdump({"role": body.role}))
         s.add(n)
-        if last:
+        s.flush()
+        if last and last.id != n.id:
             s.add(add_edge(thread_id, last.id, n.id, "NEXT"))
         if body.reply_to:
             s.add(add_edge(thread_id, n.id, body.reply_to, "REPLY_TO"))
@@ -108,7 +112,7 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
                 if node.id not in active_ids:
                     active_ids.append(node.id)
                     cs.active_node_ids_json = jdump(active_ids)
-                    s.add(cs)
+                    snapshot_context_set(s, cs, reason='add_resource', changed_node_ids=[node.id], meta={'node_type': 'Resource'})
 
         s.commit()
         s.refresh(node)

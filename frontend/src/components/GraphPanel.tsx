@@ -47,6 +47,25 @@ type GraphNodeData = {
   expandedMember?: boolean
   pendingLinkSource?: boolean
   layoutEditable?: boolean
+  hierarchyClass?: string
+  hierarchyAssistant?: boolean
+  hierarchyExpanded?: boolean
+  hierarchyDetailCount?: number
+  onToggleHierarchyExpand?: (nodeId: string) => void
+}
+
+type ViewMode = 'conversation_hierarchy' | 'raw_graph'
+
+type HierarchyProjection = {
+  visibleNodeIds: Set<string>
+  orderedVisibleIds: string[]
+  positionsById: Map<string, { x: number; y: number }>
+  assistantDetailIds: Map<string, string[]>
+  detailParentById: Map<string, string>
+  visibleDetailNodeIds: Set<string>
+  expandedAssistantIds: Set<string>
+  messageNodeIds: Set<string>
+  backboneMessageIds: string[]
 }
 
 type ViewportState = {
@@ -66,6 +85,7 @@ type Bounds = {
 
 const LEGACY_EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'RELATED', 'SUPPORTS', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
 const LINK_EDGE_TYPE_OPTIONS = ['RELATED', 'REPLY_TO', 'SUPPORTS', 'REFERENCES', 'ATTACHED_TO']
+const HIERARCHY_SEMANTIC_EDGE_TYPES = new Set(['DEPENDS', 'REFERENCES', 'SUPPORTS', 'RELATED', 'NEXT_PART', 'HAS_PART', 'SPLIT_FROM', 'ATTACHED_TO', 'FOLDS'])
 const nodeTypes = { contextNode: GraphNode }
 
 function shortId(id: string): string {
@@ -110,6 +130,248 @@ function readNodeUiPosition(n: any): { x: number; y: number } | null {
   } catch (_) {
     return null
   }
+}
+
+
+function parseNodePayload(n: any): Record<string, any> {
+  try {
+    return JSON.parse(n?.payload_json || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function compareNodesByTime(a: any, b: any): number {
+  const av = a?.created_at || ''
+  const bv = b?.created_at || ''
+  if (av < bv) return -1
+  if (av > bv) return 1
+  return (a?.id || '').localeCompare(b?.id || '')
+}
+
+function buildMessageBackboneOrder(messageNodes: any[], edges: any[]): string[] {
+  if (messageNodes.length === 0) return []
+
+  const sortedMessages = [...messageNodes].sort(compareNodesByTime)
+  const messageById = new Map(sortedMessages.map((n) => [n.id, n]))
+  const messageIdSet = new Set(sortedMessages.map((n) => n.id))
+  const nextTargetsById = new Map<string, string[]>()
+  const incomingCountById = new Map<string, number>()
+
+  for (const e of edges) {
+    if (e.type !== 'NEXT') continue
+    if (!messageIdSet.has(e.from_id) || !messageIdSet.has(e.to_id)) continue
+    const arr = nextTargetsById.get(e.from_id) || []
+    arr.push(e.to_id)
+    nextTargetsById.set(e.from_id, arr)
+    incomingCountById.set(e.to_id, (incomingCountById.get(e.to_id) || 0) + 1)
+  }
+
+  for (const [id, arr] of nextTargetsById.entries()) {
+    nextTargetsById.set(id, arr.sort((a, b) => compareNodesByTime(messageById.get(a), messageById.get(b))))
+  }
+
+  const ordered: string[] = []
+  const visited = new Set<string>()
+  const heads = sortedMessages.filter((n) => (incomingCountById.get(n.id) || 0) === 0)
+
+  const walk = (startId: string) => {
+    let cur: string | null = startId
+    while (cur && !visited.has(cur)) {
+      visited.add(cur)
+      ordered.push(cur)
+      const nexts = (nextTargetsById.get(cur) || []).filter((id) => !visited.has(id))
+      cur = nexts.length > 0 ? nexts[0] : null
+    }
+  }
+
+  for (const n of [...heads, ...sortedMessages]) {
+    if (!visited.has(n.id)) {
+      walk(n.id)
+    }
+  }
+
+  return ordered
+}
+
+function buildTurnLanePositions(ordered: any[], edges: any[]): Map<string, { x: number; y: number }> {
+  const autoPositionById = new Map<string, { x: number; y: number }>()
+  if (ordered.length === 0) return autoPositionById
+
+  const visibleIds = new Set(ordered.map((n) => n.id))
+  const visibleMessages = ordered.filter((n) => n.type === 'Message')
+  if (visibleMessages.length === 0) {
+    for (let i = 0; i < ordered.length; i += 1) {
+      autoPositionById.set(ordered[i].id, { x: 250, y: 90 + i * 140 })
+    }
+    return autoPositionById
+  }
+
+  const roleByMessageId = new Map<string, string>()
+  for (const msg of visibleMessages) {
+    roleByMessageId.set(msg.id, roleFromNode(msg))
+  }
+
+  const replyTargetByNodeId = new Map<string, string>()
+  const nextTargetsByMessageId = new Map<string, string[]>()
+  const nextIncomingCount = new Map<string, number>()
+  for (const e of edges) {
+    if (!visibleIds.has(e.from_id) || !visibleIds.has(e.to_id)) continue
+    if (e.type === 'REPLY_TO') {
+      replyTargetByNodeId.set(e.from_id, e.to_id)
+    }
+    if (e.type === 'NEXT' && roleByMessageId.has(e.from_id) && roleByMessageId.has(e.to_id)) {
+      const arr = nextTargetsByMessageId.get(e.from_id) || []
+      arr.push(e.to_id)
+      nextTargetsByMessageId.set(e.from_id, arr)
+      nextIncomingCount.set(e.to_id, (nextIncomingCount.get(e.to_id) || 0) + 1)
+    }
+  }
+
+  const messageById = new Map(visibleMessages.map((n) => [n.id, n]))
+  const sortedMessages = [...visibleMessages].sort(compareNodesByTime)
+  const headMessages = sortedMessages.filter((n) => (nextIncomingCount.get(n.id) || 0) === 0)
+  const orderedMessageIds: string[] = []
+  const visitedMessages = new Set<string>()
+
+  const walkMessageBackbone = (startId: string) => {
+    let cur: string | null = startId
+    while (cur && !visitedMessages.has(cur)) {
+      visitedMessages.add(cur)
+      orderedMessageIds.push(cur)
+      const nextTargets = (nextTargetsByMessageId.get(cur) || [])
+        .filter((id) => !visitedMessages.has(id))
+        .sort((a, b) => compareNodesByTime(messageById.get(a), messageById.get(b)))
+      cur = nextTargets.length ? nextTargets[0] : null
+    }
+  }
+
+  for (const msg of [...headMessages, ...sortedMessages]) {
+    if (!visitedMessages.has(msg.id)) walkMessageBackbone(msg.id)
+  }
+
+  const userMessageIds = new Set(sortedMessages.filter((n) => roleFromNode(n) === 'user').map((n) => n.id))
+  const anchorByMessageId = new Map<string, string>()
+  let lastUserAnchor: string | null = null
+  for (const msgId of orderedMessageIds) {
+    const role = roleByMessageId.get(msgId) || ''
+    if (role === 'user') {
+      anchorByMessageId.set(msgId, msgId)
+      lastUserAnchor = msgId
+      continue
+    }
+
+    const replyToId = replyTargetByNodeId.get(msgId)
+    if (replyToId && userMessageIds.has(replyToId)) {
+      anchorByMessageId.set(msgId, replyToId)
+      lastUserAnchor = replyToId
+      continue
+    }
+    if (replyToId && anchorByMessageId.has(replyToId)) {
+      anchorByMessageId.set(msgId, anchorByMessageId.get(replyToId) || msgId)
+      continue
+    }
+    if (lastUserAnchor) {
+      anchorByMessageId.set(msgId, lastUserAnchor)
+      continue
+    }
+    anchorByMessageId.set(msgId, msgId)
+  }
+
+  const fallbackAnchor = orderedMessageIds[0]
+  const previousAnchorByNodeId = new Map<string, string>()
+  let runningAnchor = anchorByMessageId.get(fallbackAnchor) || fallbackAnchor
+  for (const node of ordered) {
+    if (node.type === 'Message') {
+      runningAnchor = anchorByMessageId.get(node.id) || node.id
+    }
+    previousAnchorByNodeId.set(node.id, runningAnchor)
+  }
+
+  const rowsByAnchorId = new Map<string, any[]>()
+  const rowOrder: string[] = []
+  const ensureRow = (anchorId: string) => {
+    if (!rowsByAnchorId.has(anchorId)) {
+      rowsByAnchorId.set(anchorId, [])
+      rowOrder.push(anchorId)
+    }
+  }
+
+  for (const msgId of orderedMessageIds) {
+    ensureRow(anchorByMessageId.get(msgId) || msgId)
+  }
+
+  for (const node of ordered) {
+    let anchorId: string | null = null
+    if (node.type === 'Message') {
+      anchorId = anchorByMessageId.get(node.id) || node.id
+    } else {
+      const replyToId = replyTargetByNodeId.get(node.id)
+      if (replyToId && userMessageIds.has(replyToId)) {
+        anchorId = replyToId
+      } else if (replyToId && anchorByMessageId.has(replyToId)) {
+        anchorId = anchorByMessageId.get(replyToId) || null
+      }
+    }
+    if (!anchorId) anchorId = previousAnchorByNodeId.get(node.id) || fallbackAnchor
+    ensureRow(anchorId)
+    rowsByAnchorId.get(anchorId)?.push(node)
+  }
+
+  const rowItemPriority = (node: any, anchorId: string): number => {
+    if (node.id === anchorId) return -100
+    if (node.type === 'Message') {
+      const role = roleFromNode(node)
+      if (role === 'assistant') return -80
+      if (role === 'user') return -70
+      return -60
+    }
+    if (node.type === 'Decision') return -40
+    if (node.type === 'Assumption') return -30
+    if (node.type === 'Plan') return -20
+    if (node.type === 'MemoryItem') return -10
+    if (node.type === 'Resource') return 10
+    return 20
+  }
+
+  const centerX = 380
+  const sideGap = 280
+  const rowGap = 190
+  const baseY = 90
+
+  for (let rowIndex = 0; rowIndex < rowOrder.length; rowIndex += 1) {
+    const anchorId = rowOrder[rowIndex]
+    const rowY = baseY + rowIndex * rowGap
+    const rowNodes = [...(rowsByAnchorId.get(anchorId) || [])].sort((a, b) => {
+      const ap = rowItemPriority(a, anchorId)
+      const bp = rowItemPriority(b, anchorId)
+      if (ap !== bp) return ap - bp
+      return compareNodesByTime(a, b)
+    })
+    if (rowNodes.length === 0) continue
+
+    const anchorNode = rowNodes.find((n) => n.id === anchorId) || rowNodes[0]
+    autoPositionById.set(anchorNode.id, { x: centerX, y: rowY })
+
+    const others = rowNodes.filter((n) => n.id !== anchorNode.id)
+    for (let i = 0; i < others.length; i += 1) {
+      const node = others[i]
+      const side = i % 2 === 0 ? 1 : -1
+      const layer = Math.floor(i / 2) + 1
+      autoPositionById.set(node.id, {
+        x: centerX + side * sideGap * layer,
+        y: rowY,
+      })
+    }
+  }
+
+  for (const node of ordered) {
+    if (!autoPositionById.has(node.id)) {
+      autoPositionById.set(node.id, { x: 250, y: 90 + ordered.indexOf(node) * 140 })
+    }
+  }
+
+  return autoPositionById
 }
 
 function payloadPretty(s: string | undefined): string {
@@ -177,6 +439,25 @@ function viewFoldEdgeStyle(): { stroke: string; strokeWidth: number; strokeDasha
     strokeWidth: 1.3,
     strokeDasharray: '4 4',
     opacity: 0.66,
+  }
+}
+
+function hierarchyBackboneEdgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity?: number } {
+  if (edgeType === 'NEXT') {
+    return { stroke: '#334155', strokeWidth: 1.9, opacity: 0.9 }
+  }
+  if (edgeType === 'REPLY_TO') {
+    return { stroke: '#60a5fa', strokeWidth: 1.4, strokeDasharray: '4 4', opacity: 0.7 }
+  }
+  return { stroke: '#94a3b8', strokeWidth: 1.3, strokeDasharray: '3 4', opacity: 0.72 }
+}
+
+function hierarchyDetailConnectorStyle(): { stroke: string; strokeWidth: number; strokeDasharray: string; opacity: number } {
+  return {
+    stroke: '#64748b',
+    strokeWidth: 1.25,
+    strokeDasharray: '4 4',
+    opacity: 0.62,
   }
 }
 
@@ -254,7 +535,7 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
 
   return (
     <div
-      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''} ${data.layoutEditable ? 'isLayoutEditable' : ''}`}
+      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''} ${data.layoutEditable ? 'isLayoutEditable' : ''} ${data.hierarchyClass || ''}`}
       title="클릭: 선택 · 더블클릭: 상세/분할 또는 Fold view-unfold · 카드 이동: 노드 드래그 · Active 추가: 아래 버튼 드래그"
     >
       <Handle type="target" position={Position.Top} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
@@ -267,6 +548,19 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
       </div>
       <div className="graphNodeSnippet">{previewText(data.text)}</div>
       <div className="graphNodeMeta">{data.createdAt || ''}</div>
+      {data.hierarchyAssistant && (
+        <button
+          type="button"
+          className="graphNodeExpandToggle nodrag nopan"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            data.onToggleHierarchyExpand?.(data.id)
+          }}
+        >
+          {data.hierarchyExpanded ? 'Hide detail nodes' : `Show detail nodes (${data.hierarchyDetailCount || 0})`}
+        </button>
+      )}
       <button
         className="graphNodeDragToActive nodrag nopan"
         draggable
@@ -307,6 +601,8 @@ export default function GraphPanel({
   const [newEdgeType, setNewEdgeType] = useState('NEXT')
   const [showFoldMembers, setShowFoldMembers] = useState(false)
   const [nodeTypeFilter, setNodeTypeFilter] = useState<'all' | 'resources' | 'non_resources'>('all')
+  const [viewMode, setViewMode] = useState<ViewMode>('conversation_hierarchy')
+  const [showHierarchySemanticEdges, setShowHierarchySemanticEdges] = useState(true)
   const [zoom, setZoom] = useState(1)
   const [viewport, setViewport] = useState<ViewportState>({ x: 0, y: 0, zoom: 1 })
 
@@ -327,6 +623,7 @@ export default function GraphPanel({
   const [manualPositionsById, setManualPositionsById] = useState<Record<string, { x: number; y: number }>>({})
   const [layoutSaving, setLayoutSaving] = useState(false)
   const [layoutSaveError, setLayoutSaveError] = useState('')
+  const [expandedAssistantReplyIds, setExpandedAssistantReplyIds] = useState<string[]>([])
 
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const lastZoomRef = useRef<number | null>(null)
@@ -336,7 +633,9 @@ export default function GraphPanel({
   const lastSavedLayoutHashRef = useRef<string>('')
   const initialFitDoneRef = useRef(false)
 
-  const autoDetailByZoom = zoom >= 1.6
+  const isConversationHierarchyView = viewMode === 'conversation_hierarchy'
+  const effectiveLayoutMode: 'manual' | 'auto' = isConversationHierarchyView ? 'auto' : layoutMode
+  const autoDetailByZoom = !isConversationHierarchyView && zoom >= 1.6
   const activeSet = useMemo(() => new Set(activeNodeIds), [activeNodeIds])
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds])
 
@@ -344,6 +643,10 @@ export default function GraphPanel({
   const selectedNodes = useMemo(() => selectedNodeIds.map((id) => nodesById.get(id)).filter(Boolean), [selectedNodeIds, nodesById])
   const singleSelectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null
   const singleSelectedFoldId = singleSelectedNode && singleSelectedNode.type === 'Fold' ? singleSelectedNode.id : null
+  const singleSelectedAssistantId =
+    singleSelectedNode && singleSelectedNode.type === 'Message' && roleFromNode(singleSelectedNode) === 'assistant'
+      ? singleSelectedNode.id
+      : null
 
   const hasInactiveSelected = useMemo(() => selectedNodeIds.some((id) => !activeSet.has(id)), [selectedNodeIds, activeSet])
   const hasActiveSelected = useMemo(() => selectedNodeIds.some((id) => activeSet.has(id)), [selectedNodeIds, activeSet])
@@ -534,7 +837,344 @@ export default function GraphPanel({
     setPendingLinkSourceId(null)
   }, [selectedNodeIds])
 
+  useEffect(() => {
+    const validAssistantIds = new Set(
+      nodes
+        .filter((n) => n.type === 'Message' && roleFromNode(n) === 'assistant')
+        .map((n) => n.id),
+    )
+    setExpandedAssistantReplyIds((prev) => {
+      const next = prev.filter((id) => validAssistantIds.has(id))
+      if (next.length === prev.length && next.every((id, idx) => id === prev[idx])) {
+        return prev
+      }
+      return next
+    })
+  }, [nodes])
+
+  const toggleAssistantReplyExpansion = useCallback((assistantId: string) => {
+    const isExpanded = expandedAssistantReplyIds.includes(assistantId)
+    if (isExpanded && selectedNodeIds.length === 1 && selectedNodeIds[0] === assistantId) {
+      setSelectedNodeId(null)
+      onSelectionChange([])
+    }
+    setExpandedAssistantReplyIds((prev) => {
+      if (isExpanded) {
+        return prev.filter((id) => id !== assistantId)
+      }
+      return [...prev, assistantId]
+    })
+  }, [expandedAssistantReplyIds, selectedNodeIds, onSelectionChange])
+
+  const hierarchyProjection = useMemo<HierarchyProjection>(() => {
+    const sortedNodes = [...nodes].sort(compareNodesByTime)
+    const nodeById = new Map(sortedNodes.map((n) => [n.id, n]))
+    const messageNodes = sortedNodes.filter((n) => n.type === 'Message')
+    const messageNodeIds = new Set(messageNodes.map((n) => n.id))
+
+    if (messageNodes.length === 0) {
+      const visibleNodeIds = new Set<string>(sortedNodes.map((n) => n.id))
+      const orderedVisibleIds = sortedNodes.map((n) => n.id)
+      const positionsById = new Map<string, { x: number; y: number }>()
+      for (let i = 0; i < orderedVisibleIds.length; i += 1) {
+        positionsById.set(orderedVisibleIds[i], { x: 360, y: 90 + i * 140 })
+      }
+      return {
+        visibleNodeIds,
+        orderedVisibleIds,
+        positionsById,
+        assistantDetailIds: new Map(),
+        detailParentById: new Map(),
+        visibleDetailNodeIds: new Set(),
+        expandedAssistantIds: new Set(),
+        messageNodeIds,
+        backboneMessageIds: [],
+      }
+    }
+
+    const sortedEdges = [...edges].sort((a: any, b: any) => {
+      const p = edgePriority(a.type) - edgePriority(b.type)
+      if (p !== 0) return p
+      const av = a.created_at || ''
+      const bv = b.created_at || ''
+      if (av < bv) return -1
+      if (av > bv) return 1
+      return (a.id || '').localeCompare(b.id || '')
+    })
+
+    const outgoingByNodeId = new Map<string, any[]>()
+    const incomingByNodeId = new Map<string, any[]>()
+    for (const e of sortedEdges) {
+      const out = outgoingByNodeId.get(e.from_id) || []
+      out.push(e)
+      outgoingByNodeId.set(e.from_id, out)
+
+      const incoming = incomingByNodeId.get(e.to_id) || []
+      incoming.push(e)
+      incomingByNodeId.set(e.to_id, incoming)
+    }
+
+    const roleByMessageId = new Map<string, string>()
+    const assistantIds = new Set<string>()
+    const userIds = new Set<string>()
+    for (const message of messageNodes) {
+      const role = roleFromNode(message)
+      roleByMessageId.set(message.id, role)
+      if (role === 'assistant') assistantIds.add(message.id)
+      if (role === 'user') userIds.add(message.id)
+    }
+
+    const payloadByNodeId = new Map<string, Record<string, any>>()
+    for (const node of sortedNodes) {
+      payloadByNodeId.set(node.id, parseNodePayload(node))
+    }
+
+    const assistantIdsByUserId = new Map<string, string[]>()
+    let lastUserId: string | null = null
+    for (const message of messageNodes) {
+      const role = roleByMessageId.get(message.id) || ''
+      if (role === 'user') {
+        lastUserId = message.id
+        continue
+      }
+      if (role !== 'assistant') continue
+
+      const explicitReplyToUserId =
+        (outgoingByNodeId.get(message.id) || [])
+          .find((e) => e.type === 'REPLY_TO' && userIds.has(e.to_id))
+          ?.to_id || null
+      const anchorUserId = explicitReplyToUserId || lastUserId
+      if (!anchorUserId) continue
+      const arr = assistantIdsByUserId.get(anchorUserId) || []
+      if (!arr.includes(message.id)) {
+        arr.push(message.id)
+      }
+      assistantIdsByUserId.set(anchorUserId, arr)
+    }
+
+    const chooseAssistantForUser = (userId: string, createdAt: string): string | null => {
+      const candidates = assistantIdsByUserId.get(userId) || []
+      if (candidates.length === 0) return null
+      if (!createdAt) return candidates[candidates.length - 1]
+      let chosen = candidates[0]
+      for (const assistantId of candidates) {
+        const assistantTime = nodeById.get(assistantId)?.created_at || ''
+        if (assistantTime <= createdAt) {
+          chosen = assistantId
+          continue
+        }
+        break
+      }
+      return chosen
+    }
+
+    const detailParentById = new Map<string, string>()
+    const nonMessageNodes = sortedNodes.filter((n) => n.type !== 'Message')
+
+    const resolveDirectParent = (node: any): string | null => {
+      const payloadParentId = payloadByNodeId.get(node.id)?.parent_id
+      if (payloadParentId && assistantIds.has(payloadParentId)) {
+        return payloadParentId
+      }
+
+      for (const e of incomingByNodeId.get(node.id) || []) {
+        if (!assistantIds.has(e.from_id)) continue
+        if (e.type === 'HAS_PART' || e.type === 'ATTACHED_TO' || e.type === 'NEXT') {
+          return e.from_id
+        }
+      }
+
+      for (const e of outgoingByNodeId.get(node.id) || []) {
+        if (e.type === 'SPLIT_FROM' && assistantIds.has(e.to_id)) {
+          return e.to_id
+        }
+      }
+
+      for (const e of outgoingByNodeId.get(node.id) || []) {
+        if (e.type !== 'REPLY_TO') continue
+        if (!userIds.has(e.to_id)) continue
+        const mappedAssistant = chooseAssistantForUser(e.to_id, node.created_at || '')
+        if (mappedAssistant) return mappedAssistant
+      }
+
+      return null
+    }
+
+    for (const node of nonMessageNodes) {
+      const directParent = resolveDirectParent(node)
+      if (directParent) {
+        detailParentById.set(node.id, directParent)
+      }
+    }
+
+    const relationTypes = new Set(['NEXT', 'NEXT_PART', 'HAS_PART', 'ATTACHED_TO', 'SPLIT_FROM', 'RELATED', 'SUPPORTS', 'REFERENCES', 'DEPENDS'])
+    for (let pass = 0; pass < 3; pass += 1) {
+      let changed = false
+      for (const node of nonMessageNodes) {
+        if (detailParentById.has(node.id)) continue
+
+        for (const e of incomingByNodeId.get(node.id) || []) {
+          if (!relationTypes.has(e.type)) continue
+          if (assistantIds.has(e.from_id)) {
+            detailParentById.set(node.id, e.from_id)
+            changed = true
+            break
+          }
+          const parent = detailParentById.get(e.from_id)
+          if (parent) {
+            detailParentById.set(node.id, parent)
+            changed = true
+            break
+          }
+        }
+        if (detailParentById.has(node.id)) continue
+
+        for (const e of outgoingByNodeId.get(node.id) || []) {
+          if (!relationTypes.has(e.type)) continue
+          if (assistantIds.has(e.to_id)) {
+            detailParentById.set(node.id, e.to_id)
+            changed = true
+            break
+          }
+          const parent = detailParentById.get(e.to_id)
+          if (parent) {
+            detailParentById.set(node.id, parent)
+            changed = true
+            break
+          }
+        }
+      }
+      if (!changed) break
+    }
+
+    const assistantDetailIds = new Map<string, string[]>()
+    for (const [detailId, assistantId] of detailParentById.entries()) {
+      if (!assistantIds.has(assistantId)) continue
+      const arr = assistantDetailIds.get(assistantId) || []
+      arr.push(detailId)
+      assistantDetailIds.set(assistantId, arr)
+    }
+    for (const [assistantId, detailIds] of assistantDetailIds.entries()) {
+      assistantDetailIds.set(
+        assistantId,
+        detailIds.sort((a, b) => compareNodesByTime(nodeById.get(a), nodeById.get(b))),
+      )
+    }
+
+    const focusCandidates = [...selectedNodeIds].reverse()
+    if (selectedNodeId) focusCandidates.unshift(selectedNodeId)
+    let focusedAssistantId: string | null = null
+    for (const id of focusCandidates) {
+      if (!id) continue
+      if (assistantIds.has(id)) {
+        focusedAssistantId = id
+        break
+      }
+      const parentId = detailParentById.get(id)
+      if (parentId && assistantIds.has(parentId)) {
+        focusedAssistantId = parentId
+        break
+      }
+    }
+
+    const expandedAssistantIds = new Set(expandedAssistantReplyIds.filter((id) => assistantIds.has(id)))
+    if (focusedAssistantId) {
+      expandedAssistantIds.add(focusedAssistantId)
+    }
+
+    const visibleNodeIds = new Set<string>(messageNodes.map((n) => n.id))
+    const visibleDetailNodeIds = new Set<string>()
+    for (const assistantId of expandedAssistantIds) {
+      for (const detailId of assistantDetailIds.get(assistantId) || []) {
+        visibleNodeIds.add(detailId)
+        visibleDetailNodeIds.add(detailId)
+      }
+    }
+
+    const backboneMessageIds = buildMessageBackboneOrder(messageNodes, edges)
+    const positionsById = new Map<string, { x: number; y: number }>()
+    const orderedVisibleIds: string[] = []
+    const orderedVisibleIdSet = new Set<string>()
+
+    const centerX = 390
+    const baseY = 90
+    const messageGapY = 168
+    const detailCols = 3
+    const detailGapX = 205
+    const detailGapY = 116
+
+    let cursorY = baseY
+
+    for (const messageId of backboneMessageIds) {
+      const msg = nodeById.get(messageId)
+      if (!msg) continue
+
+      const role = roleByMessageId.get(messageId) || ''
+      const spineOffsetX = role === 'assistant' ? 24 : role === 'user' ? -24 : 0
+      const msgPos = { x: centerX + spineOffsetX, y: cursorY }
+      positionsById.set(messageId, msgPos)
+      if (!orderedVisibleIdSet.has(messageId)) {
+        orderedVisibleIds.push(messageId)
+        orderedVisibleIdSet.add(messageId)
+      }
+
+      const visibleDetailIds = (assistantDetailIds.get(messageId) || []).filter((id) => visibleDetailNodeIds.has(id))
+      if (visibleDetailIds.length > 0) {
+        for (let i = 0; i < visibleDetailIds.length; i += 1) {
+          const detailId = visibleDetailIds[i]
+          const row = Math.floor(i / detailCols)
+          const rowStart = row * detailCols
+          const itemsInRow = Math.min(detailCols, visibleDetailIds.length - rowStart)
+          const colInRow = i - rowStart
+          const centeredCol = colInRow - (itemsInRow - 1) / 2
+
+          positionsById.set(detailId, {
+            x: msgPos.x + centeredCol * detailGapX,
+            y: msgPos.y + 108 + row * detailGapY,
+          })
+          if (!orderedVisibleIdSet.has(detailId)) {
+            orderedVisibleIds.push(detailId)
+            orderedVisibleIdSet.add(detailId)
+          }
+        }
+
+        const detailRows = Math.ceil(visibleDetailIds.length / detailCols)
+        cursorY += messageGapY + detailRows * detailGapY
+      } else {
+        cursorY += messageGapY
+      }
+    }
+
+    for (const node of sortedNodes) {
+      if (!visibleNodeIds.has(node.id)) continue
+      if (!positionsById.has(node.id)) {
+        positionsById.set(node.id, { x: centerX, y: cursorY })
+        cursorY += messageGapY
+      }
+      if (!orderedVisibleIdSet.has(node.id)) {
+        orderedVisibleIds.push(node.id)
+        orderedVisibleIdSet.add(node.id)
+      }
+    }
+
+    return {
+      visibleNodeIds,
+      orderedVisibleIds,
+      positionsById,
+      assistantDetailIds,
+      detailParentById,
+      visibleDetailNodeIds,
+      expandedAssistantIds,
+      messageNodeIds,
+      backboneMessageIds,
+    }
+  }, [nodes, edges, expandedAssistantReplyIds, selectedNodeId, selectedNodeIds])
+
   const visibleNodeIds = useMemo(() => {
+    if (isConversationHierarchyView) {
+      return hierarchyProjection.visibleNodeIds
+    }
+
     const passesTypeFilter = (n: any) => {
       if (nodeTypeFilter === 'resources') return n.type === 'Resource'
       if (nodeTypeFilter === 'non_resources') return n.type !== 'Resource'
@@ -558,23 +1198,70 @@ export default function GraphPanel({
       }
     }
     return out
-  }, [nodes, showFoldMembers, autoDetailByZoom, nodeTypeFilter, memberToFold, expandedFoldSet])
+  }, [isConversationHierarchyView, hierarchyProjection.visibleNodeIds, nodes, showFoldMembers, autoDetailByZoom, nodeTypeFilter, memberToFold, expandedFoldSet])
 
   const desiredNodes = useMemo(() => {
+    if (isConversationHierarchyView) {
+      const ordered = hierarchyProjection.orderedVisibleIds
+        .map((id) => nodesById.get(id))
+        .filter(Boolean)
+
+      return ordered.map((n: any) => {
+        const role = roleFromNode(n)
+        const active = activeSet.has(n.id)
+        const expandedFold = expandedFoldSet.has(n.id)
+        const expandedMember = expandedMemberSet.has(n.id)
+        const isMessage = n.type === 'Message'
+        const isAssistant = isMessage && role === 'assistant'
+        const isDetail = hierarchyProjection.visibleDetailNodeIds.has(n.id)
+        const detailCount = hierarchyProjection.assistantDetailIds.get(n.id)?.length || 0
+
+        const hierarchyClass = [
+          isMessage ? 'hierarchy-backbone' : '',
+          isMessage && role === 'assistant' ? 'hierarchy-assistant' : '',
+          isMessage && role === 'user' ? 'hierarchy-user' : '',
+          isDetail ? 'hierarchy-detail' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+
+        return {
+          id: n.id,
+          type: 'contextNode',
+          className: `${expandedFold ? 'is-expanded-fold' : ''} ${expandedMember ? 'is-expanded-member' : ''}`.trim(),
+          position: hierarchyProjection.positionsById.get(n.id) || { x: 250, y: 90 },
+          selected: selectedSet.has(n.id),
+          draggable: false,
+          data: {
+            id: n.id,
+            typeLabel: n.type,
+            role,
+            text: n.text || '',
+            createdAt: n.created_at,
+            active,
+            toneClass: nodeToneClass(n.type, role),
+            expandedFold,
+            expandedMember,
+            pendingLinkSource: pendingLinkSourceId === n.id,
+            layoutEditable: false,
+            hierarchyClass,
+            hierarchyAssistant: isAssistant && detailCount > 0,
+            hierarchyExpanded: expandedAssistantReplyIds.includes(n.id),
+            hierarchyDetailCount: detailCount,
+            onToggleHierarchyExpand: toggleAssistantReplyExpansion,
+          },
+          style: {
+            width: isDetail ? 196 : 252,
+          },
+        }
+      })
+    }
+
     const ordered = [...nodes]
       .filter((n) => visibleNodeIds.has(n.id))
-      .sort((a, b) => {
-        const av = a.created_at || ''
-        const bv = b.created_at || ''
-        if (av < bv) return -1
-        if (av > bv) return 1
-        return (a.id || '').localeCompare(b.id || '')
-      })
+      .sort(compareNodesByTime)
 
-    const autoPositionById = new Map<string, { x: number; y: number }>()
-    for (let i = 0; i < ordered.length; i += 1) {
-      autoPositionById.set(ordered[i].id, { x: 250, y: 90 + i * 140 })
-    }
+    const autoPositionById = buildTurnLanePositions(ordered, edges)
 
     for (const foldId of viewExpandedFoldIds) {
       if (!visibleNodeIds.has(foldId)) continue
@@ -609,9 +1296,9 @@ export default function GraphPanel({
         id: n.id,
         type: 'contextNode',
         className: `${expandedFold ? 'is-expanded-fold' : ''} ${expandedMember ? 'is-expanded-member' : ''}`.trim(),
-        position: (layoutMode === 'manual' ? (manualPositionsById[n.id] || readNodeUiPosition(n)) : null) || autoPositionById.get(n.id) || { x: 250, y: 90 },
+        position: (effectiveLayoutMode === 'manual' ? (manualPositionsById[n.id] || readNodeUiPosition(n)) : null) || autoPositionById.get(n.id) || { x: 250, y: 90 },
         selected: selectedSet.has(n.id),
-        draggable: layoutMode === 'manual',
+        draggable: effectiveLayoutMode === 'manual',
         data: {
           id: n.id,
           typeLabel: n.type,
@@ -623,16 +1310,112 @@ export default function GraphPanel({
           expandedFold,
           expandedMember,
           pendingLinkSource: pendingLinkSourceId === n.id,
-          layoutEditable: layoutMode === 'manual',
+          layoutEditable: effectiveLayoutMode === 'manual',
         },
         style: {
           width: 230,
         },
       }
     })
-  }, [nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId, layoutMode, manualPositionsById])
+  }, [isConversationHierarchyView, hierarchyProjection, expandedAssistantReplyIds, nodesById, nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId, effectiveLayoutMode, manualPositionsById, toggleAssistantReplyExpansion])
 
   const desiredEdges = useMemo(() => {
+    if (isConversationHierarchyView) {
+      const nodeIds = hierarchyProjection.visibleNodeIds
+      const messageNodeIds = hierarchyProjection.messageNodeIds
+      const detailParentById = hierarchyProjection.detailParentById
+      const visibleDetailNodeIds = hierarchyProjection.visibleDetailNodeIds
+      const expandedAssistantIds = hierarchyProjection.expandedAssistantIds
+
+      const sortedEdges = [...edges].sort((a: any, b: any) => {
+        const p = edgePriority(a.type) - edgePriority(b.type)
+        if (p !== 0) return p
+        const av = a.created_at || ''
+        const bv = b.created_at || ''
+        if (av < bv) return -1
+        if (av > bv) return 1
+        return (a.id || '').localeCompare(b.id || '')
+      })
+
+      const out: any[] = []
+      const realBackboneEdgeKeys = new Set<string>()
+
+      for (const e of sortedEdges) {
+        if (!nodeIds.has(e.from_id) || !nodeIds.has(e.to_id)) continue
+        if (!(messageNodeIds.has(e.from_id) && messageNodeIds.has(e.to_id))) continue
+        if (e.type !== 'NEXT' && e.type !== 'REPLY_TO') continue
+        out.push({
+          id: e.id,
+          source: e.from_id,
+          target: e.to_id,
+          type: 'smoothstep',
+          label: e.type,
+          style: hierarchyBackboneEdgeStyle(e.type),
+          deletable: true,
+          selectable: true,
+        })
+        realBackboneEdgeKeys.add(`${e.from_id}|${e.to_id}|${e.type}`)
+      }
+
+      for (let i = 1; i < hierarchyProjection.backboneMessageIds.length; i += 1) {
+        const sourceId = hierarchyProjection.backboneMessageIds[i - 1]
+        const targetId = hierarchyProjection.backboneMessageIds[i]
+        if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) continue
+        const key = `${sourceId}|${targetId}|NEXT`
+        if (realBackboneEdgeKeys.has(key)) continue
+        out.push({
+          id: `hier-backbone:${sourceId}:${targetId}`,
+          source: sourceId,
+          target: targetId,
+          type: 'smoothstep',
+          label: 'NEXT',
+          style: hierarchyBackboneEdgeStyle('NEXT'),
+          deletable: false,
+          selectable: false,
+        })
+      }
+
+      for (const assistantId of expandedAssistantIds) {
+        const detailIds = (hierarchyProjection.assistantDetailIds.get(assistantId) || [])
+          .filter((detailId) => visibleDetailNodeIds.has(detailId))
+        for (const detailId of detailIds) {
+          out.push({
+            id: `hier-detail:${assistantId}:${detailId}`,
+            source: assistantId,
+            target: detailId,
+            type: 'smoothstep',
+            label: 'detail',
+            style: hierarchyDetailConnectorStyle(),
+            deletable: false,
+            selectable: false,
+          })
+        }
+      }
+
+      if (showHierarchySemanticEdges) {
+        for (const e of sortedEdges) {
+          if (!visibleDetailNodeIds.has(e.from_id) || !visibleDetailNodeIds.has(e.to_id)) continue
+          if (!HIERARCHY_SEMANTIC_EDGE_TYPES.has(e.type)) continue
+          const fromParent = detailParentById.get(e.from_id)
+          const toParent = detailParentById.get(e.to_id)
+          if (!fromParent || !toParent || fromParent !== toParent) continue
+          if (!expandedAssistantIds.has(fromParent)) continue
+          out.push({
+            id: e.id,
+            source: e.from_id,
+            target: e.to_id,
+            type: 'smoothstep',
+            label: e.type,
+            style: virtualEdgeStyle(e.type),
+            deletable: true,
+            selectable: true,
+          })
+        }
+      }
+
+      return out
+    }
+
     const collapsedMode = !(showFoldMembers || autoDetailByZoom)
     const nodeIds = visibleNodeIds
 
@@ -758,7 +1541,7 @@ export default function GraphPanel({
     }
 
     return out
-  }, [visibleNodeIds, edges, showFoldMembers, autoDetailByZoom, memberToFold, expandedFoldSet])
+  }, [isConversationHierarchyView, hierarchyProjection, showHierarchySemanticEdges, visibleNodeIds, edges, showFoldMembers, autoDetailByZoom, memberToFold, expandedFoldSet])
 
   useEffect(() => {
     setRfNodes((prev) => mergeNodePositions(prev, desiredNodes as RFNode[]))
@@ -782,8 +1565,8 @@ export default function GraphPanel({
   }, [selectedSet, setRfNodes])
 
   const graphSignature = useMemo(
-    () => `${nodes.map((n: any) => n.id).sort().join(',')}|${edges.map((e: any) => e.id).sort().join(',')}`,
-    [nodes, edges],
+    () => `${viewMode}|${nodes.map((n: any) => n.id).sort().join(',')}|${edges.map((e: any) => e.id).sort().join(',')}`,
+    [viewMode, nodes, edges],
   )
 
   const fitViewNow = useCallback(() => {
@@ -894,7 +1677,7 @@ export default function GraphPanel({
   }, [rfInstance])
 
   const handleNodeDragStop = useCallback((_evt: any, node: any) => {
-    if (layoutMode !== 'manual') return
+    if (effectiveLayoutMode !== 'manual') return
     if (!node?.id) return
 
     setManualPositionsById((prev) => ({
@@ -909,7 +1692,7 @@ export default function GraphPanel({
       y: n.position.y,
     }))
     queueLayoutSave(positions)
-  }, [layoutMode, rfInstance, onSaveLayout, queueLayoutSave])
+  }, [effectiveLayoutMode, rfInstance, onSaveLayout, queueLayoutSave])
 
   const handleSelectionChange = useCallback((sel: { nodes?: { id: string }[] } | null | undefined) => {
     const ids = (sel?.nodes || []).map((n) => n.id)
@@ -951,12 +1734,16 @@ export default function GraphPanel({
   const handleNodeDoubleClick = useCallback((_evt: any, node: any) => {
     if (!node?.id) return
     const n = nodesById.get(node.id)
+    if (isConversationHierarchyView && n?.type === 'Message' && roleFromNode(n) === 'assistant') {
+      toggleAssistantReplyExpansion(node.id)
+      return
+    }
     if (n?.type === 'Fold') {
       toggleViewUnfold(node.id)
       return
     }
     if (onNodeOpenDetail) onNodeOpenDetail(node.id)
-  }, [nodesById, onNodeOpenDetail, toggleViewUnfold])
+  }, [isConversationHierarchyView, nodesById, onNodeOpenDetail, toggleViewUnfold, toggleAssistantReplyExpansion])
 
   const handlePaneClick = useCallback(() => {
     setSelectedNodeId(null)
@@ -1025,6 +1812,12 @@ export default function GraphPanel({
     toggleViewUnfold(singleSelectedFoldId)
     setMenuOpen(false)
   }, [singleSelectedFoldId, toggleViewUnfold])
+
+  const handleToggleAssistantReplyFromSelection = useCallback(() => {
+    if (!singleSelectedAssistantId) return
+    toggleAssistantReplyExpansion(singleSelectedAssistantId)
+    setMenuOpen(false)
+  }, [singleSelectedAssistantId, toggleAssistantReplyExpansion])
 
   const handleCommitUnfoldSelectedFold = useCallback(() => {
     if (!singleSelectedFoldId || !onCommitUnfold) return
@@ -1123,29 +1916,69 @@ export default function GraphPanel({
       onMouseDown={() => wrapRef.current?.focus()}
     >
       <div className="graphTools">
-        <button onClick={() => setShowFoldMembers((v) => !v)}>
-          {showFoldMembers ? 'Hide Fold Members' : 'Show Fold Members'}
-        </button>
+        <span className="muted">View</span>
+        <select value={viewMode} onChange={(e) => setViewMode(e.target.value as ViewMode)}>
+          <option value="conversation_hierarchy">Conversation Hierarchy</option>
+          <option value="raw_graph">Raw Graph</option>
+        </select>
+
+        {isConversationHierarchyView ? (
+          <>
+            <button
+              onClick={() => {
+                setExpandedAssistantReplyIds([])
+                if (singleSelectedAssistantId) {
+                  setSelectedNodeId(null)
+                  onSelectionChange([])
+                }
+              }}
+              disabled={expandedAssistantReplyIds.length === 0}
+            >
+              Collapse all replies
+            </button>
+            <button onClick={() => setShowHierarchySemanticEdges((v) => !v)}>
+              {showHierarchySemanticEdges ? 'Hide detail semantic edges' : 'Show detail semantic edges'}
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => setShowFoldMembers((v) => !v)}>
+              {showFoldMembers ? 'Hide Fold Members' : 'Show Fold Members'}
+            </button>
+            <span className="muted">Node Filter</span>
+            <select value={nodeTypeFilter} onChange={(e) => setNodeTypeFilter(e.target.value as any)}>
+              <option value="all">all</option>
+              <option value="resources">resources only</option>
+              <option value="non_resources">exclude resources</option>
+            </select>
+          </>
+        )}
 
         <button
           onClick={() => setLayoutMode((prev) => (prev === 'manual' ? 'auto' : 'manual'))}
-          title={layoutMode === 'manual' ? '자동 정렬 모드로 전환' : '수동 배치/저장 모드로 전환'}
+          title={
+            isConversationHierarchyView
+              ? 'Conversation Hierarchy view uses auto layout'
+              : layoutMode === 'manual'
+                ? '자동 정렬 모드로 전환'
+                : '수동 배치/저장 모드로 전환'
+          }
+          disabled={isConversationHierarchyView}
         >
-          Layout: {layoutMode === 'manual' ? 'Manual' : 'Auto'}
+          Layout: {
+            effectiveLayoutMode === 'manual'
+              ? 'Manual'
+              : isConversationHierarchyView
+                ? 'Auto / Conversation'
+                : 'Auto / Turn lanes'
+          }
         </button>
         <button onClick={fitViewNow} disabled={!rfNodes.length}>Fit View</button>
-        {layoutMode === 'manual' && (
+        {effectiveLayoutMode === 'manual' && !isConversationHierarchyView && (
           <button onClick={saveCurrentLayoutNow} disabled={!onSaveLayout || !rfNodes.length || layoutSaving}>
             {layoutSaving ? 'Saving...' : 'Save Layout'}
           </button>
         )}
-
-        <span className="muted">Node Filter</span>
-        <select value={nodeTypeFilter} onChange={(e) => setNodeTypeFilter(e.target.value as any)}>
-          <option value="all">all</option>
-          <option value="resources">resources only</option>
-          <option value="non_resources">exclude resources</option>
-        </select>
 
         <span className="muted">Zoom {zoom.toFixed(2)} {autoDetailByZoom ? '(auto detail)' : ''}</span>
 
@@ -1161,8 +1994,12 @@ export default function GraphPanel({
           </div>
         </details>
 
-        <span className="muted">Click=select, Shift+click=toggle, double-click=detail/fold-view, Space+drag=pan, Esc=clear</span>
-        {layoutMode === 'manual' && onSaveLayout && <span className="muted">드래그 후 레이아웃 자동 저장(650ms debounce)</span>}
+        <span className="muted">
+          {isConversationHierarchyView
+            ? 'Click=select, Shift+click=toggle, double-click assistant=expand/collapse details, Space+drag=pan, Esc=clear'
+            : 'Click=select, Shift+click=toggle, double-click=detail/fold-view, Space+drag=pan, Esc=clear'}
+        </span>
+        {effectiveLayoutMode === 'manual' && !isConversationHierarchyView && onSaveLayout && <span className="muted">드래그 후 레이아웃 자동 저장(650ms debounce)</span>}
         {layoutSaveError && <span className="pill graphStatusPill graphStatusPill--error">Layout save failed</span>}
         {layoutSaving && <span className="pill graphStatusPill">Saving layout…</span>}
         {pendingLinkSourceId && <span className="pill">Link source: {shortId(pendingLinkSourceId)} (대상 노드 클릭)</span>}
@@ -1181,7 +2018,7 @@ export default function GraphPanel({
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
-          nodesDraggable={layoutMode === 'manual'}
+          nodesDraggable={effectiveLayoutMode === 'manual'}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
@@ -1200,6 +2037,7 @@ export default function GraphPanel({
           panOnDrag
           panActivationKeyCode={['Space']}
           deleteKeyCode={['Backspace', 'Delete']}
+          style={{ width: '100%', height: '100%' }}
         >
           <Background />
           <MiniMap />
@@ -1248,6 +2086,11 @@ export default function GraphPanel({
                 {selectedNodeIds.length === 1 && (
                   <>
                     <button onClick={handleOpenDetail} disabled={!singleSelectedNode}>Open Detail / Split</button>
+                    {isConversationHierarchyView && singleSelectedAssistantId && (hierarchyProjection.assistantDetailIds.get(singleSelectedAssistantId)?.length || 0) > 0 && (
+                      <button onClick={handleToggleAssistantReplyFromSelection}>
+                        {expandedAssistantReplyIds.includes(singleSelectedAssistantId) ? 'Collapse detail cluster' : 'Expand detail cluster'}
+                      </button>
+                    )}
                     {hasInactiveSelected && <button onClick={handleActivateSelected} disabled={actionBusy}>Activate</button>}
                     {hasActiveSelected && <button onClick={handleDeactivateSelected} disabled={actionBusy}>Deactivate</button>}
                     {singleSelectedFoldId && (

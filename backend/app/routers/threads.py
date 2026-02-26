@@ -5,8 +5,9 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
 from app.db import engine
-from app.models import Thread, ContextSet, Node, Edge, NodeEmbedding
+from app.models import Thread, ContextSet, ContextSetVersion, Node, Edge, NodeEmbedding
 from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
+from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -40,13 +41,16 @@ ALLOWED_EDGE_TYPES = {
     "SPLIT_FROM",
     "ATTACHED_TO",
     "REFERENCES",
+    "DEPENDS",
 }
+
 
 @router.get("")
 def list_threads():
     with Session(engine) as s:
         threads = s.exec(select(Thread).order_by(Thread.created_at.desc())).all()
         return [t.model_dump() for t in threads]
+
 
 @router.post("")
 def create_thread(body: ThreadCreate):
@@ -55,9 +59,10 @@ def create_thread(body: ThreadCreate):
         s.add(t)
         s.commit()
         s.refresh(t)
-        # default context set
         cs = ContextSet(thread_id=t.id, name="default")
         s.add(cs)
+        s.flush()
+        snapshot_context_set(s, cs, reason="create", meta={"name": "default", "thread_id": t.id})
         s.commit()
     return t.model_dump()
 
@@ -72,12 +77,15 @@ def delete_thread(thread_id: str):
         edges = s.exec(select(Edge).where(Edge.thread_id == thread_id)).all()
         nodes = s.exec(select(Node).where(Node.thread_id == thread_id)).all()
         ctx_sets = s.exec(select(ContextSet).where(ContextSet.thread_id == thread_id)).all()
+        ctx_versions = s.exec(select(ContextSetVersion).where(ContextSetVersion.thread_id == thread_id)).all()
         embeddings = s.exec(select(NodeEmbedding).where(NodeEmbedding.thread_id == thread_id)).all()
 
         for e in edges:
             s.delete(e)
         for ne in embeddings:
             s.delete(ne)
+        for v in ctx_versions:
+            s.delete(v)
         for n in nodes:
             s.delete(n)
         for cs in ctx_sets:
@@ -98,9 +106,11 @@ def delete_thread(thread_id: str):
         "deleted_node_count": len(nodes),
         "deleted_edge_count": len(edges),
         "deleted_context_set_count": len(ctx_sets),
+        "deleted_context_version_count": len(ctx_versions),
         "deleted_embedding_count": len(embeddings),
         "warning": warning,
     }
+
 
 @router.get("/{thread_id}/graph")
 def get_graph(thread_id: str):
@@ -249,7 +259,7 @@ def delete_node(thread_id: str, node_id: str):
             if len(next_active) == len(active):
                 continue
             cs.active_node_ids_json = jdump(next_active)
-            s.add(cs)
+            snapshot_context_set(s, cs, reason="delete_node", changed_node_ids=[node_id], meta={"deleted_node_id": node_id})
 
         ne = s.get(NodeEmbedding, node_id)
         if ne:

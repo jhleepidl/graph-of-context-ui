@@ -39,16 +39,12 @@ export const api = {
       body: JSON.stringify({ from_id: fromId, to_id: toId, type }),
     })),
   deleteEdge: (threadId: string, edgeId: string) =>
-    j<any>(fetch(apiUrl(`/api/threads/${threadId}/edges/${edgeId}`), {
-      method: 'DELETE',
-    })),
+    j<any>(fetch(apiUrl(`/api/threads/${threadId}/edges/${edgeId}`), { method: 'DELETE' })),
   deleteNode: (threadId: string, nodeId: string) =>
-    j<any>(fetch(apiUrl(`/api/threads/${threadId}/nodes/${nodeId}`), {
-      method: 'DELETE',
-    })),
+    j<any>(fetch(apiUrl(`/api/threads/${threadId}/nodes/${nodeId}`), { method: 'DELETE' })),
 
   addMessage: (threadId: string, role: 'user'|'assistant', text: string, reply_to?: string) =>
-    j<any>(fetch(apiUrl(`/api/threads/${threadId}/messages`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role, text, reply_to })})),
+    j<any>(fetch(apiUrl(`/api/threads/${threadId}/messages`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ role, text, reply_to }) })),
 
   createResource: (
     threadId: string,
@@ -71,8 +67,7 @@ export const api = {
     }),
   ),
 
-  getNode: (nodeId: string) =>
-    j<any>(fetch(apiUrl(`/api/nodes/${nodeId}`))),
+  getNode: (nodeId: string) => j<any>(fetch(apiUrl(`/api/nodes/${nodeId}`))),
   splitNode: (
     nodeId: string,
     body: {
@@ -112,8 +107,49 @@ export const api = {
 
   ctxSets: (threadId: string) => j<any[]>(fetch(apiUrl(`/api/threads/${threadId}/context_sets`))),
   createCtx: (threadId: string, name: string) =>
-    j<any>(fetch(apiUrl('/api/context_sets'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ thread_id: threadId, name })})),
+    j<any>(fetch(apiUrl('/api/context_sets'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ thread_id: threadId, name }) })),
   ctx: (ctxId: string) => j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}`))),
+  ctxCompiled: (ctxId: string, includeExplain = true) =>
+    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/compiled?include_explain=${includeExplain ? 'true' : 'false'}`))),
+  ctxVersions: (ctxId: string, limit = 20) =>
+    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/versions?limit=${limit}`))),
+  ctxVersionDiff: (ctxId: string, fromVersion: number, toVersion: number) =>
+    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/diff?from_version=${fromVersion}&to_version=${toVersion}`))),
+  previewUnfoldPlan: (
+    ctxId: string,
+    body: {
+      query: string
+      top_k?: number
+      max_candidates?: number
+      budget_tokens?: number
+      closure_edge_types?: string[] | null
+      closure_direction?: 'out' | 'in' | 'both'
+      max_closure_nodes?: number | null
+    },
+  ) => j<any>(
+    fetch(apiUrl(`/api/context_sets/${ctxId}/unfold_plan`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
+  applyUnfoldPlan: (
+    ctxId: string,
+    body: {
+      seed_node_ids: string[]
+      budget_tokens?: number
+      closure_edge_types?: string[] | null
+      closure_direction?: 'out' | 'in' | 'both'
+      max_closure_nodes?: number | null
+      include_explain?: boolean
+    },
+  ) => j<any>(
+    fetch(apiUrl(`/api/context_sets/${ctxId}/apply_unfold_plan`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
   reorderActive: (ctxId: string, nodeIds: string[]) =>
     j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/reorder`), {
       method: 'POST',
@@ -122,18 +158,31 @@ export const api = {
     })),
 
   activate: (ctxId: string, nodeIds: string[]) =>
-    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/activate`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ node_ids: nodeIds })})),
+    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/activate`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ node_ids: nodeIds }) })),
   deactivate: (ctxId: string, nodeIds: string[]) =>
-    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/deactivate`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ node_ids: nodeIds })})),
+    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/deactivate`), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ node_ids: nodeIds }) })),
 
   fold: (threadId: string, memberIds: string[], title?: string) =>
-    j<any>(fetch(apiUrl('/api/folds'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ thread_id: threadId, member_node_ids: memberIds, title })})),
-  unfold: (ctxId: string, foldId: string) =>
-    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/unfold/${foldId}`), { method:'POST' })),
+    j<any>(fetch(apiUrl('/api/folds'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ thread_id: threadId, member_node_ids: memberIds, title }) })),
+  unfold: (
+    ctxId: string,
+    foldId: string,
+    body?: {
+      closure_edge_types?: string[] | null
+      closure_direction?: 'out' | 'in' | 'both'
+      max_closure_nodes?: number | null
+      replace_only_fold?: boolean
+      include_explain?: boolean
+    },
+  ) =>
+    j<any>(fetch(apiUrl(`/api/context_sets/${ctxId}/unfold/${foldId}`), {
+      method:'POST',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    })),
 
   run: (ctxId: string, user_message: string) =>
-    j<any>(fetch(apiUrl('/api/runs'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ context_set_id: ctxId, user_message })})),
-
+    j<any>(fetch(apiUrl('/api/runs'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ context_set_id: ctxId, user_message }) })),
 
   hierarchyPreview: (
     threadId: string,

@@ -10,15 +10,16 @@ from app.db import engine
 from app.models import ContextSet, Edge, Node
 from app.schemas import SplitNodeRequest, SplitNodeResponse
 from app.services.embedding import ensure_node_embedding
+from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, jdump, jload, replace_ids_in_order
 
 router = APIRouter(prefix="/api", tags=["nodes"])
 
-TAG_HEADER_RE = re.compile(r"^\s*\[(FINAL|DECISIONS|ASSUMPTIONS|PLAN|CONTEXT_CANDIDATES)\]\s*$")
+TAG_HEADER_RE = re.compile(r"^\s*\[(FINAL|MEMORY|NEEDS_CONTEXT|DECISIONS|ASSUMPTIONS|PLAN|CONTEXT_CANDIDATES)\]\s*$")
 HEADING_RE = re.compile(r"^\s*(?:#{1,6}\s+.+|\d+[\).\s].+)$")
 BULLET_START_RE = re.compile(r"^\s*(?:[-*•]\s+|\d+\.\s+)(.*\S)\s*$")
 FENCE_START_RE = re.compile(r"^\s*([`~]{3,})")
-BULLET_TAGS = {"DECISIONS", "ASSUMPTIONS", "PLAN", "CONTEXT_CANDIDATES"}
+BULLET_TAGS = {"MEMORY", "NEEDS_CONTEXT", "DECISIONS", "ASSUMPTIONS", "PLAN", "CONTEXT_CANDIDATES"}
 STRATEGY_CHAIN = ("tagged", "heading", "bullets", "paragraph", "sentences")
 
 
@@ -514,7 +515,7 @@ def split_node(node_id: str, body: SplitNodeRequest):
                     active.append(child.id)
                     seen_active.add(child.id)
             cs.active_node_ids_json = jdump(active)
-            s.add(cs)
+            snapshot_context_set(s, cs, reason="split_node", changed_node_ids=[child.id for child in created_nodes], meta={"parent_id": parent.id, "replace_in_active": body.replace_in_active, "strategy": strategy_used})
 
         s.commit()
 

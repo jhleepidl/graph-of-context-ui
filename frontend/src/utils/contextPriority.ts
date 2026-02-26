@@ -491,5 +491,6 @@ export function nodeTypePillClass(type?: string | null): string {
   if (type === 'Assumption') return 'pill--assumption'
   if (type === 'Plan') return 'pill--plan'
   if (type === 'ContextCandidate') return 'pill--candidate'
+  if (type === 'MemoryItem') return 'pill--memory'
   return 'pill--default'
 }

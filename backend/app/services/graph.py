@@ -1,18 +1,22 @@
 from __future__ import annotations
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlmodel import Session, select
 
+from app.goc_core import compile_active_context_records
 from app.models import Node, Edge
+
 
 def jdump(x: Any) -> str:
     return json.dumps(x, ensure_ascii=False)
+
 
 def jload(s: str, default):
     try:
         return json.loads(s)
     except Exception:
         return default
+
 
 def add_edge(thread_id: str, from_id: str, to_id: str, etype: str, payload: Optional[dict] = None) -> Edge:
     return Edge(
@@ -22,6 +26,7 @@ def add_edge(thread_id: str, from_id: str, to_id: str, etype: str, payload: Opti
         type=etype,
         payload_json=jdump(payload or {}),
     )
+
 
 def get_last_node(session: Session, thread_id: str) -> Optional[Node]:
     stmt = select(Node).where(Node.thread_id == thread_id).order_by(Node.created_at.desc()).limit(1)
@@ -53,7 +58,21 @@ def replace_ids_in_order(active_ids: List[str], old_id: str, new_ids: List[str])
     return out
 
 
-def compile_active_context(session: Session, thread_id: str, active_ids: List[str]) -> str:
+def load_thread_graph(session: Session, thread_id: str) -> Tuple[List[Node], List[Edge]]:
+    nodes = session.exec(
+        select(Node)
+        .where(Node.thread_id == thread_id)
+        .order_by(Node.created_at.asc(), Node.id.asc())
+    ).all()
+    edges = session.exec(
+        select(Edge)
+        .where(Edge.thread_id == thread_id)
+        .order_by(Edge.created_at.asc(), Edge.id.asc())
+    ).all()
+    return nodes, edges
+
+
+def _active_nodes_and_edges(session: Session, thread_id: str, active_ids: Sequence[str]) -> Tuple[List[Node], List[Edge]]:
     active_nodes: List[Node] = []
     seen_active = set()
     for nid in active_ids:
@@ -66,40 +85,40 @@ def compile_active_context(session: Session, thread_id: str, active_ids: List[st
         active_nodes.append(n)
     active_set = {n.id for n in active_nodes}
 
-    parent_to_children: Dict[str, set] = {}
-
-    for n in active_nodes:
-        meta = jload(n.payload_json, {})
-        parent_id = meta.get("parent_id")
-        if isinstance(parent_id, str) and parent_id and parent_id in active_set:
-            parent_to_children.setdefault(parent_id, set()).add(n.id)
-
+    edges: List[Edge] = []
     if active_set:
         edges = session.exec(
             select(Edge).where(
                 Edge.thread_id == thread_id,
-                Edge.type == "HAS_PART",
+                Edge.type.in_(["HAS_PART"]),
                 Edge.from_id.in_(list(active_set)),
                 Edge.to_id.in_(list(active_set)),
             )
         ).all()
-        for e in edges:
-            parent_to_children.setdefault(e.from_id, set()).add(e.to_id)
+    return active_nodes, edges
 
-    excluded_parent_ids = {pid for pid, children in parent_to_children.items() if children}
 
-    kept_nodes = [n for n in active_nodes if n.id not in excluded_parent_ids]
+def compile_active_context_explain(session: Session, thread_id: str, active_ids: List[str]) -> Dict[str, Any]:
+    active_nodes, edges = _active_nodes_and_edges(session, thread_id, active_ids)
+    text, explain = compile_active_context_records(
+        records=[
+            {
+                "id": n.id,
+                "type": n.type,
+                "text": n.text,
+                "payload_json": n.payload_json,
+                "created_at": n.created_at,
+            }
+            for n in active_nodes
+        ],
+        active_ids=active_ids,
+        edges=[{"from_id": e.from_id, "to_id": e.to_id, "type": e.type} for e in edges],
+    )
+    return {
+        "compiled_text": text,
+        "explain": explain,
+    }
 
-    parts: List[str] = []
-    for n in kept_nodes:
-        meta = jload(n.payload_json, {})
-        head = f"[{n.type} {n.id[:6]} @ {n.created_at.isoformat()}]"
-        if n.type == "Message":
-            role = meta.get("role", "?")
-            parts.append(f"{head} role={role}\n{n.text or ''}")
-        elif n.type == "Fold":
-            title = meta.get("title", "Fold")
-            parts.append(f"{head} title={title}\n{n.text or ''}")
-        else:
-            parts.append(f"{head}\n{n.text or ''}")
-    return "\n\n".join(parts).strip()
+
+def compile_active_context(session: Session, thread_id: str, active_ids: List[str]) -> str:
+    return compile_active_context_explain(session, thread_id, active_ids)["compiled_text"]

@@ -10,23 +10,57 @@ from sqlmodel import Session, select
 from app.db import engine
 from app.models import ContextSet, Node, Thread
 from app.schemas import ChatGPTImportRequest
+from app.services.context_versions import snapshot_context_set
 from app.services.embedding import ensure_nodes_embeddings
 from app.services.graph import add_edge, get_last_node, jdump, jload
 
 router = APIRouter(prefix="/api", tags=["imports"])
 logger = logging.getLogger(__name__)
 
-SECTION_TAGS = ("FINAL", "DECISIONS", "ASSUMPTIONS", "PLAN", "CONTEXT_CANDIDATES")
+SECTION_TAGS = (
+    "FINAL",
+    "MEMORY",
+    "NEEDS_CONTEXT",
+    "DECISIONS",
+    "ASSUMPTIONS",
+    "PLAN",
+    "CONTEXT_CANDIDATES",
+)
 SECTION_HEADER_RE = re.compile(
-    r"^\s*\[(FINAL|DECISIONS|ASSUMPTIONS|PLAN|CONTEXT_CANDIDATES)\]\s*$"
+    r"^\s*\[(FINAL|MEMORY|NEEDS_CONTEXT|DECISIONS|ASSUMPTIONS|PLAN|CONTEXT_CANDIDATES)\]\s*$"
 )
 BULLET_RE = re.compile(r"^\s*(?:[-*]\s+)+(.*\S)\s*$")
-LIST_TAGS = (
-    ("DECISIONS", "Decision"),
-    ("ASSUMPTIONS", "Assumption"),
-    ("PLAN", "Plan"),
-    ("CONTEXT_CANDIDATES", "ContextCandidate"),
+MEMORY_PREFIX_RE = re.compile(r"^\s*([A-Za-z가-힣_][A-Za-z0-9가-힣_\- ]{0,40})\s*:\s*(.+\S)\s*$")
+
+LEGACY_LIST_TAGS = (
+    ("DECISIONS", "Decision", "decision"),
+    ("ASSUMPTIONS", "Assumption", "assumption"),
+    ("PLAN", "Plan", "next_step"),
+    ("CONTEXT_CANDIDATES", "ContextCandidate", "needs_context"),
 )
+
+MEMORY_PREFIX_MAP = {
+    "decision": ("Decision", "decision"),
+    "결정": ("Decision", "decision"),
+    "assumption": ("Assumption", "assumption"),
+    "전제": ("Assumption", "assumption"),
+    "가정": ("Assumption", "assumption"),
+    "next_step": ("Plan", "next_step"),
+    "next step": ("Plan", "next_step"),
+    "plan": ("Plan", "next_step"),
+    "action": ("Plan", "next_step"),
+    "todo": ("Plan", "next_step"),
+    "memory": ("MemoryItem", "memory"),
+    "note": ("MemoryItem", "memory"),
+    "insight": ("MemoryItem", "memory"),
+    "fact": ("MemoryItem", "memory"),
+    "constraint": ("MemoryItem", "memory"),
+    "preference": ("MemoryItem", "memory"),
+    "기억": ("MemoryItem", "memory"),
+    "메모": ("MemoryItem", "memory"),
+    "선호": ("MemoryItem", "memory"),
+    "제약": ("MemoryItem", "memory"),
+}
 
 
 def parse_tagged_sections(raw_text: str) -> Tuple[Dict[str, str], bool]:
@@ -76,6 +110,20 @@ def parse_bullets(text: str) -> List[str]:
     return out
 
 
+def parse_memory_items(text: str) -> List[Tuple[str, str, str]]:
+    parsed: List[Tuple[str, str, str]] = []
+    for item in parse_bullets(text):
+        m = MEMORY_PREFIX_RE.match(item)
+        if not m:
+            parsed.append(("MemoryItem", item, "memory"))
+            continue
+        prefix = re.sub(r"\s+", " ", m.group(1).strip().lower())
+        clean_text = m.group(2).strip()
+        node_type, memory_kind = MEMORY_PREFIX_MAP.get(prefix, ("MemoryItem", "memory"))
+        parsed.append((node_type, clean_text, memory_kind))
+    return parsed
+
+
 def find_recent_user_message(session: Session, thread_id: str) -> Optional[Node]:
     nodes = session.exec(
         select(Node)
@@ -114,6 +162,7 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
                 reply_to_used = latest_user.id
 
         sections, found_any_tag = parse_tagged_sections(raw_text)
+        parse_mode = "tagged" if found_any_tag else "free"
         if not found_any_tag:
             sections = {"FINAL": raw_text}
 
@@ -123,6 +172,7 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
         assumption_ids: List[str] = []
         plan_ids: List[str] = []
         candidate_ids: List[str] = []
+        memory_item_ids: List[str] = []
         final_node_id: Optional[str] = None
 
         final_text = (sections.get("FINAL") or "").strip()
@@ -131,24 +181,67 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
                 thread_id=thread_id,
                 type="Message",
                 text=final_text,
-                payload_json=jdump({"role": "assistant", "source": source, "tag": "FINAL"}),
+                payload_json=jdump({"role": "assistant", "source": source, "tag": "FINAL", "parse_mode": parse_mode}),
             )
             s.add(final_node)
             s.flush()
             created_order.append(final_node)
             final_node_id = final_node.id
 
-        for tag, node_type in LIST_TAGS:
-            for item in parse_bullets(sections.get(tag, "")):
+        memory_section = sections.get("MEMORY") or ""
+        if memory_section.strip():
+            parse_mode = "light"
+            for node_type, text, memory_kind in parse_memory_items(memory_section):
                 node = Node(
                     thread_id=thread_id,
                     type=node_type,
-                    text=item,
-                    payload_json=jdump({"source": source, "tag": tag}),
+                    text=text,
+                    payload_json=jdump({"source": source, "tag": "MEMORY", "memory_kind": memory_kind, "parse_mode": "light"}),
                 )
                 s.add(node)
                 s.flush()
                 created_order.append(node)
+                if node_type == "Decision":
+                    decision_ids.append(node.id)
+                elif node_type == "Assumption":
+                    assumption_ids.append(node.id)
+                elif node_type == "Plan":
+                    plan_ids.append(node.id)
+                else:
+                    memory_item_ids.append(node.id)
+
+        needs_context_text = sections.get("NEEDS_CONTEXT") or ""
+        if needs_context_text.strip():
+            parse_mode = "light"
+            for item in parse_bullets(needs_context_text):
+                node = Node(
+                    thread_id=thread_id,
+                    type="ContextCandidate",
+                    text=item,
+                    payload_json=jdump({"source": source, "tag": "NEEDS_CONTEXT", "memory_kind": "needs_context", "parse_mode": "light"}),
+                )
+                s.add(node)
+                s.flush()
+                created_order.append(node)
+                candidate_ids.append(node.id)
+
+        legacy_item_count = 0
+        for tag, node_type, memory_kind in LEGACY_LIST_TAGS:
+            items = parse_bullets(sections.get(tag, ""))
+            if not items:
+                continue
+            parse_mode = "full"
+            for item in items:
+                node = Node(
+                    thread_id=thread_id,
+                    type=node_type,
+                    text=item,
+                    payload_json=jdump({"source": source, "tag": tag, "memory_kind": memory_kind, "parse_mode": "full"}),
+                )
+                s.add(node)
+                s.flush()
+                created_order.append(node)
+                legacy_item_count += 1
                 if tag == "DECISIONS":
                     decision_ids.append(node.id)
                 elif tag == "ASSUMPTIONS":
@@ -182,7 +275,13 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
                 active_ids.append(node.id)
                 seen.add(node.id)
             cs.active_node_ids_json = jdump(active_ids)
-            s.add(cs)
+            snapshot_context_set(
+                s,
+                cs,
+                reason='import_chatgpt',
+                changed_node_ids=[n.id for n in created_order],
+                meta={'source': source, 'created_count': len(created_order), 'parse_mode': parse_mode},
+            )
 
         s.commit()
         warning = None
@@ -195,12 +294,15 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
 
         return {
             "ok": True,
+            "parse_mode": parse_mode,
             "created": {
                 "final_node_id": final_node_id,
                 "decision_ids": decision_ids,
                 "assumption_ids": assumption_ids,
                 "plan_ids": plan_ids,
                 "candidate_ids": candidate_ids,
+                "memory_item_ids": memory_item_ids,
+                "legacy_item_count": legacy_item_count,
             },
             "created_order": [n.id for n in created_order],
             "reply_to_used": reply_to_used,
