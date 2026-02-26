@@ -312,11 +312,6 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
     })
   }, [priorityBudgetValue, scoredActiveContextNodes, dependencyMap, alwaysIncludeIdSet, neverIncludeIdSet, pinnedIdSet])
 
-  const budgetSelectedIdSet = useMemo(() => {
-    if (!budgetSelection) return new Set<string>()
-    return new Set(budgetSelection.selected.map((s) => s.node.id))
-  }, [budgetSelection])
-
   const resourcesSection = useMemo(() => {
     if (resourceNodes.length === 0) return '(none)'
     return resourceNodes.map(formatResourceLine).join('\n')
@@ -947,19 +942,9 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
             <div className="muted" style={{ marginBottom: 8 }}>
               selected {budgetSelection.selected.length} / {scoredActiveContextNodes.length} nodes · approx {budgetSelection.usedTokens} tokens · deps {budgetSelection.dependencyAddedIds.length}
             </div>
-            <div className="priorityList">
-              {budgetSelection.selected.slice(0, 6).map((s) => (
-                <div key={`budget-${s.node.id}`} className="priorityRow">
-                  <div className="priorityRowMain">
-                    <span className={`pill pillType ${nodeTypePillClass(s.node.type)}`}>{s.node.type || 'Unknown'}</span>
-                    <span className={`pill ${priorityBucketPillClass(s.bucket)}`}>{priorityBucketLabel(s.bucket)}</span>
-                    {s.manualRule && <span className={`pill ${manualRulePillClass(s.manualRule)}`}>{manualRuleLabel(s.manualRule)}</span>}
-                    {s.selectionTag && <span className="pill">{s.selectionTag}</span>}
-                    <span className="muted">{shortId(s.node.id)} · ~{s.estTokens}t</span>
-                  </div>
-                  <div className="prioritySnippet">{((s.node.text || '').trim() || '(empty)').slice(0, 220)}</div>
-                </div>
-              ))}
+            <div className="muted" style={{ marginBottom: 8 }}>
+              selected IDs: {budgetSelection.selected.slice(0, 10).map((s) => shortId(s.node.id)).join(', ')}
+              {budgetSelection.selected.length > 10 ? ` ... +${budgetSelection.selected.length - 10}` : ''}
             </div>
             {budgetSelection.omitted.length > 0 && (
               <div className="muted" style={{ marginTop: 8 }}>
@@ -971,34 +956,6 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
           <div className="muted">Budget 입력 후 Active context가 있으면 자동 선택 미리보기가 표시됩니다. (수동 규칙 + dependency-aware 적용)</div>
         )}
       </div>
-
-      {scoredActiveContextNodes.length > 0 && (
-        <div className="card">
-          <div className="row" style={{ marginBottom: 6 }}>
-            <b>Active node priority</b>
-            <span className="muted">현재 요청 기준 상위 {Math.min(8, scoredActiveContextNodes.length)}개</span>
-          </div>
-          <div className="priorityList">
-            {scoredActiveContextNodes.slice(0, 8).map((s) => (
-              <div key={`active-priority-${s.node.id}`} className={`priorityRow ${budgetSelection && !budgetSelectedIdSet.has(s.node.id) ? 'isDim' : ''}`}>
-                <div className="priorityRowMain">
-                  <span className={`pill pillType ${nodeTypePillClass(s.node.type)}`}>{s.node.type || 'Unknown'}</span>
-                  <span className={`pill ${priorityBucketPillClass(s.bucket)}`}>{priorityBucketLabel(s.bucket)}</span>
-                  {s.manualRule && <span className={`pill ${manualRulePillClass(s.manualRule)}`}>{manualRuleLabel(s.manualRule)}</span>}
-                  <span className="pill">P {formatPct01(s.priority)}</span>
-                  <span className="pill">L {formatPct01(s.locality)}</span>
-                  <span className="pill">R {formatPct01(s.relevance)}</span>
-                  <span className="pill">Risk {formatPct01(s.omissionRisk)}</span>
-                  <span className="muted">~{s.estTokens}t · {shortId(s.node.id)}</span>
-                  <RuleButtons nodeId={s.node.id} />
-                </div>
-                {s.reasons.length > 0 && <div className="muted">{s.reasons.join(' · ')}</div>}
-                <div className="prioritySnippet">{((s.node.text || '').trim() || '(empty)').slice(0, 240)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {highRiskMissingCandidates.length > 0 && (
         <div className="card">

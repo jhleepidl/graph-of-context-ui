@@ -661,6 +661,7 @@ export default function App() {
         <ActiveContext
           activeIds={activeIds}
           nodesById={nodesById}
+          allNodes={nodes}
           onOpenNode={(id) => setDetailNodeId(id)}
           partCountByParent={partCountByParent}
           onAdd={async (id) => {

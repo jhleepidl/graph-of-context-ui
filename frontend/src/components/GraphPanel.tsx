@@ -52,6 +52,7 @@ type GraphNodeData = {
   hierarchyExpanded?: boolean
   hierarchyDetailCount?: number
   onToggleHierarchyExpand?: (nodeId: string) => void
+  hideActiveDrag?: boolean
 }
 
 type ViewMode = 'conversation_hierarchy' | 'raw_graph'
@@ -66,6 +67,19 @@ type HierarchyProjection = {
   expandedAssistantIds: Set<string>
   messageNodeIds: Set<string>
   backboneMessageIds: string[]
+}
+
+type DirectionalNodeCenter = {
+  x: number
+  y: number
+}
+
+type ClusterOverlayRect = {
+  assistantId: string
+  left: number
+  top: number
+  width: number
+  height: number
 }
 
 type ViewportState = {
@@ -86,6 +100,23 @@ type Bounds = {
 const LEGACY_EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'RELATED', 'SUPPORTS', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
 const LINK_EDGE_TYPE_OPTIONS = ['RELATED', 'REPLY_TO', 'SUPPORTS', 'REFERENCES', 'ATTACHED_TO']
 const HIERARCHY_SEMANTIC_EDGE_TYPES = new Set(['DEPENDS', 'REFERENCES', 'SUPPORTS', 'RELATED', 'NEXT_PART', 'HAS_PART', 'SPLIT_FROM', 'ATTACHED_TO', 'FOLDS'])
+const HIERARCHY_MESSAGE_WIDTH = 272
+const HIERARCHY_DETAIL_WIDTH = 208
+const HIERARCHY_USER_HEIGHT = 186
+const HIERARCHY_ASSISTANT_HEIGHT = 218
+const HIERARCHY_DETAIL_HEIGHT = 136
+const SOURCE_HANDLE_BY_SIDE = {
+  top: 'source-top',
+  bottom: 'source-bottom',
+  left: 'source-left',
+  right: 'source-right',
+} as const
+const TARGET_HANDLE_BY_SIDE = {
+  top: 'target-top',
+  bottom: 'target-bottom',
+  left: 'target-left',
+  right: 'target-right',
+} as const
 const nodeTypes = { contextNode: GraphNode }
 
 function shortId(id: string): string {
@@ -95,6 +126,15 @@ function shortId(id: string): string {
 function previewText(text: string, max = 80): string {
   const compact = (text || '').replace(/\s+/g, ' ').trim()
   return compact.length > max ? `${compact.slice(0, max)}...` : compact
+}
+
+function formatCreatedAtCompact(createdAt?: string): string {
+  if (!createdAt) return ''
+  const d = new Date(createdAt)
+  if (!Number.isFinite(d.getTime())) return createdAt
+  const date = d.toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })
+  const time = d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+  return `${date} ${time}`
 }
 
 function nodeToneClass(typeLabel: string, role?: string): string {
@@ -461,6 +501,120 @@ function hierarchyDetailConnectorStyle(): { stroke: string; strokeWidth: number;
   }
 }
 
+function resolveDirectionalEdgeHandles(
+  sourceId: string,
+  targetId: string,
+  centersById: Map<string, DirectionalNodeCenter>,
+): { sourceHandle?: string; targetHandle?: string } {
+  const source = centersById.get(sourceId)
+  const target = centersById.get(targetId)
+  if (!source || !target) {
+    return {}
+  }
+
+  const dx = target.x - source.x
+  const dy = target.y - source.y
+  const absDx = Math.abs(dx)
+  const absDy = Math.abs(dy)
+  const horizontalPreferred = absDx > absDy * 1.12
+
+  if (horizontalPreferred) {
+    if (dx >= 0) {
+      return {
+        sourceHandle: SOURCE_HANDLE_BY_SIDE.right,
+        targetHandle: TARGET_HANDLE_BY_SIDE.left,
+      }
+    }
+    return {
+      sourceHandle: SOURCE_HANDLE_BY_SIDE.left,
+      targetHandle: TARGET_HANDLE_BY_SIDE.right,
+    }
+  }
+
+  if (dy >= 0) {
+    return {
+      sourceHandle: SOURCE_HANDLE_BY_SIDE.bottom,
+      targetHandle: TARGET_HANDLE_BY_SIDE.top,
+    }
+  }
+  return {
+    sourceHandle: SOURCE_HANDLE_BY_SIDE.top,
+    targetHandle: TARGET_HANDLE_BY_SIDE.bottom,
+  }
+}
+
+function relaxClusterCollisions(
+  detailIds: string[],
+  positionsById: Map<string, { x: number; y: number }>,
+  anchor: { x: number; y: number },
+): void {
+  if (detailIds.length < 2) return
+
+  const minGapX = 22
+  const minGapY = 22
+  const width = HIERARCHY_DETAIL_WIDTH
+  const height = HIERARCHY_DETAIL_HEIGHT
+  const halfW = width / 2
+  const halfH = height / 2
+  const iterations = 34
+  const minCenterY = anchor.y + HIERARCHY_ASSISTANT_HEIGHT + 34 + halfH
+  const horizontalLimit = width * 2.25
+
+  const centers = detailIds.map((id) => {
+    const p = positionsById.get(id) || { x: anchor.x, y: anchor.y + HIERARCHY_ASSISTANT_HEIGHT + 34 }
+    return { id, x: p.x + halfW, y: p.y + halfH }
+  })
+
+  for (let step = 0; step < iterations; step += 1) {
+    for (let i = 0; i < centers.length; i += 1) {
+      const a = centers[i]
+      for (let j = i + 1; j < centers.length; j += 1) {
+        const b = centers[j]
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+          dx = 0.001
+          dy = 0.001
+        }
+
+        const overlapX = width + minGapX - Math.abs(dx)
+        const overlapY = height + minGapY - Math.abs(dy)
+        if (overlapX <= 0 || overlapY <= 0) continue
+
+        if (overlapX < overlapY) {
+          const push = overlapX * 0.5
+          const sign = dx >= 0 ? 1 : -1
+          a.x -= sign * push
+          b.x += sign * push
+        } else {
+          const push = overlapY * 0.5
+          const sign = dy >= 0 ? 1 : -1
+          a.y -= sign * push
+          b.y += sign * push
+        }
+      }
+    }
+
+    for (const c of centers) {
+      // Keep detail nodes locally tied under their assistant parent.
+      c.x += (anchor.x + halfW - c.x) * 0.06
+      c.y += (anchor.y + HIERARCHY_ASSISTANT_HEIGHT + 34 + halfH - c.y) * 0.045
+      if (c.y < minCenterY) c.y = minCenterY
+      const minCenterX = anchor.x + halfW - horizontalLimit
+      const maxCenterX = anchor.x + halfW + horizontalLimit
+      if (c.x < minCenterX) c.x = minCenterX
+      if (c.x > maxCenterX) c.x = maxCenterX
+    }
+  }
+
+  for (const c of centers) {
+    positionsById.set(c.id, {
+      x: c.x - halfW,
+      y: c.y - halfH,
+    })
+  }
+}
+
 function mergeNodePositions(prev: RFNode[], next: RFNode[]): RFNode[] {
   const prevById = new Map(prev.map((n) => [n.id, n]))
   return next.map((n) => {
@@ -538,7 +692,10 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
       className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''} ${data.layoutEditable ? 'isLayoutEditable' : ''} ${data.hierarchyClass || ''}`}
       title="클릭: 선택 · 더블클릭: 상세/분할 또는 Fold view-unfold · 카드 이동: 노드 드래그 · Active 추가: 아래 버튼 드래그"
     >
-      <Handle type="target" position={Position.Top} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="target-top" type="target" position={Position.Top} className="graphHandle graphHandle--top graphHandle--target" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="target-bottom" type="target" position={Position.Bottom} className="graphHandle graphHandle--bottom graphHandle--target" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="target-left" type="target" position={Position.Left} className="graphHandle graphHandle--left graphHandle--target" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="target-right" type="target" position={Position.Right} className="graphHandle graphHandle--right graphHandle--target" onDragStart={(e) => e.preventDefault()} />
       <span className={`graphNodeActiveDot ${data.active ? 'on' : 'off'}`} />
       {data.pendingLinkSource && <span className="graphNodeLinkSourceBadge">Link source</span>}
       <div className="graphNodeTitle">
@@ -561,18 +718,23 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
           {data.hierarchyExpanded ? 'Hide detail nodes' : `Show detail nodes (${data.hierarchyDetailCount || 0})`}
         </button>
       )}
-      <button
-        className="graphNodeDragToActive nodrag nopan"
-        draggable
-        onDragStart={handleActiveDragStart}
-        onDragEnd={handleActiveDragEnd}
-        onMouseDown={(e) => e.stopPropagation()}
-        type="button"
-        title="드래그해서 Active Context에 추가"
-      >
-        + Active로 드래그
-      </button>
-      <Handle type="source" position={Position.Bottom} className="graphHandle" onDragStart={(e) => e.preventDefault()} />
+      {!data.hideActiveDrag && (
+        <button
+          className="graphNodeDragToActive nodrag nopan"
+          draggable
+          onDragStart={handleActiveDragStart}
+          onDragEnd={handleActiveDragEnd}
+          onMouseDown={(e) => e.stopPropagation()}
+          type="button"
+          title="드래그해서 Active Context에 추가"
+        >
+          + Active로 드래그
+        </button>
+      )}
+      <Handle id="source-top" type="source" position={Position.Top} className="graphHandle graphHandle--top graphHandle--source" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="source-bottom" type="source" position={Position.Bottom} className="graphHandle graphHandle--bottom graphHandle--source" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="source-left" type="source" position={Position.Left} className="graphHandle graphHandle--left graphHandle--source" onDragStart={(e) => e.preventDefault()} />
+      <Handle id="source-right" type="source" position={Position.Right} className="graphHandle graphHandle--right graphHandle--source" onDragStart={(e) => e.preventDefault()} />
     </div>
   )
 }
@@ -602,7 +764,8 @@ export default function GraphPanel({
   const [showFoldMembers, setShowFoldMembers] = useState(false)
   const [nodeTypeFilter, setNodeTypeFilter] = useState<'all' | 'resources' | 'non_resources'>('all')
   const [viewMode, setViewMode] = useState<ViewMode>('conversation_hierarchy')
-  const [showHierarchySemanticEdges, setShowHierarchySemanticEdges] = useState(true)
+  const [showHierarchyReplyEdges, setShowHierarchyReplyEdges] = useState(false)
+  const [showHierarchySemanticEdges, setShowHierarchySemanticEdges] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [viewport, setViewport] = useState<ViewportState>({ x: 0, y: 0, zoom: 1 })
 
@@ -1098,10 +1261,9 @@ export default function GraphPanel({
 
     const centerX = 390
     const baseY = 90
-    const messageGapY = 168
-    const detailCols = 3
-    const detailGapX = 205
-    const detailGapY = 116
+    const detailCols = 2
+    const detailGapX = 228
+    const detailGapY = 162
 
     let cursorY = baseY
 
@@ -1120,6 +1282,7 @@ export default function GraphPanel({
 
       const visibleDetailIds = (assistantDetailIds.get(messageId) || []).filter((id) => visibleDetailNodeIds.has(id))
       if (visibleDetailIds.length > 0) {
+        const detailStartY = msgPos.y + HIERARCHY_ASSISTANT_HEIGHT + 30
         for (let i = 0; i < visibleDetailIds.length; i += 1) {
           const detailId = visibleDetailIds[i]
           const row = Math.floor(i / detailCols)
@@ -1130,7 +1293,7 @@ export default function GraphPanel({
 
           positionsById.set(detailId, {
             x: msgPos.x + centeredCol * detailGapX,
-            y: msgPos.y + 108 + row * detailGapY,
+            y: detailStartY + row * detailGapY,
           })
           if (!orderedVisibleIdSet.has(detailId)) {
             orderedVisibleIds.push(detailId)
@@ -1138,10 +1301,14 @@ export default function GraphPanel({
           }
         }
 
+        relaxClusterCollisions(visibleDetailIds, positionsById, msgPos)
+
         const detailRows = Math.ceil(visibleDetailIds.length / detailCols)
-        cursorY += messageGapY + detailRows * detailGapY
+        const detailBottomY = detailStartY + (detailRows - 1) * detailGapY + HIERARCHY_DETAIL_HEIGHT
+        cursorY = Math.max(cursorY + HIERARCHY_ASSISTANT_HEIGHT + 56, detailBottomY + 56)
       } else {
-        cursorY += messageGapY
+        const messageHeight = role === 'assistant' ? HIERARCHY_ASSISTANT_HEIGHT : HIERARCHY_USER_HEIGHT
+        cursorY += messageHeight + 56
       }
     }
 
@@ -1149,7 +1316,7 @@ export default function GraphPanel({
       if (!visibleNodeIds.has(node.id)) continue
       if (!positionsById.has(node.id)) {
         positionsById.set(node.id, { x: centerX, y: cursorY })
-        cursorY += messageGapY
+        cursorY += HIERARCHY_USER_HEIGHT + 56
       }
       if (!orderedVisibleIdSet.has(node.id)) {
         orderedVisibleIds.push(node.id)
@@ -1215,6 +1382,7 @@ export default function GraphPanel({
         const isAssistant = isMessage && role === 'assistant'
         const isDetail = hierarchyProjection.visibleDetailNodeIds.has(n.id)
         const detailCount = hierarchyProjection.assistantDetailIds.get(n.id)?.length || 0
+        const nodeWidth = isDetail ? HIERARCHY_DETAIL_WIDTH : HIERARCHY_MESSAGE_WIDTH
 
         const hierarchyClass = [
           isMessage ? 'hierarchy-backbone' : '',
@@ -1237,7 +1405,7 @@ export default function GraphPanel({
             typeLabel: n.type,
             role,
             text: n.text || '',
-            createdAt: n.created_at,
+            createdAt: isDetail ? '' : formatCreatedAtCompact(n.created_at),
             active,
             toneClass: nodeToneClass(n.type, role),
             expandedFold,
@@ -1249,9 +1417,10 @@ export default function GraphPanel({
             hierarchyExpanded: expandedAssistantReplyIds.includes(n.id),
             hierarchyDetailCount: detailCount,
             onToggleHierarchyExpand: toggleAssistantReplyExpansion,
+            hideActiveDrag: isDetail,
           },
           style: {
-            width: isDetail ? 196 : 252,
+            width: nodeWidth,
           },
         }
       })
@@ -1319,6 +1488,75 @@ export default function GraphPanel({
     })
   }, [isConversationHierarchyView, hierarchyProjection, expandedAssistantReplyIds, nodesById, nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId, effectiveLayoutMode, manualPositionsById, toggleAssistantReplyExpansion])
 
+  const desiredNodeCentersById = useMemo(() => {
+    const centers = new Map<string, DirectionalNodeCenter>()
+    for (const node of desiredNodes as any[]) {
+      const width = Number(node?.style?.width)
+      const w = Number.isFinite(width) ? width : 230
+      const hierarchyClass = (node?.data?.hierarchyClass || '').toString()
+      const h = hierarchyClass.includes('hierarchy-detail')
+        ? HIERARCHY_DETAIL_HEIGHT
+        : hierarchyClass.includes('hierarchy-assistant')
+          ? HIERARCHY_ASSISTANT_HEIGHT
+          : hierarchyClass.includes('hierarchy-backbone')
+            ? HIERARCHY_USER_HEIGHT
+            : 114
+      centers.set(node.id, {
+        x: node.position.x + w / 2,
+        y: node.position.y + h / 2,
+      })
+    }
+    return centers
+  }, [desiredNodes])
+
+  const hierarchyClusterOverlays = useMemo<ClusterOverlayRect[]>(() => {
+    if (!isConversationHierarchyView) return []
+
+    const overlays: ClusterOverlayRect[] = []
+    for (const assistantId of hierarchyProjection.expandedAssistantIds) {
+      const detailIds = (hierarchyProjection.assistantDetailIds.get(assistantId) || [])
+        .filter((id) => hierarchyProjection.visibleDetailNodeIds.has(id))
+      if (detailIds.length === 0) continue
+
+      const assistantPos = hierarchyProjection.positionsById.get(assistantId)
+      if (!assistantPos) continue
+
+      let minX = Number.POSITIVE_INFINITY
+      let minY = Number.POSITIVE_INFINITY
+      let maxX = Number.NEGATIVE_INFINITY
+      let maxY = Number.NEGATIVE_INFINITY
+
+      for (const detailId of detailIds) {
+        const pos = hierarchyProjection.positionsById.get(detailId)
+        if (!pos) continue
+        const width = HIERARCHY_DETAIL_WIDTH
+        const height = HIERARCHY_DETAIL_HEIGHT
+        if (pos.x < minX) minX = pos.x
+        if (pos.y < minY) minY = pos.y
+        if (pos.x + width > maxX) maxX = pos.x + width
+        if (pos.y + height > maxY) maxY = pos.y + height
+      }
+
+      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+        continue
+      }
+
+      const worldLeft = minX - 24
+      const worldTop = Math.max(assistantPos.y + HIERARCHY_ASSISTANT_HEIGHT + 8, minY - 14)
+      const worldWidth = Math.max(HIERARCHY_DETAIL_WIDTH + 52, maxX - minX + 48)
+      const worldHeight = Math.max(HIERARCHY_DETAIL_HEIGHT + 28, maxY - worldTop + 24)
+
+      overlays.push({
+        assistantId,
+        left: worldLeft * viewport.zoom + viewport.x,
+        top: worldTop * viewport.zoom + viewport.y,
+        width: worldWidth * viewport.zoom,
+        height: worldHeight * viewport.zoom,
+      })
+    }
+    return overlays
+  }, [isConversationHierarchyView, hierarchyProjection, viewport])
+
   const desiredEdges = useMemo(() => {
     if (isConversationHierarchyView) {
       const nodeIds = hierarchyProjection.visibleNodeIds
@@ -1343,13 +1581,13 @@ export default function GraphPanel({
       for (const e of sortedEdges) {
         if (!nodeIds.has(e.from_id) || !nodeIds.has(e.to_id)) continue
         if (!(messageNodeIds.has(e.from_id) && messageNodeIds.has(e.to_id))) continue
-        if (e.type !== 'NEXT' && e.type !== 'REPLY_TO') continue
+        if (e.type !== 'NEXT' && (e.type !== 'REPLY_TO' || !showHierarchyReplyEdges)) continue
         out.push({
           id: e.id,
           source: e.from_id,
           target: e.to_id,
           type: 'smoothstep',
-          label: e.type,
+          label: undefined,
           style: hierarchyBackboneEdgeStyle(e.type),
           deletable: true,
           selectable: true,
@@ -1368,7 +1606,7 @@ export default function GraphPanel({
           source: sourceId,
           target: targetId,
           type: 'smoothstep',
-          label: 'NEXT',
+          label: undefined,
           style: hierarchyBackboneEdgeStyle('NEXT'),
           deletable: false,
           selectable: false,
@@ -1384,7 +1622,7 @@ export default function GraphPanel({
             source: assistantId,
             target: detailId,
             type: 'smoothstep',
-            label: 'detail',
+            label: undefined,
             style: hierarchyDetailConnectorStyle(),
             deletable: false,
             selectable: false,
@@ -1405,7 +1643,7 @@ export default function GraphPanel({
             source: e.from_id,
             target: e.to_id,
             type: 'smoothstep',
-            label: e.type,
+            label: undefined,
             style: virtualEdgeStyle(e.type),
             deletable: true,
             selectable: true,
@@ -1413,7 +1651,10 @@ export default function GraphPanel({
         }
       }
 
-      return out
+      return out.map((edge) => ({
+        ...edge,
+        ...resolveDirectionalEdgeHandles(edge.source, edge.target, desiredNodeCentersById),
+      }))
     }
 
     const collapsedMode = !(showFoldMembers || autoDetailByZoom)
@@ -1540,8 +1781,11 @@ export default function GraphPanel({
       })
     }
 
-    return out
-  }, [isConversationHierarchyView, hierarchyProjection, showHierarchySemanticEdges, visibleNodeIds, edges, showFoldMembers, autoDetailByZoom, memberToFold, expandedFoldSet])
+    return out.map((edge) => ({
+      ...edge,
+      ...resolveDirectionalEdgeHandles(edge.source, edge.target, desiredNodeCentersById),
+    }))
+  }, [isConversationHierarchyView, hierarchyProjection, desiredNodeCentersById, showHierarchyReplyEdges, showHierarchySemanticEdges, visibleNodeIds, edges, showFoldMembers, autoDetailByZoom, memberToFold, expandedFoldSet])
 
   useEffect(() => {
     setRfNodes((prev) => mergeNodePositions(prev, desiredNodes as RFNode[]))
@@ -1909,7 +2153,7 @@ export default function GraphPanel({
 
   return (
     <div
-      className="graphWrap"
+      className={`graphWrap ${isConversationHierarchyView ? 'isHierarchyMode' : 'isRawMode'}`}
       ref={wrapRef}
       tabIndex={0}
       onKeyDown={handleKeyDown}
@@ -1935,6 +2179,9 @@ export default function GraphPanel({
               disabled={expandedAssistantReplyIds.length === 0}
             >
               Collapse all replies
+            </button>
+            <button onClick={() => setShowHierarchyReplyEdges((v) => !v)}>
+              {showHierarchyReplyEdges ? 'Hide reply links' : 'Show reply links'}
             </button>
             <button onClick={() => setShowHierarchySemanticEdges((v) => !v)}>
               {showHierarchySemanticEdges ? 'Hide detail semantic edges' : 'Show detail semantic edges'}
@@ -1982,17 +2229,19 @@ export default function GraphPanel({
 
         <span className="muted">Zoom {zoom.toFixed(2)} {autoDetailByZoom ? '(auto detail)' : ''}</span>
 
-        <details className="graphLegacyControls">
-          <summary>Legacy edge controls</summary>
-          <div className="row" style={{ marginBottom: 0 }}>
-            <span className="muted">Edge Type</span>
-            <select value={newEdgeType} onChange={(e) => setNewEdgeType(e.target.value)}>
-              {LEGACY_EDGE_TYPE_OPTIONS.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </div>
-        </details>
+        {!isConversationHierarchyView && (
+          <details className="graphLegacyControls">
+            <summary>Legacy edge controls</summary>
+            <div className="row" style={{ marginBottom: 0 }}>
+              <span className="muted">Edge Type</span>
+              <select value={newEdgeType} onChange={(e) => setNewEdgeType(e.target.value)}>
+                {LEGACY_EDGE_TYPE_OPTIONS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          </details>
+        )}
 
         <span className="muted">
           {isConversationHierarchyView
@@ -2010,7 +2259,7 @@ export default function GraphPanel({
           <div><b>{nodesById.get(selectedNodeId).type}</b> <span className="muted">({shortId(selectedNodeId)})</span></div>
           <div className="muted">{nodesById.get(selectedNodeId).created_at}</div>
           <pre>{nodesById.get(selectedNodeId).text || '(empty)'}</pre>
-          <pre>{payloadPretty(nodesById.get(selectedNodeId).payload_json)}</pre>
+          {!isConversationHierarchyView && <pre>{payloadPretty(nodesById.get(selectedNodeId).payload_json)}</pre>}
         </div>
       )}
 
@@ -2039,10 +2288,23 @@ export default function GraphPanel({
           deleteKeyCode={['Backspace', 'Delete']}
           style={{ width: '100%', height: '100%' }}
         >
-          <Background />
-          <MiniMap />
-          <Controls />
+          {!isConversationHierarchyView && <Background />}
+          {!isConversationHierarchyView && <MiniMap />}
+          {!isConversationHierarchyView && <Controls />}
         </ReactFlow>
+
+        {isConversationHierarchyView && hierarchyClusterOverlays.map((overlay) => (
+          <div
+            key={`cluster:${overlay.assistantId}`}
+            className="hierarchyClusterOverlay"
+            style={{
+              left: overlay.left,
+              top: overlay.top,
+              width: overlay.width,
+              height: overlay.height,
+            }}
+          />
+        ))}
 
         {selectionHull && (
           <>
