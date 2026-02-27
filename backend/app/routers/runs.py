@@ -1,14 +1,15 @@
 from __future__ import annotations
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from sqlmodel import Session
 
 from app.db import engine
-from app.models import ContextSet, Thread, Node
+from app.models import Node
 from app.schemas import RunCreate
 from app.llm import call_openai
 from app.services.graph import add_edge, get_last_node, jload
 from app.services.graph import compile_active_context
+from app.tenant import require_context_set_access, require_thread_access
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -18,13 +19,9 @@ def jdump(x) -> str:
 @router.post("/runs")
 def run_agent(body: RunCreate):
     with Session(engine) as s:
-        cs = s.get(ContextSet, body.context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, body.context_set_id)
         thread_id = cs.thread_id
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
         active_ids = jload(cs.active_node_ids_json, [])
         active_ctx_text = compile_active_context(s, thread_id, active_ids)

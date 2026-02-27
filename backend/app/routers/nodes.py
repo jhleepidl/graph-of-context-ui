@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from typing import Dict, List, Tuple
 
@@ -7,11 +8,12 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
 from app.db import engine
-from app.models import ContextSet, Edge, Node
-from app.schemas import SplitNodeRequest, SplitNodeResponse
-from app.services.embedding import ensure_node_embedding
+from app.models import ContextSet, Edge, Node, NodeEmbedding
+from app.schemas import NodePatchRequest, SplitNodeRequest, SplitNodeResponse
+from app.services.embedding import ensure_node_embedding, rebuild_thread_index
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, jdump, jload, replace_ids_in_order
+from app.tenant import require_context_set_access, require_node_access
 
 router = APIRouter(prefix="/api", tags=["nodes"])
 
@@ -397,9 +399,7 @@ def sorted_part_edges(session: Session, thread_id: str, parent_id: str) -> List[
 @router.get("/nodes/{node_id}")
 def get_node(node_id: str):
     with Session(engine) as s:
-        node = s.get(Node, node_id)
-        if not node:
-            raise HTTPException(404, "node not found")
+        node = require_node_access(s, node_id)
 
         part_edges = sorted_part_edges(s, node.thread_id, node_id)
         parts: List[dict] = []
@@ -415,12 +415,94 @@ def get_node(node_id: str):
         return out
 
 
+@router.patch("/nodes/{node_id}")
+def patch_node(node_id: str, body: NodePatchRequest):
+    with Session(engine) as s:
+        node = require_node_access(s, node_id)
+
+        if body.payload_json is not None:
+            try:
+                json.loads(body.payload_json)
+            except Exception as exc:
+                raise HTTPException(400, "payload_json must be valid JSON") from exc
+            node.payload_json = body.payload_json
+
+        node.text = body.text
+        existing_embedding = s.get(NodeEmbedding, node.id)
+        if existing_embedding:
+            s.delete(existing_embedding)
+        s.add(node)
+        s.commit()
+        s.refresh(node)
+
+        warning = None
+        try:
+            if (node.text or "").strip():
+                ensure_node_embedding(s, node, commit=True)
+            rebuild_thread_index(s, node.thread_id)
+        except Exception as exc:
+            warning = f"embedding refresh failed: {exc}"
+
+        out = node.model_dump()
+        out["warning"] = warning
+        return out
+
+
+@router.delete("/nodes/{node_id}")
+def delete_node(node_id: str):
+    with Session(engine) as s:
+        node = require_node_access(s, node_id)
+        thread_id = node.thread_id
+
+        outgoing = s.exec(
+            select(Edge)
+            .where(Edge.thread_id == thread_id)
+            .where(Edge.from_id == node_id)
+        ).all()
+        incoming = s.exec(
+            select(Edge)
+            .where(Edge.thread_id == thread_id)
+            .where(Edge.to_id == node_id)
+        ).all()
+        edge_by_id = {e.id: e for e in outgoing}
+        for e in incoming:
+            edge_by_id[e.id] = e
+        for e in edge_by_id.values():
+            s.delete(e)
+
+        sets = s.exec(select(ContextSet).where(ContextSet.thread_id == thread_id)).all()
+        for cs in sets:
+            active = jload(cs.active_node_ids_json, [])
+            next_active = [nid for nid in active if nid != node_id]
+            if len(next_active) == len(active):
+                continue
+            cs.active_node_ids_json = jdump(next_active)
+            snapshot_context_set(s, cs, reason="delete_node", changed_node_ids=[node_id], meta={"deleted_node_id": node_id})
+
+        ne = s.get(NodeEmbedding, node_id)
+        if ne:
+            s.delete(ne)
+
+        s.delete(node)
+        s.commit()
+        warning = None
+        try:
+            rebuild_thread_index(s, thread_id)
+        except Exception as exc:
+            warning = f"index rebuild failed: {exc}"
+
+        return {
+            "ok": True,
+            "deleted_node_id": node_id,
+            "deleted_edge_count": len(edge_by_id),
+            "warning": warning,
+        }
+
+
 @router.post("/nodes/{node_id}/split")
 def split_node(node_id: str, body: SplitNodeRequest):
     with Session(engine) as s:
-        parent = s.get(Node, node_id)
-        if not parent:
-            raise HTTPException(404, "node not found")
+        parent = require_node_access(s, node_id)
         thread_id = parent.thread_id
 
         target_chars, max_chars = norm_limits(body.target_chars, body.max_chars)
@@ -500,8 +582,8 @@ def split_node(node_id: str, body: SplitNodeRequest):
                     s.add(add_edge(thread_id, child.id, to_id, "REPLY_TO"))
 
         if body.context_set_id:
-            cs = s.get(ContextSet, body.context_set_id)
-            if not cs or cs.thread_id != thread_id:
+            cs = require_context_set_access(s, body.context_set_id)
+            if cs.thread_id != thread_id:
                 raise HTTPException(404, "context set not found in thread")
 
             active = jload(cs.active_node_ids_json, [])

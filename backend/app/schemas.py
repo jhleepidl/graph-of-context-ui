@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class ThreadCreate(BaseModel):
     title: Optional[str] = None
+    service_id: Optional[str] = None  # admin-only override
 
 
 class MessageCreate(BaseModel):
@@ -97,6 +98,19 @@ class SplitNodeRequest(BaseModel):
     inherit_reply_to: bool = True
     target_chars: Optional[int] = 900
     max_chars: Optional[int] = 2000
+
+
+class NodePatchRequest(BaseModel):
+    text: str
+    payload_json: Optional[str] = None
+
+
+class ServiceRequestCreate(BaseModel):
+    name: str
+
+
+class MintUiTokenRequest(BaseModel):
+    ttl_sec: Optional[int] = None
 
 
 class SplitNodeResponse(BaseModel):

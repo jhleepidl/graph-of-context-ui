@@ -1,7 +1,16 @@
 from __future__ import annotations
 from fastapi import FastAPI
+from fastapi import HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from app.auth import (
+    Principal,
+    ensure_auth_config,
+    reset_current_principal,
+    resolve_principal,
+    set_current_principal,
+)
 from app.db import init_db
 from app.routers.threads import router as threads_router
 from app.routers.messages import router as messages_router
@@ -13,6 +22,7 @@ from app.routers.imports import router as imports_router
 from app.routers.tokens import router as tokens_router
 from app.routers.nodes import router as nodes_router
 from app.routers.hierarchy import router as hierarchy_router
+from app.routers.service_auth import router as service_auth_router
 
 app = FastAPI(title="Graph-of-Context MVP API")
 
@@ -24,8 +34,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    if request.method == "OPTIONS" or not request.url.path.startswith("/api"):
+        return await call_next(request)
+
+    is_public_service_request = request.method == "POST" and request.url.path == "/api/service_requests"
+    if is_public_service_request:
+        token = set_current_principal(Principal(role="anonymous", service_id=None))
+        try:
+            return await call_next(request)
+        finally:
+            reset_current_principal(token)
+
+    try:
+        principal = resolve_principal(
+            request.headers.get("X-Admin-Key"),
+            request.headers.get("Authorization"),
+        )
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    token = set_current_principal(principal)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_principal(token)
+
+
 @app.on_event("startup")
 def _startup():
+    ensure_auth_config()
     init_db()
 
 app.include_router(threads_router)
@@ -37,5 +77,6 @@ app.include_router(search_router)
 app.include_router(imports_router)
 app.include_router(tokens_router)
 app.include_router(nodes_router)
+app.include_router(service_auth_router)
 
 app.include_router(hierarchy_router)

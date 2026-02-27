@@ -8,11 +8,12 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session, select
 
 from app.db import engine
-from app.models import ContextSet, Node, Thread
+from app.models import Node
 from app.schemas import ChatGPTImportRequest
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import ensure_nodes_embeddings
 from app.services.graph import add_edge, get_last_node, jdump, jload
+from app.tenant import require_context_set_access, require_node_access, require_thread_access
 
 router = APIRouter(prefix="/api", tags=["imports"])
 logger = logging.getLogger(__name__)
@@ -144,16 +145,14 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
         raise HTTPException(400, "raw_text is required")
 
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
         last_before_create = get_last_node(s, thread_id)
 
         reply_to_used: Optional[str] = None
         if body.reply_to:
-            reply_node = s.get(Node, body.reply_to)
-            if reply_node and reply_node.thread_id == thread_id:
+            reply_node = require_node_access(s, body.reply_to)
+            if reply_node.thread_id == thread_id:
                 reply_to_used = reply_node.id
 
         if not reply_to_used:
@@ -264,8 +263,8 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
 
         auto_activate = body.auto_activate if body.auto_activate is not None else bool(body.context_set_id)
         if body.context_set_id and auto_activate and created_order:
-            cs = s.get(ContextSet, body.context_set_id)
-            if not cs or cs.thread_id != thread_id:
+            cs = require_context_set_access(s, body.context_set_id)
+            if cs.thread_id != thread_id:
                 raise HTTPException(404, "context set not found in thread")
             active_ids = jload(cs.active_node_ids_json, [])
             seen = set(active_ids)

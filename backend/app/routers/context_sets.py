@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.goc_core import apply_unfold_seed_selection, plan_unfold_candidates
-from app.models import ContextSet, ContextSetVersion, Thread, Node
+from app.models import ContextSet, ContextSetVersion
 from app.schemas import (
     ContextSetCreate,
     ActivateNodes,
@@ -15,6 +15,7 @@ from app.schemas import (
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import compile_active_context_explain, load_thread_graph
+from app.tenant import require_context_set_access, require_node_access, require_thread_access
 
 router = APIRouter(prefix="/api", tags=["context_sets"])
 
@@ -39,8 +40,8 @@ def _validate_node_ids(session: Session, thread_id: str, node_ids: list[str]) ->
         if not nid or nid in seen:
             continue
         seen.add(nid)
-        n = session.get(Node, nid)
-        if not n or n.thread_id != thread_id:
+        n = require_node_access(session, nid)
+        if n.thread_id != thread_id:
             raise HTTPException(404, f"node not found in thread: {nid}")
         valid.append(nid)
     return valid
@@ -57,6 +58,7 @@ def _version_payload(row: ContextSetVersion) -> dict:
 @router.get("/threads/{thread_id}/context_sets")
 def list_context_sets(thread_id: str):
     with Session(engine) as s:
+        require_thread_access(s, thread_id)
         sets = s.exec(
             select(ContextSet)
             .where(ContextSet.thread_id == thread_id)
@@ -69,9 +71,7 @@ def list_context_sets(thread_id: str):
 def create_context_set(body: ContextSetCreate):
     cs = ContextSet(thread_id=body.thread_id, name=body.name)
     with Session(engine) as s:
-        t = s.get(Thread, body.thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, body.thread_id)
         s.add(cs)
         s.flush()
         snapshot_context_set(s, cs, reason="create", meta={"name": cs.name})
@@ -83,9 +83,7 @@ def create_context_set(body: ContextSetCreate):
 @router.get("/context_sets/{context_set_id}")
 def get_context_set(context_set_id: str):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
         d = cs.model_dump()
         d["active_node_ids"] = jload(cs.active_node_ids_json, [])
         return d
@@ -94,9 +92,7 @@ def get_context_set(context_set_id: str):
 @router.get("/context_sets/{context_set_id}/versions")
 def list_context_set_versions(context_set_id: str, limit: int = Query(default=20, ge=1, le=200)):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        require_context_set_access(s, context_set_id)
         rows = s.exec(
             select(ContextSetVersion)
             .where(ContextSetVersion.context_set_id == context_set_id)
@@ -109,6 +105,7 @@ def list_context_set_versions(context_set_id: str, limit: int = Query(default=20
 @router.get("/context_sets/{context_set_id}/versions/{version}")
 def get_context_set_version(context_set_id: str, version: int):
     with Session(engine) as s:
+        require_context_set_access(s, context_set_id)
         row = s.exec(
             select(ContextSetVersion)
             .where(ContextSetVersion.context_set_id == context_set_id)
@@ -123,6 +120,7 @@ def get_context_set_version(context_set_id: str, version: int):
 @router.get("/context_sets/{context_set_id}/diff")
 def diff_context_set_versions(context_set_id: str, from_version: int, to_version: int):
     with Session(engine) as s:
+        require_context_set_access(s, context_set_id)
         rows = s.exec(
             select(ContextSetVersion)
             .where(ContextSetVersion.context_set_id == context_set_id)
@@ -162,10 +160,10 @@ def diff_context_set_versions(context_set_id: str, from_version: int, to_version
 @router.get("/context_sets/{context_set_id}/compiled")
 def get_compiled_context(context_set_id: str, include_explain: bool = Query(default=False)):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
         active_ids = jload(cs.active_node_ids_json, [])
+        # Strategy for freshness: no compiled_text cache.
+        # Every call rebuilds from current DB state so node/edge/active edits are reflected immediately.
         compiled = compile_active_context_explain(s, cs.thread_id, active_ids)
         resp = {
             "ok": True,
@@ -183,9 +181,7 @@ def get_compiled_context(context_set_id: str, include_explain: bool = Query(defa
 @router.post("/context_sets/{context_set_id}/activate")
 def activate_nodes(context_set_id: str, body: ActivateNodes):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
         to_add = _validate_node_ids(s, cs.thread_id, body.node_ids)
         active = jload(cs.active_node_ids_json, [])
         seen = set(active)
@@ -205,9 +201,7 @@ def activate_nodes(context_set_id: str, body: ActivateNodes):
 @router.post("/context_sets/{context_set_id}/deactivate")
 def deactivate_nodes(context_set_id: str, body: ActivateNodes):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
         remove_ids = _validate_node_ids(s, cs.thread_id, body.node_ids)
         remove_set = set(remove_ids)
         before = jload(cs.active_node_ids_json, [])
@@ -222,9 +216,7 @@ def deactivate_nodes(context_set_id: str, body: ActivateNodes):
 @router.post("/context_sets/{context_set_id}/reorder")
 def reorder_nodes(context_set_id: str, body: ActiveOrderUpdate):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
 
         requested = _validate_node_ids(s, cs.thread_id, body.node_ids)
         current = jload(cs.active_node_ids_json, [])
@@ -255,9 +247,7 @@ def preview_unfold_plan(context_set_id: str, body: UnfoldPlanRequest):
         raise HTTPException(400, "query is required")
 
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
         active_ids = jload(cs.active_node_ids_json, [])
         nodes, edges = load_thread_graph(s, cs.thread_id)
         planned = plan_unfold_candidates(
@@ -282,9 +272,7 @@ def preview_unfold_plan(context_set_id: str, body: UnfoldPlanRequest):
 @router.post("/context_sets/{context_set_id}/apply_unfold_plan")
 def apply_unfold_plan(context_set_id: str, body: ApplyUnfoldPlanRequest):
     with Session(engine) as s:
-        cs = s.get(ContextSet, context_set_id)
-        if not cs:
-            raise HTTPException(404, "context set not found")
+        cs = require_context_set_access(s, context_set_id)
         seed_ids = _validate_node_ids(s, cs.thread_id, body.seed_node_ids)
         current_active = jload(cs.active_node_ids_json, [])
         nodes, edges = load_thread_graph(s, cs.thread_id)

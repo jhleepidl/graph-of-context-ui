@@ -16,8 +16,27 @@ def new_id() -> str:
 
 class Thread(SQLModel, table=True):
     id: str = Field(default_factory=new_id, primary_key=True)
+    service_id: str = Field(default="default", index=True)
     title: str = Field(default="Untitled")
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class Service(SQLModel, table=True):
+    id: str = Field(default_factory=new_id, primary_key=True)
+    name: str = Field(index=True)
+    api_key_hash: str
+    status: str = Field(default="active", index=True)  # active | revoked
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ServiceRequest(SQLModel, table=True):
+    id: str = Field(default_factory=new_id, primary_key=True)
+    name: str
+    status: str = Field(default="pending", index=True)  # pending | approved | rejected
+    requester_ip: Optional[str] = Field(default=None, index=True)
+    approved_service_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    approved_at: Optional[datetime] = Field(default=None, index=True)
 
 
 class Node(SQLModel, table=True):

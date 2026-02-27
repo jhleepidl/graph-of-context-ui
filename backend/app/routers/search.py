@@ -1,20 +1,18 @@
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 from sqlmodel import Session
 
 from app.db import engine
-from app.models import Thread
 from app.schemas import SearchResponseItem
 from app.services.embedding import search_nodes
+from app.tenant import require_thread_access
 
 router = APIRouter(prefix="/api", tags=["search"])
 
 @router.get("/threads/{thread_id}/search")
 def search(thread_id: str, q: str = Query(min_length=1), k: int = 10):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
         results, coverage = search_nodes(s, thread_id, q, k=k)
         out = []
         for node, score in results:

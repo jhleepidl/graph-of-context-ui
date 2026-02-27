@@ -9,6 +9,8 @@ from app.models import Thread, ContextSet, ContextSetVersion, Node, Edge, NodeEm
 from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
+from app.auth import get_current_principal
+from app.tenant import current_service_id, require_node_access, require_thread_access
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 logger = logging.getLogger(__name__)
@@ -47,14 +49,25 @@ ALLOWED_EDGE_TYPES = {
 
 @router.get("")
 def list_threads():
+    principal = get_current_principal()
     with Session(engine) as s:
-        threads = s.exec(select(Thread).order_by(Thread.created_at.desc())).all()
+        query = select(Thread).order_by(Thread.created_at.desc())
+        if principal.role != "admin":
+            query = query.where(Thread.service_id == current_service_id())
+        threads = s.exec(query).all()
         return [t.model_dump() for t in threads]
 
 
 @router.post("")
 def create_thread(body: ThreadCreate):
-    t = Thread(title=body.title or "Untitled")
+    principal = get_current_principal()
+    if principal.role == "admin":
+        service_id = (body.service_id or "").strip()
+        if not service_id:
+            raise HTTPException(400, "admin must provide service_id")
+    else:
+        service_id = current_service_id()
+    t = Thread(title=body.title or "Untitled", service_id=service_id)
     with Session(engine) as s:
         s.add(t)
         s.commit()
@@ -70,9 +83,7 @@ def create_thread(body: ThreadCreate):
 @router.delete("/{thread_id}")
 def delete_thread(thread_id: str):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        t = require_thread_access(s, thread_id)
 
         edges = s.exec(select(Edge).where(Edge.thread_id == thread_id)).all()
         nodes = s.exec(select(Node).where(Node.thread_id == thread_id)).all()
@@ -115,9 +126,7 @@ def delete_thread(thread_id: str):
 @router.get("/{thread_id}/graph")
 def get_graph(thread_id: str):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        t = require_thread_access(s, thread_id)
         nodes = s.exec(
             select(Node)
             .where(Node.thread_id == thread_id)
@@ -138,9 +147,7 @@ def get_graph(thread_id: str):
 @router.post("/{thread_id}/layout")
 def save_layout(thread_id: str, body: NodeLayoutUpdate):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
         ids = [p.id for p in body.positions]
         if not ids:
@@ -174,15 +181,13 @@ def create_edge(thread_id: str, body: EdgeCreate):
         raise HTTPException(400, f"invalid edge type: {body.type}")
 
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
-        src = s.get(Node, body.from_id)
-        dst = s.get(Node, body.to_id)
-        if not src or src.thread_id != thread_id:
+        src = require_node_access(s, body.from_id)
+        dst = require_node_access(s, body.to_id)
+        if src.thread_id != thread_id:
             raise HTTPException(404, "source node not found in thread")
-        if not dst or dst.thread_id != thread_id:
+        if dst.thread_id != thread_id:
             raise HTTPException(404, "target node not found in thread")
 
         existing = s.exec(
@@ -212,9 +217,7 @@ def create_edge(thread_id: str, body: EdgeCreate):
 @router.delete("/{thread_id}/edges/{edge_id}")
 def delete_edge(thread_id: str, edge_id: str):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
         e = s.get(Edge, edge_id)
         if not e or e.thread_id != thread_id:
@@ -228,12 +231,10 @@ def delete_edge(thread_id: str, edge_id: str):
 @router.delete("/{thread_id}/nodes/{node_id}")
 def delete_node(thread_id: str, node_id: str):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
-        n = s.get(Node, node_id)
-        if not n or n.thread_id != thread_id:
+        n = require_node_access(s, node_id)
+        if n.thread_id != thread_id:
             raise HTTPException(404, "node not found")
 
         outgoing = s.exec(
@@ -284,8 +285,6 @@ def delete_node(thread_id: str, node_id: str):
 @router.post("/{thread_id}/rebuild_index")
 def rebuild_index(thread_id: str):
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
         stats = rebuild_thread_index(s, thread_id)
         return {"ok": True, "rebuild": stats}

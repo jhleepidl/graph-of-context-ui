@@ -36,6 +36,8 @@ export default function NodeDetailModal({ nodeId, threadId, ctxId, onClose, onAf
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const [nodeData, setNodeData] = useState<any | null>(null)
+  const [editableText, setEditableText] = useState('')
+  const [savingPatch, setSavingPatch] = useState(false)
 
   const [selectedPartIds, setSelectedPartIds] = useState<string[]>([])
   const [replaceParentForActivation, setReplaceParentForActivation] = useState(false)
@@ -53,6 +55,7 @@ export default function NodeDetailModal({ nodeId, threadId, ctxId, onClose, onAf
     try {
       const out = await api.getNode(nodeId)
       setNodeData(out)
+      setEditableText(out?.text || '')
       const partEdges: any[] = out.part_edges || []
       const nextSelected = partEdges.map((e) => e.to_id).filter(Boolean)
       setSelectedPartIds(nextSelected)
@@ -144,6 +147,21 @@ export default function NodeDetailModal({ nodeId, threadId, ctxId, onClose, onAf
     }
   }
 
+  async function handleSaveNodeText() {
+    try {
+      setSavingPatch(true)
+      setStatus('')
+      await api.patchNode(nodeId, { text: editableText })
+      await onAfterMutation()
+      await loadNode()
+      setStatus('Node text 저장 완료')
+    } catch (e: any) {
+      setStatus(`저장 실패: ${e?.message || String(e)}`)
+    } finally {
+      setSavingPatch(false)
+    }
+  }
+
   const body = (
     <>
       <div className="row modalHeader">
@@ -156,7 +174,16 @@ export default function NodeDetailModal({ nodeId, threadId, ctxId, onClose, onAf
         <>
           <div className="muted">id={shortId(nodeData.id)} type={nodeData.type}</div>
           <div className="muted">{nodeData.created_at}</div>
-          <textarea readOnly value={nodeData.text || ''} style={{ height: 180 }} />
+          <textarea
+            value={editableText}
+            onChange={(e) => setEditableText(e.target.value)}
+            style={{ height: 180 }}
+          />
+          <div className="row">
+            <button className="primary" onClick={handleSaveNodeText} disabled={savingPatch}>
+              {savingPatch ? 'Saving...' : 'Save'}
+            </button>
+          </div>
 
           <h4 style={{ marginBottom: 6 }}>Parts ({partCount})</h4>
           {partCount === 0 && <div className="muted">아직 분할된 part가 없습니다.</div>}

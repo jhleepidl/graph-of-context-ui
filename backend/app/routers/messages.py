@@ -5,11 +5,12 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import Session
 
 from app.db import engine
-from app.models import Node, Thread, ContextSet
+from app.models import Node
 from app.schemas import MessageCreate, ResourceNodeCreate
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, get_last_node
 from app.services.embedding import ensure_node_embedding
+from app.tenant import require_context_set_access, require_node_access, require_thread_access
 
 router = APIRouter(prefix="/api", tags=["messages"])
 logger = logging.getLogger(__name__)
@@ -25,9 +26,7 @@ def add_message(thread_id: str, body: MessageCreate):
         raise HTTPException(400, "role must be user|assistant")
 
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, "thread not found")
+        require_thread_access(s, thread_id)
 
         last = get_last_node(s, thread_id)
         n = Node(thread_id=thread_id, type="Message", text=body.text, payload_json=jdump({"role": body.role}))
@@ -36,7 +35,10 @@ def add_message(thread_id: str, body: MessageCreate):
         if last and last.id != n.id:
             s.add(add_edge(thread_id, last.id, n.id, "NEXT"))
         if body.reply_to:
-            s.add(add_edge(thread_id, n.id, body.reply_to, "REPLY_TO"))
+            reply_node = require_node_access(s, body.reply_to)
+            if reply_node.thread_id != thread_id:
+                raise HTTPException(404, "reply target not found in thread")
+            s.add(add_edge(thread_id, n.id, reply_node.id, "REPLY_TO"))
         s.commit()
         s.refresh(n)
         return n.model_dump()
@@ -66,14 +68,12 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
         raise HTTPException(400, 'name is required')
 
     with Session(engine) as s:
-        t = s.get(Thread, thread_id)
-        if not t:
-            raise HTTPException(404, 'thread not found')
+        require_thread_access(s, thread_id)
 
         attach_to_id = None
         if body.attach_to:
-            attach_target = s.get(Node, body.attach_to)
-            if attach_target and attach_target.thread_id == thread_id:
+            attach_target = require_node_access(s, body.attach_to)
+            if attach_target.thread_id == thread_id:
                 attach_to_id = attach_target.id
 
         last = get_last_node(s, thread_id)
@@ -103,16 +103,17 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
             s.add(add_edge(thread_id, attach_to_id, node.id, 'ATTACHED_TO'))
 
         if body.context_set_id and body.auto_activate:
-            cs = s.get(ContextSet, body.context_set_id)
-            if cs and cs.thread_id == thread_id:
-                try:
-                    active_ids = json.loads(cs.active_node_ids_json or '[]')
-                except Exception:
-                    active_ids = []
-                if node.id not in active_ids:
-                    active_ids.append(node.id)
-                    cs.active_node_ids_json = jdump(active_ids)
-                    snapshot_context_set(s, cs, reason='add_resource', changed_node_ids=[node.id], meta={'node_type': 'Resource'})
+            cs = require_context_set_access(s, body.context_set_id)
+            if cs.thread_id != thread_id:
+                raise HTTPException(404, "context set not found in thread")
+            try:
+                active_ids = json.loads(cs.active_node_ids_json or '[]')
+            except Exception:
+                active_ids = []
+            if node.id not in active_ids:
+                active_ids.append(node.id)
+                cs.active_node_ids_json = jdump(active_ids)
+                snapshot_context_set(s, cs, reason='add_resource', changed_node_ids=[node.id], meta={'node_type': 'Resource'})
 
         s.commit()
         s.refresh(node)

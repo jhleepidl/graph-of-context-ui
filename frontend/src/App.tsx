@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from './api'
+import { api, setStoredBearerToken } from './api'
 import Timeline from './components/Timeline'
 import GraphPanel from './components/GraphPanel'
 import ActiveContext from './components/ActiveContext'
@@ -61,6 +61,32 @@ function readStoredMobileSection(): MobileSection {
   return 'center'
 }
 
+function captureTokenFromHash(): void {
+  if (typeof window === 'undefined') return
+  const rawHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
+  if (!rawHash) return
+
+  const hashParams = new URLSearchParams(rawHash)
+  const token = (hashParams.get('token') || '').trim()
+  if (!token) return
+
+  setStoredBearerToken(token)
+  hashParams.delete('token')
+  const nextHash = hashParams.toString()
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`
+  window.history.replaceState(null, '', nextUrl)
+}
+
+function readDeepLinkSelection(): { threadId: string | null; ctxId: string | null } {
+  if (typeof window === 'undefined') {
+    return { threadId: null, ctxId: null }
+  }
+  const params = new URLSearchParams(window.location.search)
+  const threadId = (params.get('thread') || '').trim() || null
+  const ctxId = (params.get('ctx') || '').trim() || null
+  return { threadId, ctxId }
+}
+
 export default function App() {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [threads, setThreads] = useState<any[]>([])
@@ -98,6 +124,7 @@ export default function App() {
   const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>(() => readStoredRightPanelTab())
   const [mobileSection, setMobileSection] = useState<MobileSection>(() => readStoredMobileSection())
   const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() => detectMobileLayout())
+  const initialDeepLink = useMemo(() => readDeepLinkSelection(), [])
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
@@ -170,10 +197,13 @@ export default function App() {
     await refreshContextInspector(cId)
   }
 
-  async function loadThreads() {
+  async function loadThreads(preferredThreadId?: string | null) {
     const ts = await api.threads()
     setThreads(ts)
     let tid = ts[0]?.id
+    if (preferredThreadId && ts.some((t) => t.id === preferredThreadId)) {
+      tid = preferredThreadId
+    }
     if (!tid) {
       const t = await api.createThread('Demo Thread')
       tid = t.id
@@ -183,10 +213,13 @@ export default function App() {
     return tid
   }
 
-  async function loadCtxSets(tid: string) {
+  async function loadCtxSets(tid: string, preferredCtxId?: string | null) {
     const sets = await api.ctxSets(tid)
     let nextSets = sets
     let cid = sets[0]?.id
+    if (preferredCtxId && sets.some((c) => c.id === preferredCtxId)) {
+      cid = preferredCtxId
+    }
     if (!cid) {
       const cs = await api.createCtx(tid, 'default')
       nextSets = [...sets, cs]
@@ -209,7 +242,7 @@ export default function App() {
     setPlannerResult(null)
   }
 
-  async function switchThread(nextThreadId: string) {
+  async function switchThread(nextThreadId: string, preferredCtxId?: string | null) {
     if (!nextThreadId) return
     const seq = ++switchSeqRef.current
 
@@ -217,7 +250,7 @@ export default function App() {
     clearThreadScopedState()
 
     try {
-      const { sets, cid } = await loadCtxSets(nextThreadId)
+      const { sets, cid } = await loadCtxSets(nextThreadId, preferredCtxId)
       if (switchSeqRef.current !== seq) return
 
       setCtxSets(sets)
@@ -245,10 +278,11 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const tid = await loadThreads()
-      await switchThread(tid)
+      captureTokenFromHash()
+      const tid = await loadThreads(initialDeepLink.threadId)
+      await switchThread(tid, initialDeepLink.ctxId)
     })()
-  }, [])
+  }, [initialDeepLink])
 
   useEffect(() => {
     try {
@@ -457,7 +491,7 @@ export default function App() {
   async function handleDeleteNodes(nodeIds: string[]) {
     if (!threadId || nodeIds.length === 0) return
     try {
-      await Promise.all(nodeIds.map((nodeId) => api.deleteNode(threadId, nodeId)))
+      await Promise.all(nodeIds.map((nodeId) => api.deleteNodeById(nodeId)))
       setSelectedIds([])
       if (detailNodeId && nodeIds.includes(detailNodeId)) {
         setDetailNodeId(null)
