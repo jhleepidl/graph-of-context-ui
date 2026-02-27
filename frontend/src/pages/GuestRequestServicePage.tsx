@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { api } from '../api'
+import { copyText } from '../utils/clipboard'
 
 type Props = {
   onNavigate: (path: string) => void
@@ -11,6 +12,7 @@ export default function GuestRequestServicePage({ onNavigate }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<any | null>(null)
+  const [copyStatus, setCopyStatus] = useState('')
 
   async function submit() {
     const cleanName = name.trim()
@@ -24,6 +26,7 @@ export default function GuestRequestServicePage({ onNavigate }: Props) {
     try {
       const out = await api.createServiceRequest(cleanName, description.trim() || null)
       setResult(out?.service_request || null)
+      setCopyStatus('')
     } catch (e: any) {
       setError(e?.message || String(e))
     } finally {
@@ -34,11 +37,8 @@ export default function GuestRequestServicePage({ onNavigate }: Props) {
   async function copyRequestId() {
     const id = result?.id
     if (!id) return
-    try {
-      await navigator.clipboard.writeText(id)
-    } catch {
-      // ignore clipboard failures
-    }
+    const ok = await copyText(id)
+    setCopyStatus(ok ? 'request_id copied' : 'copy failed (브라우저 권한/보안 컨텍스트 확인)')
   }
 
   return (
@@ -71,6 +71,7 @@ export default function GuestRequestServicePage({ onNavigate }: Props) {
             <div className="row" style={{ marginTop: 8 }}>
               <button onClick={copyRequestId}>Copy request_id</button>
             </div>
+            {copyStatus && <div className="muted">{copyStatus}</div>}
           </div>
         )}
       </div>

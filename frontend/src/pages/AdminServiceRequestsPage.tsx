@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { copyText } from '../utils/clipboard'
 
 type Props = {
   hasAdminKey: boolean
@@ -16,6 +17,7 @@ export default function AdminServiceRequestsPage({ hasAdminKey, onNavigate }: Pr
   const [error, setError] = useState('')
   const [revealedKey, setRevealedKey] = useState('')
   const [revealedTitle, setRevealedTitle] = useState('')
+  const [copyStatus, setCopyStatus] = useState('')
 
   useEffect(() => {
     if (!hasAdminKey) {
@@ -52,6 +54,7 @@ export default function AdminServiceRequestsPage({ hasAdminKey, onNavigate }: Pr
       const out = await api.adminApproveServiceRequest(requestId)
       setRevealedTitle(`Approved request ${requestId}`)
       setRevealedKey(out?.api_key || '')
+      setCopyStatus('')
       await reload()
     } catch (e: any) {
       setError(e?.message || String(e))
@@ -64,6 +67,7 @@ export default function AdminServiceRequestsPage({ hasAdminKey, onNavigate }: Pr
       const out = await api.adminRotateService(serviceId)
       setRevealedTitle(`Rotated service ${serviceId}`)
       setRevealedKey(out?.api_key || '')
+      setCopyStatus('')
       await reload()
     } catch (e: any) {
       setError(e?.message || String(e))
@@ -83,11 +87,8 @@ export default function AdminServiceRequestsPage({ hasAdminKey, onNavigate }: Pr
 
   async function copyRevealedKey() {
     if (!revealedKey) return
-    try {
-      await navigator.clipboard.writeText(revealedKey)
-    } catch {
-      // ignore clipboard failures
-    }
+    const ok = await copyText(revealedKey)
+    setCopyStatus(ok ? 'service key copied' : 'copy failed (브라우저 권한/보안 컨텍스트 확인)')
   }
 
   if (!hasAdminKey) return null
@@ -152,6 +153,9 @@ export default function AdminServiceRequestsPage({ hasAdminKey, onNavigate }: Pr
         </div>
 
         <h3 style={{ marginTop: 20 }}>Services</h3>
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Rotate는 기존 ServiceKey를 폐기하고 새 ServiceKey를 1회 재발급합니다.
+        </div>
         <div className="routeTableWrap">
           <table className="routeTable">
             <thead>
@@ -193,6 +197,7 @@ export default function AdminServiceRequestsPage({ hasAdminKey, onNavigate }: Pr
               <button className="primary" onClick={() => void copyRevealedKey()}>Copy</button>
               <button onClick={() => setRevealedKey('')}>Close</button>
             </div>
+            {copyStatus && <div className="muted">{copyStatus}</div>}
           </div>
         </div>
       )}

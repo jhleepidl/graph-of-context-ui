@@ -137,6 +137,15 @@ def revoke_service(service_id: str):
 
 @router.post("/admin/services/{service_id}/rotate")
 def rotate_service_key(service_id: str):
+    return _rotate_service_key(service_id)
+
+
+@router.post("/admin/services/{service_id}/rotate_key")
+def rotate_service_key_compat(service_id: str):
+    return _rotate_service_key(service_id)
+
+
+def _rotate_service_key(service_id: str):
     require_admin_principal()
     with Session(engine) as s:
         service = s.get(Service, service_id)

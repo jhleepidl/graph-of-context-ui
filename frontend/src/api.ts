@@ -153,9 +153,28 @@ export const api = {
     j<any>(apiFetch(`/api/admin/service_requests/${requestId}/approve`, { method: 'POST' })),
   adminServices: () => j<any>(apiFetch('/api/admin/services')),
   adminRevokeService: (serviceId: string) =>
-    j<any>(apiFetch(`/api/admin/services/${serviceId}/revoke`, { method: 'POST' })),
-  adminRotateService: (serviceId: string) =>
-    j<any>(apiFetch(`/api/admin/services/${serviceId}/rotate`, { method: 'POST' })),
+    j<any>(apiFetch(`/api/admin/services/${serviceId}/revoke`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })),
+  adminRotateService: async (serviceId: string) => {
+    const payload = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    } as const
+    try {
+      return await j<any>(apiFetch(`/api/admin/services/${serviceId}/rotate`, payload))
+    } catch (firstErr: any) {
+      // Compatibility fallback for proxy/path routing edge cases.
+      try {
+        return await j<any>(apiFetch(`/api/admin/services/${serviceId}/rotate_key`, payload))
+      } catch {
+        throw firstErr
+      }
+    }
+  },
 
   threads: () => j<any[]>(apiFetch('/api/threads')),
   createThread: (title?: string) =>
