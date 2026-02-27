@@ -21,6 +21,7 @@ type Props = {
   nodes: any[]
   edges: any[]
   activeNodeIds: string[]
+  priorityBucketByNodeId?: Map<string, GraphPriorityBucket>
   selectedNodeIds?: string[]
   onSelectionChange: (ids: string[]) => void
   onNodeOpenDetail?: (nodeId: string) => void
@@ -34,6 +35,8 @@ type Props = {
   onSaveLayout?: (positions: Array<{ id: string; x: number; y: number }>) => void | Promise<void>
   layoutScopeKey?: string | null
 }
+
+type GraphPriorityBucket = 'must' | 'recommended' | 'optional' | 'skippable'
 
 type GraphNodeData = {
   id: string
@@ -53,6 +56,7 @@ type GraphNodeData = {
   hierarchyDetailCount?: number
   onToggleHierarchyExpand?: (nodeId: string) => void
   hideActiveDrag?: boolean
+  priorityBucket?: GraphPriorityBucket
 }
 
 type ViewMode = 'conversation_hierarchy' | 'raw_graph'
@@ -147,6 +151,13 @@ function nodeToneClass(typeLabel: string, role?: string): string {
   if (typeLabel === 'Message' && role === 'user') return 'tone-user'
   if (typeLabel === 'Message' && role === 'assistant') return 'tone-assistant'
   return 'tone-default'
+}
+
+function priorityBucketLabel(bucket: GraphPriorityBucket): string {
+  if (bucket === 'must') return 'MUST'
+  if (bucket === 'recommended') return 'RECOMMEND'
+  if (bucket === 'optional') return 'OPTIONAL'
+  return 'SKIP'
 }
 
 function roleFromNode(n: any): string {
@@ -689,7 +700,7 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
 
   return (
     <div
-      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''} ${data.layoutEditable ? 'isLayoutEditable' : ''} ${data.hierarchyClass || ''}`}
+      className={`graphNodeCard nopan ${data.active ? 'isActive' : ''} ${data.toneClass || 'tone-default'} ${data.priorityBucket ? `priority-${data.priorityBucket}` : ''} ${data.expandedFold ? 'isExpandedFold' : ''} ${data.expandedMember ? 'isExpandedMember' : ''} ${data.pendingLinkSource ? 'isLinkSource' : ''} ${data.layoutEditable ? 'isLayoutEditable' : ''} ${data.hierarchyClass || ''}`}
       title="클릭: 선택 · 더블클릭: 상세/분할 또는 Fold view-unfold · 카드 이동: 노드 드래그 · Active 추가: 아래 버튼 드래그"
     >
       <Handle id="target-top" type="target" position={Position.Top} className="graphHandle graphHandle--top graphHandle--target" onDragStart={(e) => e.preventDefault()} />
@@ -700,6 +711,7 @@ function GraphNode({ data }: NodeProps<GraphNodeData>) {
       {data.pendingLinkSource && <span className="graphNodeLinkSourceBadge">Link source</span>}
       <div className="graphNodeTitle">
         <span className={`pill pillType ${(data.toneClass || 'tone-default').replace('tone-', 'pill--')}`}>{data.typeLabel}{data.role ? `/${data.role}` : ''}</span>
+        {data.priorityBucket && <span className={`pill graphPriorityPill graphPriorityPill--${data.priorityBucket}`}>{priorityBucketLabel(data.priorityBucket)}</span>}
         {data.expandedFold && <span className="pill">view expanded</span>}
         {data.expandedMember && <span className="pill">member</span>}
       </div>
@@ -743,6 +755,7 @@ export default function GraphPanel({
   nodes,
   edges,
   activeNodeIds,
+  priorityBucketByNodeId = new Map<string, GraphPriorityBucket>(),
   selectedNodeIds = [],
   onSelectionChange,
   onNodeOpenDetail,
@@ -1407,6 +1420,7 @@ export default function GraphPanel({
             text: n.text || '',
             createdAt: isDetail ? '' : formatCreatedAtCompact(n.created_at),
             active,
+            priorityBucket: active ? priorityBucketByNodeId.get(n.id) : undefined,
             toneClass: nodeToneClass(n.type, role),
             expandedFold,
             expandedMember,
@@ -1475,6 +1489,7 @@ export default function GraphPanel({
           text: n.text || '',
           createdAt: n.created_at,
           active,
+          priorityBucket: active ? priorityBucketByNodeId.get(n.id) : undefined,
           toneClass: nodeToneClass(n.type, role),
           expandedFold,
           expandedMember,
@@ -1486,7 +1501,7 @@ export default function GraphPanel({
         },
       }
     })
-  }, [isConversationHierarchyView, hierarchyProjection, expandedAssistantReplyIds, nodesById, nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId, effectiveLayoutMode, manualPositionsById, toggleAssistantReplyExpansion])
+  }, [isConversationHierarchyView, hierarchyProjection, expandedAssistantReplyIds, nodesById, nodes, visibleNodeIds, viewExpandedFoldIds, viewExpandedMembersByFoldId, foldMembersByFoldId, activeSet, selectedSet, expandedFoldSet, expandedMemberSet, pendingLinkSourceId, effectiveLayoutMode, manualPositionsById, priorityBucketByNodeId, toggleAssistantReplyExpansion])
 
   const desiredNodeCentersById = useMemo(() => {
     const centers = new Map<string, DirectionalNodeCenter>()

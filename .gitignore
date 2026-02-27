@@ -358,3 +358,4 @@ __marimo__/
 .env
 backend/data/
 
+.orchestrator/

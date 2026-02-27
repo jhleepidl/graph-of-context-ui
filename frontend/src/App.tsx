@@ -8,12 +8,16 @@ import SearchPanel from './components/SearchPanel'
 import CopyToChatGPTPanel from './components/CopyToChatGPTPanel'
 import NodeDetailModal from './components/NodeDetailModal'
 import ContextInspector from './components/ContextInspector'
+import { scoreNodesForRequest, type PriorityBucket } from './utils/contextPriority'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
+const RIGHT_PANEL_TAB_STORAGE_KEY = 'goc:right-panel-tab:v1'
+const MOBILE_SECTION_STORAGE_KEY = 'goc:mobile-section:v1'
 const LEFT_PANEL_MIN_WIDTH = 260
 const RIGHT_PANEL_MIN_WIDTH = 300
 const CENTER_PANEL_MIN_WIDTH = 520
 const RESIZER_WIDTH = 10
+const MOBILE_LAYOUT_BREAKPOINT = 820
 
 type ResizeHandle = 'left' | 'right'
 type ResizeSession = {
@@ -23,9 +27,38 @@ type ResizeSession = {
   startRightWidth: number
   wrapWidth: number
 }
+type MobileSection = 'left' | 'center' | 'right'
+type RightPanelTab = 'inspector' | 'prompt' | 'run'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function detectMobileLayout(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT
+}
+
+function readStoredRightPanelTab(): RightPanelTab {
+  if (typeof window === 'undefined') return 'inspector'
+  try {
+    const raw = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
+    if (raw === 'inspector' || raw === 'prompt' || raw === 'run') return raw
+  } catch {
+    // ignore storage failures
+  }
+  return 'inspector'
+}
+
+function readStoredMobileSection(): MobileSection {
+  if (typeof window === 'undefined') return 'center'
+  try {
+    const raw = window.localStorage.getItem(MOBILE_SECTION_STORAGE_KEY)
+    if (raw === 'left' || raw === 'center' || raw === 'right') return raw
+  } catch {
+    // ignore storage failures
+  }
+  return 'center'
 }
 
 export default function App() {
@@ -62,10 +95,23 @@ export default function App() {
     }
   })
   const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null)
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>(() => readStoredRightPanelTab())
+  const [mobileSection, setMobileSection] = useState<MobileSection>(() => readStoredMobileSection())
+  const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() => detectMobileLayout())
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
   const selectedFoldIds = useMemo(() => selectedIds.filter((id) => nodesById.get(id)?.type === 'Fold'), [selectedIds, nodesById])
+  const graphPriorityBucketById = useMemo(() => {
+    const scored = scoreNodesForRequest(nodes, '')
+    const activeSet = new Set(activeIds)
+    const byId = new Map<string, PriorityBucket>()
+    for (const score of scored) {
+      if (!activeSet.has(score.node.id)) continue
+      byId.set(score.node.id, score.bucket)
+    }
+    return byId
+  }, [nodes, activeIds])
   const partCountByParent = useMemo(() => {
     const out: Record<string, number> = {}
     for (const e of edges) {
@@ -213,6 +259,31 @@ export default function App() {
   }, [panelWidths])
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab)
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [rightPanelTab])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MOBILE_SECTION_STORAGE_KEY, mobileSection)
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [mobileSection])
+
+  useEffect(() => {
+    function handleResize() {
+      setIsMobileLayout(detectMobileLayout())
+    }
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  useEffect(() => {
     if (!resizeSession) return
 
     function handleMouseMove(evt: MouseEvent) {
@@ -268,6 +339,9 @@ export default function App() {
       ['--right-panel-width' as any]: `${panelWidths.right}px`,
     }
   }, [panelWidths])
+  const showLeftPanel = !isMobileLayout || mobileSection === 'left'
+  const showCenterPanel = !isMobileLayout || mobileSection === 'center'
+  const showRightPanel = !isMobileLayout || mobileSection === 'right'
 
   async function toggleActive(nodeId: string, nextActive: boolean) {
     if (!ctxId) return
@@ -518,8 +592,24 @@ export default function App() {
   }
 
   return (
-    <div className="wrap" ref={wrapRef} style={wrapStyle}>
-      <div className="col col-left">
+    <div className="appShell">
+      {isMobileLayout && (
+        <div className="mobileSectionTabs card">
+          <div className="row" style={{ marginBottom: 0 }}>
+            <button className={mobileSection === 'center' ? 'primary' : ''} onClick={() => setMobileSection('center')}>
+              Graph
+            </button>
+            <button className={mobileSection === 'left' ? 'primary' : ''} onClick={() => setMobileSection('left')}>
+              Threads
+            </button>
+            <button className={mobileSection === 'right' ? 'primary' : ''} onClick={() => setMobileSection('right')}>
+              Context
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="wrap" ref={wrapRef} style={wrapStyle}>
+      <div className={`col col-left ${showLeftPanel ? '' : 'isMobileHidden'}`}>
         <div className="row">
           <button onClick={async () => {
             const t = await api.createThread('New Thread')
@@ -587,15 +677,17 @@ export default function App() {
         />
       </div>
 
-      <div
-        className="panelResizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize left panel"
-        onMouseDown={(evt) => startPanelResize('left', evt)}
-      />
+      {!isMobileLayout && (
+        <div
+          className="panelResizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize left panel"
+          onMouseDown={(evt) => startPanelResize('left', evt)}
+        />
+      )}
 
-      <div className="col col-center">
+      <div className={`col col-center ${showCenterPanel ? '' : 'isMobileHidden'}`}>
         <div className="card selectionActionBar">
           <div className="row" style={{ marginBottom: 6 }}>
             <b>Fallback Actions</b>
@@ -630,6 +722,7 @@ export default function App() {
             onCommitUnfold={unfoldFold}
             onSaveLayout={saveGraphLayoutPositions}
             layoutScopeKey={threadId}
+            priorityBucketByNodeId={graphPriorityBucketById}
           />
           {detailNodeId && (
             <NodeDetailModal
@@ -649,15 +742,17 @@ export default function App() {
         </div>
       </div>
 
-      <div
-        className="panelResizer"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize right panel"
-        onMouseDown={(evt) => startPanelResize('right', evt)}
-      />
+      {!isMobileLayout && (
+        <div
+          className="panelResizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize right panel"
+          onMouseDown={(evt) => startPanelResize('right', evt)}
+        />
+      )}
 
-      <div className="col col-right">
+      <div className={`col col-right ${showRightPanel ? '' : 'isMobileHidden'}`}>
         <ActiveContext
           activeIds={activeIds}
           nodesById={nodesById}
@@ -674,44 +769,61 @@ export default function App() {
           onUnfold={unfoldFold}
         />
 
-        <ContextInspector
-          compiledText={compiledInfo?.compiled_text || ''}
-          excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
-          keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
-          versions={contextVersions}
-          versionDiff={versionDiff}
-          plannerResult={plannerResult}
-          nodesById={nodesById}
-          onRefresh={async () => {
-            await refreshContextInspector()
-          }}
-          onLoadDiff={loadVersionDiff}
-          onPlan={previewPlanner}
-          onApplySeeds={applyPlannerSeeds}
-        />
+        <div className="card rightPanelTabs">
+          <div className="row" style={{ marginBottom: 8 }}>
+            <button className={rightPanelTab === 'inspector' ? 'primary' : ''} onClick={() => setRightPanelTab('inspector')}>Inspector</button>
+            <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
+            <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
+          </div>
+          <div className="muted">
+            {rightPanelTab === 'inspector' && 'Compiled context, version diff, recovery planner'}
+            {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budget, resource notes'}
+            {rightPanelTab === 'run' && 'Run query with current Active Context'}
+          </div>
+        </div>
 
-        <hr />
-        <CopyToChatGPTPanel
-          activeNodes={activeNodes}
-          allNodes={nodes}
-          edges={edges}
-          threadId={threadId}
-          ctxId={ctxId}
-          onAfterMutation={async () => {
+        {rightPanelTab === 'inspector' && (
+          <ContextInspector
+            compiledText={compiledInfo?.compiled_text || ''}
+            excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
+            keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
+            versions={contextVersions}
+            versionDiff={versionDiff}
+            plannerResult={plannerResult}
+            nodesById={nodesById}
+            onRefresh={async () => {
+              await refreshContextInspector()
+            }}
+            onLoadDiff={loadVersionDiff}
+            onPlan={previewPlanner}
+            onApplySeeds={applyPlannerSeeds}
+          />
+        )}
+
+        {rightPanelTab === 'prompt' && (
+          <CopyToChatGPTPanel
+            activeNodes={activeNodes}
+            allNodes={nodes}
+            edges={edges}
+            threadId={threadId}
+            ctxId={ctxId}
+            onAfterMutation={async () => {
+              await reloadAll()
+            }}
+            onReplaceActive={replaceActiveContext}
+          />
+        )}
+
+        {rightPanelTab === 'run' && (
+          <RunPanel onRun={async (msg) => {
+            if (!ctxId) return ''
+            const out = await api.run(ctxId, msg)
             await reloadAll()
-          }}
-          onReplaceActive={replaceActiveContext}
-        />
-
-        <hr />
-
-        <RunPanel onRun={async (msg) => {
-          if (!ctxId) return ''
-          const out = await api.run(ctxId, msg)
-          await reloadAll()
-          return out.response_text || ''
-        }} />
+            return out.response_text || ''
+          }} />
+        )}
       </div>
+    </div>
     </div>
   )
 }

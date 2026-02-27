@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import {
   applyManualPriorityRules,
@@ -181,6 +181,8 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
   const [promptMode, setPromptMode] = useState<PromptMode>('light')
   const [userRequest, setUserRequest] = useState('')
   const [status, setStatus] = useState('')
+  const [copyPromptVisualState, setCopyPromptVisualState] = useState<'idle' | 'copying' | 'success' | 'error'>('idle')
+  const copyPromptFeedbackTimerRef = useRef<number | null>(null)
   const [userRequestStatus, setUserRequestStatus] = useState('')
   const [autoSaveUserRequest, setAutoSaveUserRequest] = useState(true)
   const [lastUserRequestNodeId, setLastUserRequestNodeId] = useState<string | null>(null)
@@ -382,6 +384,13 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
     return fullPromptTokens / win
   }, [fullPromptTokens, targetWindow])
 
+  const copyPromptButtonLabel = useMemo(() => {
+    if (copyPromptVisualState === 'copying') return 'Copying...'
+    if (copyPromptVisualState === 'success') return 'Copied!'
+    if (copyPromptVisualState === 'error') return 'Copy failed'
+    return 'Copy Prompt'
+  }, [copyPromptVisualState])
+
   useEffect(() => {
     if (!threadId) {
       setLastUserRequestNodeId(null)
@@ -434,6 +443,25 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
     }, 300)
     return () => window.clearTimeout(timer)
   }, [contextSection, builtPrompt])
+
+  useEffect(() => {
+    return () => {
+      if (copyPromptFeedbackTimerRef.current != null) {
+        window.clearTimeout(copyPromptFeedbackTimerRef.current)
+      }
+    }
+  }, [])
+
+  function flashCopyPromptFeedback(state: 'success' | 'error') {
+    if (copyPromptFeedbackTimerRef.current != null) {
+      window.clearTimeout(copyPromptFeedbackTimerRef.current)
+    }
+    setCopyPromptVisualState(state)
+    copyPromptFeedbackTimerRef.current = window.setTimeout(() => {
+      setCopyPromptVisualState('idle')
+      copyPromptFeedbackTimerRef.current = null
+    }, 1500)
+  }
 
   function cacheLastUserRequestNodeId(nodeId: string) {
     setLastUserRequestNodeId(nodeId)
@@ -511,6 +539,11 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
   }
 
   async function copyPrompt() {
+    if (copyPromptFeedbackTimerRef.current != null) {
+      window.clearTimeout(copyPromptFeedbackTimerRef.current)
+      copyPromptFeedbackTimerRef.current = null
+    }
+    setCopyPromptVisualState('copying')
     try {
       setPreviewText(builtPrompt)
       let savedNodeId: string | null = null
@@ -527,8 +560,10 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
       } else {
         setStatus('복사됨')
       }
+      flashCopyPromptFeedback('success')
     } catch (e: any) {
       setStatus(`복사 실패: ${e?.message || String(e)}`)
+      flashCopyPromptFeedback('error')
     }
   }
 
@@ -841,10 +876,18 @@ export default function CopyToChatGPTPanel({ activeNodes, allNodes = [], edges =
         </label>
       </div>
       <div className="row">
-        <button className="primary" onClick={copyPrompt}>Copy Prompt</button>
+        <button
+          className="primary"
+          onClick={copyPrompt}
+          disabled={copyPromptVisualState === 'copying'}
+          aria-label="프롬프트를 클립보드에 복사"
+          aria-describedby={status ? 'copy-prompt-status' : undefined}
+        >
+          {copyPromptButtonLabel}
+        </button>
         <button onClick={copyBootstrapPrompt}>Copy Bootstrap (Context Only)</button>
         <button onClick={handleAddUserRequestContext}>Add USER REQUEST to Context</button>
-        {status && <div className="muted">{status}</div>}
+        {status && <div id="copy-prompt-status" className="muted" role="status" aria-live="polite">{status}</div>}
       </div>
       <div className="muted">
         Last USER REQUEST node: {lastUserRequestNodeId ? shortId(lastUserRequestNodeId) : '-'}
