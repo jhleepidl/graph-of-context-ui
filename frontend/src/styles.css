@@ -52,6 +52,15 @@ body {
 .routeTable { width: 100%; border-collapse: collapse; font-size: 13px; }
 .routeTable th, .routeTable td { border-bottom: 1px solid #e5e7eb; padding: 8px; text-align: left; vertical-align: top; }
 .routeTable th { background: #f8fafc; font-weight: 700; color: #334155; }
+.agentsLayout {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(520px, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.agentsFormCard { position: sticky; top: 74px; }
+.agentsActionRow { margin-bottom: 0; }
+.agentsEditModal { width: min(760px, 100%); }
 button, input, select, textarea { font: inherit; }
 .appShell { height: 100vh; }
 .wrap {
@@ -351,6 +360,12 @@ textarea { width:100%; height: 90px; resize: vertical; padding: 10px; box-sizing
   .col-right { order: 3; max-height: none; border-top: 0; }
   .graphWrap { height: 68vh; min-height: 360px; }
   .mobileSectionTabs { top: 8px; margin: 8px; }
+  .agentsLayout {
+    grid-template-columns: 1fr;
+  }
+  .agentsFormCard {
+    position: static;
+  }
 }
 
 .priorityList {
