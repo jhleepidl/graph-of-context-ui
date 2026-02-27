@@ -10,7 +10,7 @@ By default dev requests to `/api` are proxied to `VITE_BACKEND_PROXY_TARGET` (de
 You can also set `VITE_API_BASE` to call a full backend URL directly.
 
 ## Auth Token + Deep Link
-- URL hash에 `#token=<bearer>`를 붙이면 앱 시작 시 토큰을 읽어 `sessionStorage`에 저장하고, 이후 모든 API 요청에 `Authorization: Bearer <token>`이 자동으로 포함됩니다.
+- URL hash에 `#token=<bearer>`를 붙이면 앱 시작 시 토큰을 읽어 `sessionStorage(goc:ui_token:v1)`에 저장하고, 이후 모든 API 요청에 자동 첨부됩니다.
 - UI Bearer 토큰은 해당 `service_id` 범위 내에서 **read + write**(노드 편집/activate/split/fold 등) 권한을 가집니다.
 - UI Bearer 토큰은 짧은 TTL을 권장합니다. 만료되면 ServiceKey로 `/api/service/mint_ui_token`을 호출해 재발급하세요.
 - URL query의 `?thread=<threadId>&ctx=<ctxId>`가 있으면 초기 로딩에서 해당 thread/context set을 우선 선택합니다.
@@ -19,6 +19,16 @@ Example:
 ```text
 https://<host>/goc/?thread=<threadId>&ctx=<ctxId>#token=gocu1.<service_id>.<exp>.<sig>
 ```
+
+## Admin / Guest UI routes
+- `/guest/request-service`: 인증 없이 서비스 키 발급 신청 생성
+- `/admin/login`: Admin Key를 `sessionStorage(goc:admin_key:v1)`에 저장/삭제
+- `/admin/service-requests`: Admin 요청 목록 조회/approve + 1회 api_key 표시/복사, service rotate/revoke
+
+## Header priority (auto)
+1. `X-Admin-Key` (sessionStorage에 admin key가 있으면 최우선)
+2. `Authorization: Bearer <ui_token>`
+3. `Authorization: ServiceKey ...` (프론트 기본 동선에서는 자동 사용하지 않음)
 
 ## Notes
 - Graph visualization uses React Flow.

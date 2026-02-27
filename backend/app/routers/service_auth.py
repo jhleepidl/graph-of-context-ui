@@ -4,8 +4,8 @@ import time
 from collections import defaultdict
 from threading import Lock
 
-from fastapi import APIRouter, HTTPException, Request
-from sqlmodel import Session
+from fastapi import APIRouter, HTTPException, Query, Request
+from sqlmodel import Session, select
 
 from app.auth import (
     generate_service_key,
@@ -42,11 +42,12 @@ def create_service_request(body: ServiceRequestCreate, request: Request):
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(400, "name is required")
+    description = (body.description or "").strip() or None
 
     requester_ip = request.client.host if request.client and request.client.host else "unknown"
     _check_service_request_rate_limit(requester_ip)
 
-    row = ServiceRequest(name=name, requester_ip=requester_ip)
+    row = ServiceRequest(name=name, description=description, requester_ip=requester_ip)
     with Session(engine) as s:
         s.add(row)
         s.commit()
@@ -55,6 +56,31 @@ def create_service_request(body: ServiceRequestCreate, request: Request):
             "ok": True,
             "service_request": row.model_dump(),
         }
+
+
+@router.get("/admin/service_requests")
+def list_service_requests(status: str | None = Query(default=None)):
+    require_admin_principal()
+    with Session(engine) as s:
+        query = select(ServiceRequest).order_by(ServiceRequest.created_at.desc(), ServiceRequest.id.desc())
+        if status:
+            status_clean = status.strip().lower()
+            if status_clean not in {"pending", "approved", "rejected"}:
+                raise HTTPException(400, "status must be pending|approved|rejected")
+            query = query.where(ServiceRequest.status == status_clean)
+        rows = s.exec(query).all()
+        return {"ok": True, "items": [r.model_dump() for r in rows]}
+
+
+@router.get("/admin/services")
+def list_services():
+    require_admin_principal()
+    with Session(engine) as s:
+        rows = s.exec(
+            select(Service)
+            .order_by(Service.created_at.desc(), Service.id.desc())
+        ).all()
+        return {"ok": True, "items": [r.model_dump() for r in rows]}
 
 
 @router.post("/admin/service_requests/{request_id}/approve")
@@ -131,4 +157,3 @@ def mint_ui_token(body: MintUiTokenRequest):
     principal = require_service_key_principal()
     token, exp = mint_ui_bearer_token(principal.service_id or "", body.ttl_sec)
     return {"ok": True, "token": token, "exp": exp, "service_id": principal.service_id}
-

@@ -32,6 +32,7 @@ class Service(SQLModel, table=True):
 class ServiceRequest(SQLModel, table=True):
     id: str = Field(default_factory=new_id, primary_key=True)
     name: str
+    description: Optional[str] = None
     status: str = Field(default="pending", index=True)  # pending | approved | rejected
     requester_ip: Optional[str] = Field(default=None, index=True)
     approved_service_id: Optional[str] = Field(default=None, index=True)

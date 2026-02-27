@@ -29,6 +29,13 @@ uvicorn app.main:app --reload --port 8000
 - `Authorization: ServiceKey <raw>`: service 범위 권한
 - `Authorization: Bearer <ui_token>`: service 범위 권한(UI용, write 포함)
 
+### Admin service APIs
+- `GET /api/admin/service_requests?status=pending|approved|rejected`
+- `POST /api/admin/service_requests/{id}/approve`
+- `GET /api/admin/services`
+- `POST /api/admin/services/{service_id}/rotate`
+- `POST /api/admin/services/{service_id}/revoke`
+
 ### Service onboarding / key flow
 1. `POST /api/service_requests` (무인증, IP별 rate-limit)
 2. `POST /api/admin/service_requests/{id}/approve` (admin): service 생성 + ServiceKey 1회 반환
@@ -42,6 +49,10 @@ uvicorn app.main:app --reload --port 8000
 - admin 라우트를 내부망/IP allowlist로 제한
 - reverse proxy에서 basic auth/mTLS 추가
 - 백엔드는 로컬 바인딩 또는 사설 네트워크로 노출 최소화
+
+### CORS
+- 개발 기본값은 `GOC_CORS_ALLOW_ORIGINS=*`
+- 운영에서는 `GOC_CORS_ALLOW_ORIGINS=https://your-admin-ui.example.com,https://your-goc-ui.example.com` 처럼 명시적으로 제한하세요.
 
 ## Vector search notes
 - Backend stores **normalized** embeddings in Postgres table `node_embeddings` (JSON text).

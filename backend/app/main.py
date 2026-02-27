@@ -12,6 +12,7 @@ from app.auth import (
     set_current_principal,
 )
 from app.db import init_db
+from app.config import get_env
 from app.routers.threads import router as threads_router
 from app.routers.messages import router as messages_router
 from app.routers.context_sets import router as ctx_router
@@ -26,9 +27,17 @@ from app.routers.service_auth import router as service_auth_router
 
 app = FastAPI(title="Graph-of-Context MVP API")
 
+_cors_origins_raw = (get_env("GOC_CORS_ALLOW_ORIGINS", "*") or "*").strip()
+if _cors_origins_raw == "*":
+    _cors_allow_origins = ["*"]
+else:
+    _cors_allow_origins = [x.strip() for x in _cors_origins_raw.split(",") if x.strip()]
+if not _cors_allow_origins:
+    _cors_allow_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # MVP only
+    allow_origins=_cors_allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

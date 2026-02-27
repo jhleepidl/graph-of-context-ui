@@ -1,47 +1,116 @@
 const API_BASE = (import.meta.env.VITE_API_BASE || '').trim().replace(/\/+$/, '')
-export const TOKEN_STORAGE_KEY = 'goc:bearer-token'
+
+export const UI_TOKEN_STORAGE_KEY = 'goc:ui_token:v1'
+export const ADMIN_KEY_STORAGE_KEY = 'goc:admin_key:v1'
+const LEGACY_UI_TOKEN_STORAGE_KEYS = ['goc:bearer-token']
 
 function apiUrl(path: string): string {
   return API_BASE ? `${API_BASE}${path}` : path
 }
 
-export function getStoredBearerToken(): string {
-  if (typeof window === 'undefined') return ''
+function readSessionStorage(key: string): string {
   try {
-    const sessionToken = (window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || '').trim()
-    if (sessionToken) return sessionToken
-    const legacyLocalToken = (window.localStorage.getItem(TOKEN_STORAGE_KEY) || '').trim()
-    if (legacyLocalToken) {
-      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, legacyLocalToken)
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-      return legacyLocalToken
-    }
-    return ''
+    return (window.sessionStorage.getItem(key) || '').trim()
   } catch {
     return ''
   }
+}
+
+function writeSessionStorage(key: string, value: string): void {
+  try {
+    if (value) {
+      window.sessionStorage.setItem(key, value)
+    } else {
+      window.sessionStorage.removeItem(key)
+    }
+  } catch {
+    // ignore storage failures
+  }
+}
+
+export function getStoredAdminKey(): string {
+  if (typeof window === 'undefined') return ''
+  return readSessionStorage(ADMIN_KEY_STORAGE_KEY)
+}
+
+export function setStoredAdminKey(key: string): void {
+  if (typeof window === 'undefined') return
+  writeSessionStorage(ADMIN_KEY_STORAGE_KEY, (key || '').trim())
+}
+
+export function clearStoredAdminKey(): void {
+  if (typeof window === 'undefined') return
+  writeSessionStorage(ADMIN_KEY_STORAGE_KEY, '')
+}
+
+export function getStoredBearerToken(): string {
+  if (typeof window === 'undefined') return ''
+  const current = readSessionStorage(UI_TOKEN_STORAGE_KEY)
+  if (current) return current
+
+  for (const legacyKey of LEGACY_UI_TOKEN_STORAGE_KEYS) {
+    const legacySession = readSessionStorage(legacyKey)
+    if (legacySession) {
+      writeSessionStorage(UI_TOKEN_STORAGE_KEY, legacySession)
+      try {
+        window.sessionStorage.removeItem(legacyKey)
+      } catch {
+        // ignore
+      }
+      try {
+        window.localStorage.removeItem(legacyKey)
+      } catch {
+        // ignore
+      }
+      return legacySession
+    }
+
+    try {
+      const legacyLocal = (window.localStorage.getItem(legacyKey) || '').trim()
+      if (!legacyLocal) continue
+      writeSessionStorage(UI_TOKEN_STORAGE_KEY, legacyLocal)
+      window.localStorage.removeItem(legacyKey)
+      return legacyLocal
+    } catch {
+      // ignore
+    }
+  }
+
+  return ''
 }
 
 export function setStoredBearerToken(token: string): void {
   if (typeof window === 'undefined') return
   const clean = (token || '').trim()
-  try {
-    if (clean) {
-      window.sessionStorage.setItem(TOKEN_STORAGE_KEY, clean)
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
-    } else {
-      window.sessionStorage.removeItem(TOKEN_STORAGE_KEY)
-      window.localStorage.removeItem(TOKEN_STORAGE_KEY)
+  writeSessionStorage(UI_TOKEN_STORAGE_KEY, clean)
+  for (const legacyKey of LEGACY_UI_TOKEN_STORAGE_KEYS) {
+    try {
+      window.sessionStorage.removeItem(legacyKey)
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore storage errors
+    try {
+      window.localStorage.removeItem(legacyKey)
+    } catch {
+      // ignore
+    }
   }
 }
 
 function buildHeaders(existing?: HeadersInit): Headers {
   const headers = new Headers(existing || undefined)
+  if (headers.has('X-Admin-Key') || headers.has('Authorization')) {
+    return headers
+  }
+
+  const adminKey = getStoredAdminKey()
+  if (adminKey) {
+    headers.set('X-Admin-Key', adminKey)
+    return headers
+  }
+
   const token = getStoredBearerToken()
-  if (token && !headers.has('Authorization')) {
+  if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }
   return headers
@@ -70,6 +139,24 @@ async function j<T>(resOrPromise: Response | Promise<Response>): Promise<T> {
 }
 
 export const api = {
+  createServiceRequest: (name: string, description?: string | null) =>
+    j<any>(apiFetch('/api/service_requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description: description || null }),
+    })),
+  adminServiceRequests: (status?: 'pending' | 'approved' | 'rejected' | 'all') => {
+    const s = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''
+    return j<any>(apiFetch(`/api/admin/service_requests${s}`))
+  },
+  adminApproveServiceRequest: (requestId: string) =>
+    j<any>(apiFetch(`/api/admin/service_requests/${requestId}/approve`, { method: 'POST' })),
+  adminServices: () => j<any>(apiFetch('/api/admin/services')),
+  adminRevokeService: (serviceId: string) =>
+    j<any>(apiFetch(`/api/admin/services/${serviceId}/revoke`, { method: 'POST' })),
+  adminRotateService: (serviceId: string) =>
+    j<any>(apiFetch(`/api/admin/services/${serviceId}/rotate`, { method: 'POST' })),
+
   threads: () => j<any[]>(apiFetch('/api/threads')),
   createThread: (title?: string) =>
     j<any>(apiFetch('/api/threads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })),

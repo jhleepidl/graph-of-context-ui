@@ -107,6 +107,7 @@ class NodePatchRequest(BaseModel):
 
 class ServiceRequestCreate(BaseModel):
     name: str
+    description: Optional[str] = None
 
 
 class MintUiTokenRequest(BaseModel):
