@@ -98,7 +98,8 @@ def _parse_key_parts(raw_key: str) -> tuple[str, str]:
 
 
 def hash_service_key(raw_key: str) -> str:
-    return bcrypt.hashpw(raw_key.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    pre = hashlib.sha256(raw_key.encode("utf-8")).digest()
+    return bcrypt.hashpw(pre, bcrypt.gensalt()).decode("utf-8")
 
 
 def generate_service_key(service_id: str) -> str:
@@ -113,8 +114,9 @@ def verify_service_key(raw_key: str) -> Service:
         if not service or service.status != "active":
             raise HTTPException(401, "service is not active")
         hashed = (service.api_key_hash or "").encode("utf-8")
+        pre = hashlib.sha256(raw.encode("utf-8")).digest()
         try:
-            ok = bool(hashed) and bcrypt.checkpw(raw.encode("utf-8"), hashed)
+            ok = bool(hashed) and bcrypt.checkpw(pre, hashed)
         except Exception:
             ok = False
         if not ok:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 import json
 import logging
-from fastapi import APIRouter, HTTPException
-from sqlmodel import Session
+from fastapi import APIRouter, HTTPException, Query
+from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import Node
@@ -85,6 +85,8 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
             'source': body.source or 'unknown',
             'tag': 'RESOURCE',
         }
+        if body.context_set_id:
+            payload['context_set_id'] = body.context_set_id
         if body.summary and body.summary.strip():
             payload['summary'] = body.summary.strip()
 
@@ -126,3 +128,29 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
             logger.exception('resource embedding failed (thread_id=%s, node_id=%s)', thread_id, node.id)
 
         return {'ok': True, 'node': node.model_dump(), 'attached_to': attach_to_id, 'warning': warning}
+
+
+@router.get("/threads/{thread_id}/resources")
+def list_resources(thread_id: str, resource_kind: str | None = Query(default=None)):
+    kind_filter = (resource_kind or '').strip()
+    with Session(engine) as s:
+        require_thread_access(s, thread_id)
+        rows = s.exec(
+            select(Node)
+            .where(Node.thread_id == thread_id, Node.type == 'Resource')
+            .order_by(Node.created_at.asc(), Node.id.asc())
+        ).all()
+
+        if kind_filter:
+            filtered: list[Node] = []
+            for row in rows:
+                try:
+                    payload = json.loads(row.payload_json or '{}')
+                except Exception:
+                    payload = {}
+                kind = (payload.get('resource_kind') or '').strip()
+                if kind == kind_filter:
+                    filtered.append(row)
+            rows = filtered
+
+        return {'ok': True, 'items': [row.model_dump() for row in rows]}

@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 
-const AGENTS_THREAD_TITLE = 'agents'
+const AGENTS_THREAD_TITLES = ['agents:profiles', 'agents'] as const
+const PREFERRED_AGENTS_THREAD_TITLE = AGENTS_THREAD_TITLES[0]
 const AGENT_RESOURCE_KIND = 'agent_profile'
+type AgentsThreadTitle = (typeof AGENTS_THREAD_TITLES)[number]
 
 type Props = {
   onNavigate: (path: string) => void
@@ -49,6 +51,14 @@ function createEmptyForm(): AgentForm {
 
 function normalizeTitle(title?: string | null): string {
   return (title || '').trim().toLowerCase()
+}
+
+function asAgentsThreadTitle(title?: string | null): AgentsThreadTitle | null {
+  const normalized = normalizeTitle(title)
+  for (const candidate of AGENTS_THREAD_TITLES) {
+    if (candidate === normalized) return candidate
+  }
+  return null
 }
 
 function asString(v: unknown): string {
@@ -181,6 +191,46 @@ export default function AgentsPage({ onNavigate }: Props) {
     })
   }, [profiles])
 
+  const countAgentProfilesInThread = useCallback(async (threadId: string): Promise<number> => {
+    try {
+      const out = await api.graph(threadId)
+      const graphNodes = Array.isArray(out?.nodes) ? (out.nodes as GraphNode[]) : []
+      return graphNodes.reduce((count, node) => count + (nodeToAgentProfile(node) ? 1 : 0), 0)
+    } catch {
+      return 0
+    }
+  }, [])
+
+  const pickDefaultAgentsThreadId = useCallback(async (list: ThreadSummary[]): Promise<string | null> => {
+    const candidates = list
+      .map((thread) => {
+        const matchedTitle = asAgentsThreadTitle(thread.title)
+        if (!matchedTitle) return null
+        return { thread, matchedTitle }
+      })
+      .filter((item): item is { thread: ThreadSummary; matchedTitle: AgentsThreadTitle } => item !== null)
+
+    if (candidates.length === 0) return null
+
+    const scored = await Promise.all(
+      candidates.map(async ({ thread, matchedTitle }) => ({
+        thread,
+        matchedTitle,
+        profileCount: await countAgentProfilesInThread(thread.id),
+      })),
+    )
+
+    scored.sort((a, b) => {
+      if (a.profileCount !== b.profileCount) return b.profileCount - a.profileCount
+      const aPriority = AGENTS_THREAD_TITLES.indexOf(a.matchedTitle)
+      const bPriority = AGENTS_THREAD_TITLES.indexOf(b.matchedTitle)
+      if (aPriority !== bPriority) return aPriority - bPriority
+      return a.thread.id.localeCompare(b.thread.id)
+    })
+
+    return scored[0]?.thread.id || null
+  }, [countAgentProfilesInThread])
+
   const reloadProfiles = useCallback(async (threadId: string) => {
     setLoadingProfiles(true)
     setError('')
@@ -207,19 +257,17 @@ export default function AgentsPage({ onNavigate }: Props) {
       const out = await api.threads()
       const list = Array.isArray(out) ? (out as ThreadSummary[]) : []
       setThreads(list)
-      setAgentsThreadId((current) => {
-        if (preferredThreadId && list.some((thread) => thread.id === preferredThreadId)) {
-          return preferredThreadId
-        }
-        if (current && list.some((thread) => thread.id === current)) {
-          return current
-        }
-        if (linkedThreadId && list.some((thread) => thread.id === linkedThreadId)) {
-          return linkedThreadId
-        }
-        const found = list.find((thread) => normalizeTitle(thread.title) === AGENTS_THREAD_TITLE)
-        return found?.id || null
-      })
+      let nextThreadId: string | null = null
+      if (preferredThreadId && list.some((thread) => thread.id === preferredThreadId)) {
+        nextThreadId = preferredThreadId
+      } else if (agentsThreadId && list.some((thread) => thread.id === agentsThreadId)) {
+        nextThreadId = agentsThreadId
+      } else if (linkedThreadId && list.some((thread) => thread.id === linkedThreadId)) {
+        nextThreadId = linkedThreadId
+      } else {
+        nextThreadId = await pickDefaultAgentsThreadId(list)
+      }
+      setAgentsThreadId(nextThreadId)
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
       setError(message)
@@ -228,7 +276,7 @@ export default function AgentsPage({ onNavigate }: Props) {
     } finally {
       setLoadingThreads(false)
     }
-  }, [linkedThreadId])
+  }, [agentsThreadId, linkedThreadId, pickDefaultAgentsThreadId])
 
   useEffect(() => {
     void reloadThreads()
@@ -246,10 +294,10 @@ export default function AgentsPage({ onNavigate }: Props) {
     setStatus('')
     setError('')
     try {
-      const created = await api.createThread('agents')
+      const created = await api.createThread(PREFERRED_AGENTS_THREAD_TITLE)
       const nextId = asString((created as { id?: string }).id)
       await reloadThreads(nextId || null)
-      setStatus('agents thread를 생성했습니다.')
+      setStatus(`${PREFERRED_AGENTS_THREAD_TITLE} thread를 생성했습니다.`)
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
       setError(message)
@@ -387,14 +435,18 @@ export default function AgentsPage({ onNavigate }: Props) {
               ))}
             </select>
           </label>
-          <button onClick={handleCreateAgentsThread}>Create "agents" Thread</button>
-          {agentsThread && <span className="pill">selected: {agentsThread.title || '(untitled)'}</span>}
+          <button onClick={handleCreateAgentsThread}>Create "{PREFERRED_AGENTS_THREAD_TITLE}" Thread</button>
+          {agentsThread && (
+            <span className="pill">
+              selected: {(agentsThread.title || '(untitled)').trim() || '(untitled)'} ({agentsThread.id})
+            </span>
+          )}
           {linkedThreadId && <span className="pill">linked thread param 사용 가능</span>}
         </div>
 
         {!agentsThreadId && (
           <div className="routeStatus">
-            `title=agents`인 thread를 찾지 못했습니다. 위에서 thread를 선택하거나 새로 생성하세요.
+            `title=agents:profiles` 또는 `title=agents`인 thread를 찾지 못했습니다. 위에서 thread를 선택하거나 새로 생성하세요.
           </div>
         )}
         {error && <div className="routeStatus routeStatusError">{error}</div>}
