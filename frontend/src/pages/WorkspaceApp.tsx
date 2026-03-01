@@ -8,6 +8,7 @@ import SearchPanel from '../components/SearchPanel'
 import CopyToChatGPTPanel from '../components/CopyToChatGPTPanel'
 import NodeDetailModal from '../components/NodeDetailModal'
 import ContextInspector from '../components/ContextInspector'
+import JobSettingsPanel from '../components/JobSettingsPanel'
 import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPriority'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
@@ -28,7 +29,7 @@ type ResizeSession = {
   wrapWidth: number
 }
 type MobileSection = 'left' | 'center' | 'right'
-type RightPanelTab = 'inspector' | 'prompt' | 'run'
+type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -43,7 +44,7 @@ function readStoredRightPanelTab(): RightPanelTab {
   if (typeof window === 'undefined') return 'inspector'
   try {
     const raw = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
-    if (raw === 'inspector' || raw === 'prompt' || raw === 'run') return raw
+    if (raw === 'inspector' || raw === 'prompt' || raw === 'run' || raw === 'job_settings') return raw
   } catch {
     // ignore storage failures
   }
@@ -808,11 +809,13 @@ export default function WorkspaceApp() {
             <button className={rightPanelTab === 'inspector' ? 'primary' : ''} onClick={() => setRightPanelTab('inspector')}>Inspector</button>
             <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
             <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
+            <button className={rightPanelTab === 'job_settings' ? 'primary' : ''} onClick={() => setRightPanelTab('job_settings')}>Job Settings</button>
           </div>
           <div className="muted">
             {rightPanelTab === 'inspector' && 'Compiled context, version diff, recovery planner'}
             {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budget, resource notes'}
             {rightPanelTab === 'run' && 'Run query with current Active Context'}
+            {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current job thread'}
           </div>
         </div>
 
@@ -855,6 +858,16 @@ export default function WorkspaceApp() {
             await reloadAll()
             return out.response_text || ''
           }} />
+        )}
+
+        {rightPanelTab === 'job_settings' && (
+          <JobSettingsPanel
+            threadId={threadId}
+            threads={threads}
+            onAfterSave={async () => {
+              await reloadAll(threadId || undefined, ctxId || undefined)
+            }}
+          />
         )}
       </div>
     </div>

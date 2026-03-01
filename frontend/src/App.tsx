@@ -87,9 +87,9 @@ export default function App() {
       <header className="topNav">
         <div className="topNavLeft">
           <button className={route === 'workspace' ? 'primary' : ''} onClick={() => navigate('/')}>GoC</button>
-          <button className={route === 'agents' ? 'primary' : ''} onClick={() => navigate('/agents')}>Agents</button>
-          <button className={route === 'tools' ? 'primary' : ''} onClick={() => navigate('/tools')}>Tools</button>
-          <button className={route === 'library' ? 'primary' : ''} onClick={() => navigate('/library')}>Library</button>
+          <button className={route === 'agents' ? 'primary' : ''} onClick={() => navigate('/agents')}>Agents Catalog</button>
+          <button className={route === 'tools' ? 'primary' : ''} onClick={() => navigate('/tools')}>Tools Catalog</button>
+          <button className={route === 'library' ? 'primary' : ''} onClick={() => navigate('/library')}>Public Library</button>
           <button className={route === 'guest_request_service' ? 'primary' : ''} onClick={() => navigate('/guest/request-service')}>Request Service Key</button>
           <button className={route === 'admin_login' ? 'primary' : ''} onClick={() => navigate('/admin/login')}>Admin Login</button>
           {hasAdminKey && (

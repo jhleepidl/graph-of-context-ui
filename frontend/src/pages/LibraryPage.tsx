@@ -296,9 +296,9 @@ export default function LibraryPage({ onNavigate }: Props) {
     <div className="routePage">
       <div className="routeCard">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0 }}>Public Agent Library</h2>
+          <h2 style={{ margin: 0 }}>Public Library</h2>
           <div className="row" style={{ marginBottom: 0 }}>
-            <button onClick={() => onNavigate('/agents')}>Go Agents</button>
+            <button onClick={() => onNavigate('/agents')}>Go Agents Catalog</button>
             <button onClick={() => void reload()} disabled={loading}>
               {loading ? 'Loading...' : 'Refresh'}
             </button>
@@ -307,7 +307,7 @@ export default function LibraryPage({ onNavigate }: Props) {
 
         {libraryThread && (
           <div className="row">
-            <span className="pill">thread: {(libraryThread.title || '(untitled)').trim() || '(untitled)'}</span>
+            <span className="pill">library source: {(libraryThread.title || '(untitled)').trim() || '(untitled)'}</span>
             <span className="pill">id: {libraryThread.id}</span>
           </div>
         )}

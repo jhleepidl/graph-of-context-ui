@@ -312,7 +312,7 @@ export default function ToolsPage({ onNavigate }: Props) {
       const created = await api.createThread(PREFERRED_TOOLS_THREAD_TITLE)
       const nextId = asString((created as { id?: string }).id)
       await reloadThreads(nextId || null)
-      setStatus(`${PREFERRED_TOOLS_THREAD_TITLE} thread를 생성했습니다.`)
+      setStatus(`${PREFERRED_TOOLS_THREAD_TITLE} catalog를 생성했습니다.`)
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
       setError(message)
@@ -322,7 +322,7 @@ export default function ToolsPage({ onNavigate }: Props) {
   async function handleCreateToolSpec() {
     const threadId = toolsThreadId
     if (!threadId) {
-      setError('tools thread를 먼저 선택하세요.')
+      setError('tools catalog를 먼저 선택하세요.')
       return
     }
 
@@ -437,7 +437,7 @@ export default function ToolsPage({ onNavigate }: Props) {
     <div className="routePage">
       <div className="routeCard">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0 }}>Tools</h2>
+          <h2 style={{ margin: 0 }}>Tools Catalog</h2>
           <div className="row" style={{ marginBottom: 0 }}>
             <button onClick={() => onNavigate('/')}>Back to Workspace</button>
             <button onClick={() => void reloadThreads()} disabled={loadingThreads}>
@@ -448,7 +448,7 @@ export default function ToolsPage({ onNavigate }: Props) {
 
         <div className="row">
           <label className="muted">
-            Tools thread:
+            Catalog source:
             <select
               style={{ marginLeft: 8, minWidth: 280 }}
               value={toolsThreadId || ''}
@@ -462,10 +462,10 @@ export default function ToolsPage({ onNavigate }: Props) {
               ))}
             </select>
           </label>
-          <button onClick={handleCreateToolsThread}>Create "{PREFERRED_TOOLS_THREAD_TITLE}" Thread</button>
+          <button onClick={handleCreateToolsThread}>Create "{PREFERRED_TOOLS_THREAD_TITLE}" Catalog</button>
           {toolsThread && (
             <span className="pill">
-              selected: {(toolsThread.title || '(untitled)').trim() || '(untitled)'} ({toolsThread.id})
+              selected catalog: {(toolsThread.title || '(untitled)').trim() || '(untitled)'} ({toolsThread.id})
             </span>
           )}
           {linkedThreadId && <span className="pill">linked thread param 사용 가능</span>}
@@ -473,7 +473,7 @@ export default function ToolsPage({ onNavigate }: Props) {
 
         {!toolsThreadId && (
           <div className="routeStatus">
-            `title=tools:specs` 또는 `title=tools`인 thread를 찾지 못했습니다. 위에서 thread를 선택하거나 새로 생성하세요.
+            `title=tools:specs` 또는 `title=tools`인 catalog를 찾지 못했습니다. 위에서 선택하거나 새로 생성하세요.
           </div>
         )}
         {error && <div className="routeStatus routeStatusError">{error}</div>}
