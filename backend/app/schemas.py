@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel
 
 
@@ -24,6 +24,9 @@ class ResourceNodeCreate(BaseModel):
     attach_to: Optional[str] = None
     context_set_id: Optional[str] = None
     auto_activate: bool = True
+    raw_text: Optional[str] = None
+    payload_json: Optional[dict[str, Any]] = None
+    text_mode: Optional[Literal["formatted", "plain"]] = None
 
 
 class ContextSetCreate(BaseModel):

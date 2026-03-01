@@ -217,6 +217,9 @@ export const api = {
       attach_to?: string | null
       context_set_id?: string | null
       auto_activate?: boolean
+      raw_text?: string | null
+      payload_json?: Record<string, unknown> | null
+      text_mode?: 'formatted' | 'plain' | null
     },
   ) => j<any>(
     apiFetch(`/api/threads/${threadId}/resources`, {

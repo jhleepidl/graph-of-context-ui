@@ -4,6 +4,7 @@ import AdminLoginPage from './pages/AdminLoginPage'
 import GuestRequestServicePage from './pages/GuestRequestServicePage'
 import AdminServiceRequestsPage from './pages/AdminServiceRequestsPage'
 import AgentsPage from './pages/AgentsPage'
+import ToolsPage from './pages/ToolsPage'
 import {
   clearStoredAdminKey,
   getStoredAdminKey,
@@ -53,6 +54,7 @@ export default function App() {
     if (path === '/guest/request-service') return 'guest_request_service'
     if (path === '/admin/service-requests') return 'admin_service_requests'
     if (path === '/agents') return 'agents'
+    if (path === '/tools') return 'tools'
     return 'workspace'
   }, [path])
 
@@ -82,6 +84,7 @@ export default function App() {
         <div className="topNavLeft">
           <button className={route === 'workspace' ? 'primary' : ''} onClick={() => navigate('/')}>GoC</button>
           <button className={route === 'agents' ? 'primary' : ''} onClick={() => navigate('/agents')}>Agents</button>
+          <button className={route === 'tools' ? 'primary' : ''} onClick={() => navigate('/tools')}>Tools</button>
           <button className={route === 'guest_request_service' ? 'primary' : ''} onClick={() => navigate('/guest/request-service')}>Request Service Key</button>
           <button className={route === 'admin_login' ? 'primary' : ''} onClick={() => navigate('/admin/login')}>Admin Login</button>
           {hasAdminKey && (
@@ -97,6 +100,7 @@ export default function App() {
       <main className={route === 'workspace' ? 'routeMain routeMainWorkspace' : 'routeMain'}>
         {route === 'workspace' && <WorkspaceApp />}
         {route === 'agents' && <AgentsPage onNavigate={navigate} />}
+        {route === 'tools' && <ToolsPage onNavigate={navigate} />}
         {route === 'admin_login' && (
           <AdminLoginPage onAdminAuthChanged={handleAdminAuthChanged} onNavigate={navigate} />
         )}

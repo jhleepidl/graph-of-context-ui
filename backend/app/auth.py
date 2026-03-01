@@ -97,8 +97,14 @@ def _parse_key_parts(raw_key: str) -> tuple[str, str]:
     return parts[1], raw_key
 
 
+def _service_key_prehash(raw_key: str) -> bytes:
+    # bcrypt wrappers may reject NUL bytes in password input.
+    # Use a stable ASCII prehash representation.
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest().encode("ascii")
+
+
 def hash_service_key(raw_key: str) -> str:
-    pre = hashlib.sha256(raw_key.encode("utf-8")).digest()
+    pre = _service_key_prehash(raw_key)
     return bcrypt.hashpw(pre, bcrypt.gensalt()).decode("utf-8")
 
 
@@ -114,11 +120,19 @@ def verify_service_key(raw_key: str) -> Service:
         if not service or service.status != "active":
             raise HTTPException(401, "service is not active")
         hashed = (service.api_key_hash or "").encode("utf-8")
-        pre = hashlib.sha256(raw.encode("utf-8")).digest()
+        pre = _service_key_prehash(raw)
         try:
             ok = bool(hashed) and bcrypt.checkpw(pre, hashed)
         except Exception:
             ok = False
+        if not ok:
+            # Backward-compatibility for hashes that may have been created
+            # from raw digest bytes in older deployments.
+            try:
+                legacy_pre = hashlib.sha256(raw.encode("utf-8")).digest()
+                ok = bool(hashed) and bcrypt.checkpw(legacy_pre, hashed)
+            except Exception:
+                ok = False
         if not ok:
             raise HTTPException(401, "invalid ServiceKey")
         return service

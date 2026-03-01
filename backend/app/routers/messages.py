@@ -77,23 +77,30 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
                 attach_to_id = attach_target.id
 
         last = get_last_node(s, thread_id)
-        payload = {
+        base_payload = {
             'name': name,
             'resource_kind': (body.resource_kind or 'file').strip() or 'file',
             'mime_type': (body.mime_type or '').strip() or None,
             'uri': (body.uri or '').strip() or None,
             'source': body.source or 'unknown',
+            'context_set_id': body.context_set_id,
+            'summary': (body.summary or '').strip() or None,
             'tag': 'RESOURCE',
         }
-        if body.context_set_id:
-            payload['context_set_id'] = body.context_set_id
-        if body.summary and body.summary.strip():
-            payload['summary'] = body.summary.strip()
+        payload = {}
+        if isinstance(body.payload_json, dict):
+            payload.update(body.payload_json)
+        payload.update(base_payload)
+
+        if body.raw_text is not None or body.text_mode == "plain":
+            node_text = body.raw_text or (body.summary or "")
+        else:
+            node_text = _resource_text(body)
 
         node = Node(
             thread_id=thread_id,
             type='Resource',
-            text=_resource_text(body),
+            text=node_text,
             payload_json=jdump(payload),
         )
         s.add(node)

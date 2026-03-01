@@ -322,22 +322,22 @@ export default function AgentsPage({ onNavigate }: Props) {
     setError('')
     setStatus('')
     try {
+      const createText = buildAgentNodeText(cleanForm)
+      const createPayload = buildAgentPayload({}, cleanForm)
       const out = await api.createResource(threadId, {
         name: cleanForm.title || cleanForm.agent_id,
         summary: cleanForm.base_prompt || null,
         resource_kind: AGENT_RESOURCE_KIND,
         source: 'manual',
         auto_activate: false,
+        text_mode: 'plain',
+        raw_text: createText,
+        payload_json: createPayload,
       })
       const node = (out as { node?: GraphNode })?.node
       if (!node?.id) {
         throw new Error('resource 생성 응답에 node.id가 없습니다.')
       }
-      const payload = buildAgentPayload(parsePayload(node.payload_json), cleanForm)
-      await api.patchNode(node.id, {
-        text: buildAgentNodeText(cleanForm),
-        payload_json: JSON.stringify(payload),
-      })
       setCreateForm(createEmptyForm())
       await reloadProfiles(threadId)
       setStatus(`Agent profile 생성 완료 (${node.id.slice(0, 8)})`)

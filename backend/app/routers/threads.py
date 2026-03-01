@@ -77,6 +77,7 @@ def create_thread(body: ThreadCreate):
         s.flush()
         snapshot_context_set(s, cs, reason="create", meta={"name": "default", "thread_id": t.id})
         s.commit()
+        s.refresh(t)
     return t.model_dump()
 
 

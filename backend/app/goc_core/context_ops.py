@@ -65,7 +65,9 @@ def compile_active_context_records(
     kept_records = [r for r in active_records if str(r.get("id")) not in set(excluded_parent_ids)]
 
     parts: List[str] = []
-    for r in kept_records:
+    section_map: List[Dict[str, Any]] = []
+    node_snippets: Dict[str, str] = {}
+    for idx, r in enumerate(kept_records, start=1):
         nid = str(r.get("id"))
         rtype = str(r.get("type") or "Node")
         text = (r.get("text") or "")
@@ -73,6 +75,16 @@ def compile_active_context_records(
         created_str = created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at or "")
         meta = _jload(r.get("payload_json", r.get("payload", {})), {})
         head = f"[{rtype} {nid[:6]} @ {created_str}]"
+        snippet = " ".join(str(text).split())[:220]
+        node_snippets[nid] = snippet
+        section_map.append(
+            {
+                "section_index": idx,
+                "node_id": nid,
+                "node_type": rtype,
+                "snippet": snippet,
+            }
+        )
         if rtype == "Message":
             role = meta.get("role", "?") if isinstance(meta, dict) else "?"
             parts.append(f"{head} role={role}\n{text}")
@@ -88,6 +100,8 @@ def compile_active_context_records(
         "excluded_parent_ids": excluded_parent_ids,
         "kept_node_ids": [str(r.get("id")) for r in kept_records],
         "kept_node_count": len(kept_records),
+        "node_snippets": node_snippets,
+        "section_map": section_map,
         "parent_to_children": {k: sorted(v) for k, v in parent_to_children.items()},
         "parent_sources": dict(parent_sources),
     }

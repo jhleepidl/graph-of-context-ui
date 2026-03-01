@@ -62,6 +62,10 @@ uvicorn app.main:app --reload --port 8000
 ## Compiled context freshness
 - `compiled_text`는 캐시 없이 매 요청마다 DB의 current active nodes/edges로 동적 생성합니다.
 - 따라서 node text 수정, node/edge 삭제/추가, activate 변경 직후 다음 `/api/context_sets/{id}/compiled` 호출에 즉시 반영됩니다.
+- `include_explain=true`일 때 `explain`에는 아래 진단 필드가 포함됩니다.
+  - `active_input_ids`, `excluded_parent_ids`, `kept_node_ids`
+  - `node_snippets`: `node_id -> snippet` 매핑
+  - `section_map`: `compiled_text` 섹션 순서 기준 node 매핑(`section_index`, `node_id`, `node_type`, `snippet`)
 
 
 ## Added in this refactor
@@ -70,3 +74,10 @@ uvicorn app.main:app --reload --port 8000
 - Version diff endpoints
 - Research-inspired recovery planner endpoints (`/unfold_plan`, `/apply_unfold_plan`)
 - Dependency-aware unfold with bounded closure
+
+## Resource node plain-text + structured payload
+- `POST /api/threads/{thread_id}/resources`는 기존 필드와 함께 아래 옵션을 지원합니다.
+  - `raw_text`: `node.text`에 그대로 저장할 원문
+  - `text_mode`: `"plain"`이면 `raw_text`가 없어도 포맷 템플릿 없이 저장
+  - `payload_json`: 리소스의 구조화 메타(객체)
+- `payload_json`은 서버 기본 필드(`name`, `resource_kind`, `mime_type`, `uri`, `source`, `context_set_id`, `summary`, `tag`)와 merge되며, 기본 필드가 최종값으로 우선합니다.
