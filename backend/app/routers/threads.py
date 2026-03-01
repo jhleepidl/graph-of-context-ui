@@ -40,6 +40,83 @@ def _normalize_meta_json(value: dict[str, Any] | None) -> dict[str, Any]:
     return {}
 
 
+def _has_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    return True
+
+
+def _merge_meta(existing: dict[str, Any], incoming: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    base = existing if isinstance(existing, dict) else {}
+    incoming_obj = incoming if isinstance(incoming, dict) else {}
+    merged: dict[str, Any] = dict(base)
+
+    for key, incoming_value in incoming_obj.items():
+        if key == "telegram" and isinstance(incoming_value, dict):
+            current_telegram = merged.get("telegram")
+            telegram_merged = dict(current_telegram) if isinstance(current_telegram, dict) else {}
+
+            incoming_chat_id = incoming_value.get("chat_id")
+            if _has_value(incoming_chat_id):
+                telegram_merged["chat_id"] = incoming_chat_id
+
+            for fill_key in ("title", "type"):
+                if _has_value(telegram_merged.get(fill_key)):
+                    continue
+                incoming_fill = incoming_value.get(fill_key)
+                if _has_value(incoming_fill):
+                    telegram_merged[fill_key] = incoming_fill
+
+            for telegram_key, telegram_value in incoming_value.items():
+                if telegram_key in {"chat_id", "title", "type"}:
+                    continue
+                if telegram_key in telegram_merged:
+                    continue
+                if telegram_value is None:
+                    continue
+                telegram_merged[telegram_key] = telegram_value
+
+            merged["telegram"] = telegram_merged
+            continue
+
+        if key in merged:
+            continue
+        merged[key] = incoming_value
+
+    return merged, merged != base
+
+
+def _apply_existing_thread_updates(
+    session: Session,
+    thread: Thread,
+    incoming_title: str | None,
+    incoming_meta: dict[str, Any],
+) -> Thread:
+    existing_meta_raw = jload(thread.meta_json or "{}", {})
+    existing_meta = existing_meta_raw if isinstance(existing_meta_raw, dict) else {}
+    merged_meta, meta_changed = _merge_meta(existing_meta, incoming_meta)
+
+    title_changed = False
+    next_title = (incoming_title or "").strip()
+    current_title = (thread.title or "").strip()
+    if next_title and (not current_title or current_title == "Untitled" or current_title.lower().startswith("job:")):
+        if thread.title != next_title:
+            thread.title = next_title
+            title_changed = True
+
+    if meta_changed:
+        thread.meta_json = jdump(merged_meta)
+
+    if meta_changed or title_changed:
+        session.add(thread)
+        session.commit()
+        session.refresh(thread)
+
+    return thread
+
+
 def _thread_to_response(thread: Thread) -> ThreadRead:
     out = thread.model_dump()
     out["meta_json"] = jload(thread.meta_json or "{}", {})
@@ -139,6 +216,12 @@ def create_thread(body: ThreadCreate):
         if external_ref:
             existing = _find_thread_by_external_ref(s, service_id, external_ref)
             if existing:
+                existing = _apply_existing_thread_updates(
+                    s,
+                    existing,
+                    incoming_title=body.title,
+                    incoming_meta=meta_json,
+                )
                 return _thread_to_response(existing)
 
         t = _create_thread_with_default_context_set(
@@ -164,6 +247,12 @@ def ensure_thread(body: ThreadEnsureRequest):
     with Session(engine) as s:
         existing = _find_thread_by_external_ref(s, service_id, external_ref)
         if existing:
+            existing = _apply_existing_thread_updates(
+                s,
+                existing,
+                incoming_title=body.title,
+                incoming_meta=meta_json,
+            )
             return _thread_to_response(existing)
 
         t = _create_thread_with_default_context_set(
