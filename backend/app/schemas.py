@@ -113,6 +113,10 @@ class ServiceRequestCreate(BaseModel):
     description: Optional[str] = None
 
 
+class PublishRequestCreate(BaseModel):
+    source_node_id: str
+
+
 class MintUiTokenRequest(BaseModel):
     ttl_sec: Optional[int] = None
 

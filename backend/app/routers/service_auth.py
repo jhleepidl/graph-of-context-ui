@@ -17,6 +17,7 @@ from app.auth import (
 from app.db import engine
 from app.models import Service, ServiceRequest
 from app.schemas import MintUiTokenRequest, ServiceRequestCreate
+from app.services.public_library import ensure_public_library_thread
 
 router = APIRouter(prefix="/api", tags=["service_auth"])
 
@@ -102,6 +103,9 @@ def approve_service_request(request_id: str):
         req.status = "approved"
         req.approved_service_id = service.id
         req.approved_at = service.created_at
+
+        # Ensure shared public blueprint library exists.
+        ensure_public_library_thread(s)
 
         s.add(service)
         s.add(req)

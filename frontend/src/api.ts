@@ -175,6 +175,20 @@ export const api = {
       }
     }
   },
+  adminPublishRequests: (status?: 'pending' | 'approved' | 'rejected' | 'all') => {
+    const s = status && status !== 'all' ? `?status=${encodeURIComponent(status)}` : ''
+    return j<any>(apiFetch(`/api/admin/publish_requests${s}`))
+  },
+  adminApprovePublishRequest: (requestId: string) =>
+    j<any>(apiFetch(`/api/admin/publish_requests/${requestId}/approve`, { method: 'POST' })),
+  adminRejectPublishRequest: (requestId: string) =>
+    j<any>(apiFetch(`/api/admin/publish_requests/${requestId}/reject`, { method: 'POST' })),
+  createPublishRequest: (sourceNodeId: string) =>
+    j<any>(apiFetch('/api/publish_requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_node_id: sourceNodeId }),
+    })),
 
   threads: () => j<any[]>(apiFetch('/api/threads')),
   createThread: (title?: string) =>
@@ -228,6 +242,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
   ),
+  listResources: (threadId: string, resourceKind?: string | null) => {
+    const q = resourceKind ? `?resource_kind=${encodeURIComponent(resourceKind)}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/resources${q}`))
+  },
 
   getNode: (nodeId: string) => j<any>(apiFetch(`/api/nodes/${nodeId}`)),
   patchNode: (

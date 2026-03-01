@@ -5,6 +5,8 @@ import GuestRequestServicePage from './pages/GuestRequestServicePage'
 import AdminServiceRequestsPage from './pages/AdminServiceRequestsPage'
 import AgentsPage from './pages/AgentsPage'
 import ToolsPage from './pages/ToolsPage'
+import LibraryPage from './pages/LibraryPage'
+import AdminPublishRequestsPage from './pages/AdminPublishRequestsPage'
 import {
   clearStoredAdminKey,
   getStoredAdminKey,
@@ -53,8 +55,10 @@ export default function App() {
     if (path === '/admin/login') return 'admin_login'
     if (path === '/guest/request-service') return 'guest_request_service'
     if (path === '/admin/service-requests') return 'admin_service_requests'
+    if (path === '/admin/publish-requests') return 'admin_publish_requests'
     if (path === '/agents') return 'agents'
     if (path === '/tools') return 'tools'
+    if (path === '/library') return 'library'
     return 'workspace'
   }, [path])
 
@@ -73,7 +77,7 @@ export default function App() {
   function handleAdminLogout() {
     clearStoredAdminKey()
     setHasAdminKey(false)
-    if (route === 'admin_service_requests') {
+    if (route === 'admin_service_requests' || route === 'admin_publish_requests') {
       navigate('/admin/login')
     }
   }
@@ -85,10 +89,14 @@ export default function App() {
           <button className={route === 'workspace' ? 'primary' : ''} onClick={() => navigate('/')}>GoC</button>
           <button className={route === 'agents' ? 'primary' : ''} onClick={() => navigate('/agents')}>Agents</button>
           <button className={route === 'tools' ? 'primary' : ''} onClick={() => navigate('/tools')}>Tools</button>
+          <button className={route === 'library' ? 'primary' : ''} onClick={() => navigate('/library')}>Library</button>
           <button className={route === 'guest_request_service' ? 'primary' : ''} onClick={() => navigate('/guest/request-service')}>Request Service Key</button>
           <button className={route === 'admin_login' ? 'primary' : ''} onClick={() => navigate('/admin/login')}>Admin Login</button>
           {hasAdminKey && (
             <button className={route === 'admin_service_requests' ? 'primary' : ''} onClick={() => navigate('/admin/service-requests')}>Admin Requests</button>
+          )}
+          {hasAdminKey && (
+            <button className={route === 'admin_publish_requests' ? 'primary' : ''} onClick={() => navigate('/admin/publish-requests')}>Admin Publish</button>
           )}
         </div>
         <div className="topNavRight">
@@ -101,6 +109,7 @@ export default function App() {
         {route === 'workspace' && <WorkspaceApp />}
         {route === 'agents' && <AgentsPage onNavigate={navigate} />}
         {route === 'tools' && <ToolsPage onNavigate={navigate} />}
+        {route === 'library' && <LibraryPage onNavigate={navigate} />}
         {route === 'admin_login' && (
           <AdminLoginPage onAdminAuthChanged={handleAdminAuthChanged} onNavigate={navigate} />
         )}
@@ -109,6 +118,9 @@ export default function App() {
         )}
         {route === 'admin_service_requests' && (
           <AdminServiceRequestsPage hasAdminKey={hasAdminKey} onNavigate={navigate} />
+        )}
+        {route === 'admin_publish_requests' && (
+          <AdminPublishRequestsPage hasAdminKey={hasAdminKey} onNavigate={navigate} />
         )}
       </main>
     </div>

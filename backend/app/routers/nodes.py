@@ -13,7 +13,11 @@ from app.schemas import NodePatchRequest, SplitNodeRequest, SplitNodeResponse
 from app.services.embedding import ensure_node_embedding, rebuild_thread_index
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, jdump, jload, replace_ids_in_order
-from app.tenant import require_context_set_access, require_node_access
+from app.tenant import (
+    require_context_set_write_access,
+    require_node_access,
+    require_node_write_access,
+)
 
 router = APIRouter(prefix="/api", tags=["nodes"])
 
@@ -418,7 +422,7 @@ def get_node(node_id: str):
 @router.patch("/nodes/{node_id}")
 def patch_node(node_id: str, body: NodePatchRequest):
     with Session(engine) as s:
-        node = require_node_access(s, node_id)
+        node = require_node_write_access(s, node_id)
 
         if body.payload_json is not None:
             try:
@@ -451,7 +455,7 @@ def patch_node(node_id: str, body: NodePatchRequest):
 @router.delete("/nodes/{node_id}")
 def delete_node(node_id: str):
     with Session(engine) as s:
-        node = require_node_access(s, node_id)
+        node = require_node_write_access(s, node_id)
         thread_id = node.thread_id
 
         outgoing = s.exec(
@@ -502,7 +506,7 @@ def delete_node(node_id: str):
 @router.post("/nodes/{node_id}/split")
 def split_node(node_id: str, body: SplitNodeRequest):
     with Session(engine) as s:
-        parent = require_node_access(s, node_id)
+        parent = require_node_write_access(s, node_id)
         thread_id = parent.thread_id
 
         target_chars, max_chars = norm_limits(body.target_chars, body.max_chars)
@@ -582,7 +586,7 @@ def split_node(node_id: str, body: SplitNodeRequest):
                     s.add(add_edge(thread_id, child.id, to_id, "REPLY_TO"))
 
         if body.context_set_id:
-            cs = require_context_set_access(s, body.context_set_id)
+            cs = require_context_set_write_access(s, body.context_set_id)
             if cs.thread_id != thread_id:
                 raise HTTPException(404, "context set not found in thread")
 

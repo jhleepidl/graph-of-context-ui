@@ -9,7 +9,7 @@ from app.schemas import RunCreate
 from app.llm import call_openai
 from app.services.graph import add_edge, get_last_node, jload
 from app.services.graph import compile_active_context
-from app.tenant import require_context_set_access, require_thread_access
+from app.tenant import require_context_set_access, require_thread_write_access
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
@@ -21,7 +21,7 @@ def run_agent(body: RunCreate):
     with Session(engine) as s:
         cs = require_context_set_access(s, body.context_set_id)
         thread_id = cs.thread_id
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         active_ids = jload(cs.active_node_ids_json, [])
         active_ctx_text = compile_active_context(s, thread_id, active_ids)

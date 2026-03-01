@@ -15,7 +15,13 @@ from app.schemas import (
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import compile_active_context_explain, load_thread_graph
-from app.tenant import require_context_set_access, require_node_access, require_thread_access
+from app.tenant import (
+    require_context_set_access,
+    require_context_set_write_access,
+    require_node_access,
+    require_thread_access,
+    require_thread_write_access,
+)
 
 router = APIRouter(prefix="/api", tags=["context_sets"])
 
@@ -71,7 +77,7 @@ def list_context_sets(thread_id: str):
 def create_context_set(body: ContextSetCreate):
     cs = ContextSet(thread_id=body.thread_id, name=body.name)
     with Session(engine) as s:
-        require_thread_access(s, body.thread_id)
+        require_thread_write_access(s, body.thread_id)
         s.add(cs)
         s.flush()
         snapshot_context_set(s, cs, reason="create", meta={"name": cs.name})
@@ -181,7 +187,7 @@ def get_compiled_context(context_set_id: str, include_explain: bool = Query(defa
 @router.post("/context_sets/{context_set_id}/activate")
 def activate_nodes(context_set_id: str, body: ActivateNodes):
     with Session(engine) as s:
-        cs = require_context_set_access(s, context_set_id)
+        cs = require_context_set_write_access(s, context_set_id)
         to_add = _validate_node_ids(s, cs.thread_id, body.node_ids)
         active = jload(cs.active_node_ids_json, [])
         seen = set(active)
@@ -201,7 +207,7 @@ def activate_nodes(context_set_id: str, body: ActivateNodes):
 @router.post("/context_sets/{context_set_id}/deactivate")
 def deactivate_nodes(context_set_id: str, body: ActivateNodes):
     with Session(engine) as s:
-        cs = require_context_set_access(s, context_set_id)
+        cs = require_context_set_write_access(s, context_set_id)
         remove_ids = _validate_node_ids(s, cs.thread_id, body.node_ids)
         remove_set = set(remove_ids)
         before = jload(cs.active_node_ids_json, [])
@@ -216,7 +222,7 @@ def deactivate_nodes(context_set_id: str, body: ActivateNodes):
 @router.post("/context_sets/{context_set_id}/reorder")
 def reorder_nodes(context_set_id: str, body: ActiveOrderUpdate):
     with Session(engine) as s:
-        cs = require_context_set_access(s, context_set_id)
+        cs = require_context_set_write_access(s, context_set_id)
 
         requested = _validate_node_ids(s, cs.thread_id, body.node_ids)
         current = jload(cs.active_node_ids_json, [])
@@ -272,7 +278,7 @@ def preview_unfold_plan(context_set_id: str, body: UnfoldPlanRequest):
 @router.post("/context_sets/{context_set_id}/apply_unfold_plan")
 def apply_unfold_plan(context_set_id: str, body: ApplyUnfoldPlanRequest):
     with Session(engine) as s:
-        cs = require_context_set_access(s, context_set_id)
+        cs = require_context_set_write_access(s, context_set_id)
         seed_ids = _validate_node_ids(s, cs.thread_id, body.seed_node_ids)
         current_active = jload(cs.active_node_ids_json, [])
         nodes, edges = load_thread_graph(s, cs.thread_id)

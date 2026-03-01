@@ -13,7 +13,7 @@ from app.schemas import ChatGPTImportRequest
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import ensure_nodes_embeddings
 from app.services.graph import add_edge, get_last_node, jdump, jload
-from app.tenant import require_context_set_access, require_node_access, require_thread_access
+from app.tenant import require_context_set_write_access, require_node_access, require_thread_write_access
 
 router = APIRouter(prefix="/api", tags=["imports"])
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
         raise HTTPException(400, "raw_text is required")
 
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         last_before_create = get_last_node(s, thread_id)
 
@@ -263,7 +263,7 @@ def import_chatgpt(thread_id: str, body: ChatGPTImportRequest):
 
         auto_activate = body.auto_activate if body.auto_activate is not None else bool(body.context_set_id)
         if body.context_set_id and auto_activate and created_order:
-            cs = require_context_set_access(s, body.context_set_id)
+            cs = require_context_set_write_access(s, body.context_set_id)
             if cs.thread_id != thread_id:
                 raise HTTPException(404, "context set not found in thread")
             active_ids = jload(cs.active_node_ids_json, [])

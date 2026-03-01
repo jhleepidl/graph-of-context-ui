@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import logging
 from fastapi import APIRouter, HTTPException
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.db import engine
@@ -10,7 +11,7 @@ from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
 from app.auth import get_current_principal
-from app.tenant import current_service_id, require_node_access, require_thread_access
+from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 logger = logging.getLogger(__name__)
@@ -53,7 +54,13 @@ def list_threads():
     with Session(engine) as s:
         query = select(Thread).order_by(Thread.created_at.desc())
         if principal.role != "admin":
-            query = query.where(Thread.service_id == current_service_id())
+            service_id = current_service_id()
+            query = query.where(
+                or_(
+                    Thread.service_id == service_id,
+                    Thread.service_id == PUBLIC_SERVICE_ID,
+                )
+            )
         threads = s.exec(query).all()
         return [t.model_dump() for t in threads]
 
@@ -84,7 +91,7 @@ def create_thread(body: ThreadCreate):
 @router.delete("/{thread_id}")
 def delete_thread(thread_id: str):
     with Session(engine) as s:
-        t = require_thread_access(s, thread_id)
+        t = require_thread_write_access(s, thread_id)
 
         edges = s.exec(select(Edge).where(Edge.thread_id == thread_id)).all()
         nodes = s.exec(select(Node).where(Node.thread_id == thread_id)).all()
@@ -148,7 +155,7 @@ def get_graph(thread_id: str):
 @router.post("/{thread_id}/layout")
 def save_layout(thread_id: str, body: NodeLayoutUpdate):
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         ids = [p.id for p in body.positions]
         if not ids:
@@ -182,7 +189,7 @@ def create_edge(thread_id: str, body: EdgeCreate):
         raise HTTPException(400, f"invalid edge type: {body.type}")
 
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         src = require_node_access(s, body.from_id)
         dst = require_node_access(s, body.to_id)
@@ -218,7 +225,7 @@ def create_edge(thread_id: str, body: EdgeCreate):
 @router.delete("/{thread_id}/edges/{edge_id}")
 def delete_edge(thread_id: str, edge_id: str):
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         e = s.get(Edge, edge_id)
         if not e or e.thread_id != thread_id:
@@ -232,7 +239,7 @@ def delete_edge(thread_id: str, edge_id: str):
 @router.delete("/{thread_id}/nodes/{node_id}")
 def delete_node(thread_id: str, node_id: str):
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         n = require_node_access(s, node_id)
         if n.thread_id != thread_id:
@@ -286,6 +293,6 @@ def delete_node(thread_id: str, node_id: str):
 @router.post("/{thread_id}/rebuild_index")
 def rebuild_index(thread_id: str):
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
         stats = rebuild_thread_index(s, thread_id)
         return {"ok": True, "rebuild": stats}

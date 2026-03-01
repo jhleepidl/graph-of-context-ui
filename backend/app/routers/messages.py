@@ -10,7 +10,7 @@ from app.schemas import MessageCreate, ResourceNodeCreate
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, get_last_node
 from app.services.embedding import ensure_node_embedding
-from app.tenant import require_context_set_access, require_node_access, require_thread_access
+from app.tenant import require_context_set_write_access, require_node_access, require_thread_access, require_thread_write_access
 
 router = APIRouter(prefix="/api", tags=["messages"])
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def add_message(thread_id: str, body: MessageCreate):
         raise HTTPException(400, "role must be user|assistant")
 
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         last = get_last_node(s, thread_id)
         n = Node(thread_id=thread_id, type="Message", text=body.text, payload_json=jdump({"role": body.role}))
@@ -68,7 +68,7 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
         raise HTTPException(400, 'name is required')
 
     with Session(engine) as s:
-        require_thread_access(s, thread_id)
+        require_thread_write_access(s, thread_id)
 
         attach_to_id = None
         if body.attach_to:
@@ -112,7 +112,7 @@ def add_resource(thread_id: str, body: ResourceNodeCreate):
             s.add(add_edge(thread_id, attach_to_id, node.id, 'ATTACHED_TO'))
 
         if body.context_set_id and body.auto_activate:
-            cs = require_context_set_access(s, body.context_set_id)
+            cs = require_context_set_write_access(s, body.context_set_id)
             if cs.thread_id != thread_id:
                 raise HTTPException(404, "context set not found in thread")
             try:

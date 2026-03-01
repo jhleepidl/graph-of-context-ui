@@ -40,6 +40,18 @@ class ServiceRequest(SQLModel, table=True):
     approved_at: Optional[datetime] = Field(default=None, index=True)
 
 
+class AgentPublishRequest(SQLModel, table=True):
+    id: str = Field(default_factory=new_id, primary_key=True)
+    service_id: str = Field(index=True)
+    source_node_id: str = Field(index=True)
+    status: str = Field(default="pending", index=True)  # pending | approved | rejected
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    decided_at: Optional[datetime] = Field(default=None, index=True)
+    decided_by: Optional[str] = None
+    public_node_id: Optional[str] = Field(default=None, index=True)
+    blueprint_id: Optional[str] = Field(default=None, index=True)
+
+
 class Node(SQLModel, table=True):
     id: str = Field(default_factory=new_id, primary_key=True)
     thread_id: str = Field(index=True)

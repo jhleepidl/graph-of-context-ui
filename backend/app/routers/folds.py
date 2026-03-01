@@ -13,7 +13,7 @@ from app.llm import call_openai
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import ensure_node_embedding
 from app.services.graph import add_edge, get_last_node, replace_ids_in_order
-from app.tenant import require_context_set_access, require_node_access, require_thread_access
+from app.tenant import require_context_set_write_access, require_node_access, require_thread_write_access
 
 router = APIRouter(prefix="/api", tags=["folds"])
 logger = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ def create_fold(body: FoldCreate):
         raise HTTPException(400, "need at least 2 nodes to fold")
 
     with Session(engine) as s:
-        require_thread_access(s, body.thread_id)
+        require_thread_write_access(s, body.thread_id)
         members = []
         for nid in body.member_node_ids:
             n = require_node_access(s, nid)
@@ -94,7 +94,7 @@ def create_fold(body: FoldCreate):
 def unfold(context_set_id: str, fold_id: str, body: UnfoldRequest | None = None):
     req = body or UnfoldRequest()
     with Session(engine) as s:
-        cs = require_context_set_access(s, context_set_id)
+        cs = require_context_set_write_access(s, context_set_id)
         fold = require_node_access(s, fold_id)
         if fold.type != "Fold":
             raise HTTPException(404, "fold not found")

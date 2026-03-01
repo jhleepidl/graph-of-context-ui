@@ -170,6 +170,7 @@ export default function AgentsPage({ onNavigate }: Props) {
   const [creating, setCreating] = useState(false)
   const [savingEdit, setSavingEdit] = useState(false)
   const [deletingNodeId, setDeletingNodeId] = useState<string | null>(null)
+  const [publishingNodeId, setPublishingNodeId] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
 
@@ -406,6 +407,26 @@ export default function AgentsPage({ onNavigate }: Props) {
     }
   }
 
+  async function handlePublishProfile(profile: AgentProfile) {
+    setPublishingNodeId(profile.nodeId)
+    setError('')
+    setStatus('')
+    try {
+      const out = await api.createPublishRequest(profile.nodeId)
+      const requestId = asString((out as { request?: { id?: string } })?.request?.id)
+      if (requestId) {
+        setStatus(`Publish request 생성 완료 (${requestId}). admin 승인 후 Library에 반영됩니다.`)
+      } else {
+        setStatus('Publish request를 생성했습니다. admin 승인 후 Library에 반영됩니다.')
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      setError(message)
+    } finally {
+      setPublishingNodeId(null)
+    }
+  }
+
   return (
     <div className="routePage">
       <div className="routeCard">
@@ -540,6 +561,12 @@ export default function AgentsPage({ onNavigate }: Props) {
                       <td>
                         <div className="row agentsActionRow">
                           <button onClick={() => openEditModal(profile)}>Edit</button>
+                          <button
+                            onClick={() => void handlePublishProfile(profile)}
+                            disabled={publishingNodeId === profile.nodeId}
+                          >
+                            {publishingNodeId === profile.nodeId ? 'Publishing...' : 'Publish'}
+                          </button>
                           <button
                             className="danger"
                             onClick={() => void handleDeleteProfile(profile)}
