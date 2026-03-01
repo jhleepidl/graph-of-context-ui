@@ -138,6 +138,8 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
   const [jobConfigNode, setJobConfigNode] = useState<GraphNode | null>(null)
   const [jobConfigData, setJobConfigData] = useState<Record<string, unknown> | null>(null)
   const [jobConfigParseError, setJobConfigParseError] = useState('')
+  const [activeCtxId, setActiveCtxId] = useState<string | null>(null)
+  const [isEditingActiveJobConfig, setIsEditingActiveJobConfig] = useState(false)
 
   const [agentsCatalog, setAgentsCatalog] = useState<CatalogEntry[]>([])
   const [toolsCatalog, setToolsCatalog] = useState<CatalogEntry[]>([])
@@ -164,6 +166,8 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
       if (!threadId) {
         setJobConfigNode(null)
         setJobConfigData(null)
+        setActiveCtxId(null)
+        setIsEditingActiveJobConfig(false)
         setAgentsCatalog([])
         setToolsCatalog([])
         setEnabledAgents([])
@@ -176,11 +180,29 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
       setAgentsCatalogThreadId(agentsCatalogTid)
       setToolsCatalogThreadId(toolsCatalogTid)
 
-      const [jobRes, agentRes, toolRes] = await Promise.all([
+      const [ctxSetsOut, jobRes, agentRes, toolRes] = await Promise.all([
+        api.ctxSets(threadId),
         api.listResources(threadId, 'job_config'),
         agentsCatalogTid ? api.listResources(agentsCatalogTid, 'agent_profile') : Promise.resolve({ items: [] }),
         toolsCatalogTid ? api.listResources(toolsCatalogTid, 'tool_spec') : Promise.resolve({ items: [] }),
       ])
+      const ctxSets = Array.isArray(ctxSetsOut) ? ctxSetsOut : []
+      const defaultCtxId = asString((ctxSets[0] as { id?: unknown } | undefined)?.id) || null
+      setActiveCtxId(defaultCtxId)
+      let activeNodeIdSet = new Set<string>()
+      if (defaultCtxId) {
+        try {
+          const compiled = await api.ctxCompiled(defaultCtxId, true)
+          const activeNodeIds = Array.isArray(compiled?.active_node_ids) ? compiled.active_node_ids : []
+          activeNodeIdSet = new Set(
+            activeNodeIds
+              .map((id) => asString(id))
+              .filter((id) => !!id),
+          )
+        } catch {
+          activeNodeIdSet = new Set<string>()
+        }
+      }
 
       const agentNodes = Array.isArray(agentRes?.items) ? (agentRes.items as GraphNode[]) : []
       const mappedAgents = agentNodes
@@ -195,17 +217,19 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
       setToolsCatalog(mappedTools)
 
       const jobNodes = Array.isArray(jobRes?.items) ? (jobRes.items as GraphNode[]) : []
-      const latestJobNode = pickLatestNode(jobNodes)
-      setJobConfigNode(latestJobNode)
+      const activeJobNodes = jobNodes.filter((node) => activeNodeIdSet.has(node.id))
+      const selectedJobNode = activeJobNodes.length > 0 ? pickLatestNode(activeJobNodes) : pickLatestNode(jobNodes)
+      setJobConfigNode(selectedJobNode)
+      setIsEditingActiveJobConfig(Boolean(selectedJobNode && activeNodeIdSet.has(selectedJobNode.id)))
 
-      if (!latestJobNode) {
+      if (!selectedJobNode) {
         setJobConfigData(null)
         setEnabledAgents([])
         setEnabledTools([])
         return
       }
 
-      const parsed = parseObjectText(latestJobNode.text)
+      const parsed = parseObjectText(selectedJobNode.text)
       if (!parsed) {
         setJobConfigData(null)
         setJobConfigParseError('job_config text가 유효한 JSON object가 아닙니다.')
@@ -334,8 +358,14 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
         <div className="routeStatus">이 thread에는 `job_config`가 없습니다.</div>
       )}
       {jobConfigNode && (
-        <div className="muted" style={{ marginBottom: 8 }}>
-          job_config node: {jobConfigNode.id} {jobConfigNode.created_at ? `(${jobConfigNode.created_at})` : ''}
+        <div className="row" style={{ marginBottom: 8 }}>
+          <span className="muted">
+            job_config node: {jobConfigNode.id} {jobConfigNode.created_at ? `(${jobConfigNode.created_at})` : ''}
+          </span>
+          <span className={`pill ${isEditingActiveJobConfig ? 'pillActive' : ''}`}>
+            active: {isEditingActiveJobConfig ? 'yes' : 'no'}
+          </span>
+          {activeCtxId && <span className="pill">ctx: {activeCtxId.slice(0, 8)}</span>}
         </div>
       )}
       {jobConfigParseError && <div className="routeStatus routeStatusError">{jobConfigParseError}</div>}
