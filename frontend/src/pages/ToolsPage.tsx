@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 
-const TOOLS_THREAD_TITLES = ['tools:specs', 'tools'] as const
-const PREFERRED_TOOLS_THREAD_TITLE = TOOLS_THREAD_TITLES[0]
+const TOOLS_THREAD_TITLES = ['tools', 'tools:specs'] as const
+const PREFERRED_TOOLS_THREAD_TITLE = 'tools'
 const TOOL_RESOURCE_KIND = 'tool_spec'
 type ToolsThreadTitle = (typeof TOOLS_THREAD_TITLES)[number]
 
