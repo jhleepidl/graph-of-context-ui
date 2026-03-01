@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, setStoredBearerToken } from '../api'
+import { api, getStoredBearerToken, setStoredBearerToken } from '../api'
 import Timeline from '../components/Timeline'
 import GraphPanel from '../components/GraphPanel'
 import ActiveContext from '../components/ActiveContext'
@@ -14,6 +14,7 @@ import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPrior
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
 const RIGHT_PANEL_TAB_STORAGE_KEY = 'goc:right-panel-tab:v1'
 const MOBILE_SECTION_STORAGE_KEY = 'goc:mobile-section:v1'
+const WORKSPACE_STORAGE_KEY = 'goc:selected-workspace:v1'
 const LEFT_PANEL_MIN_WIDTH = 260
 const RIGHT_PANEL_MIN_WIDTH = 300
 const CENTER_PANEL_MIN_WIDTH = 520
@@ -30,6 +31,14 @@ type ResizeSession = {
 }
 type MobileSection = 'left' | 'center' | 'right'
 type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings'
+type AuthGateState = 'checking' | 'ready' | 'blocked' | 'error'
+
+type WorkspaceGroup = {
+  key: string
+  label: string
+  chatId: number | string | null
+  threadIds: string[]
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -62,6 +71,79 @@ function readStoredMobileSection(): MobileSection {
   return 'center'
 }
 
+function readStoredWorkspaceKey(): string {
+  if (typeof window === 'undefined') return ''
+  try {
+    return (window.localStorage.getItem(WORKSPACE_STORAGE_KEY) || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+function parseThreadMetaJson(thread: any): Record<string, any> {
+  const raw = thread?.meta_json
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, any>
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, any>
+      }
+    } catch {
+      // ignore malformed meta_json
+    }
+  }
+  return {}
+}
+
+function buildWorkspaceGroup(thread: any): WorkspaceGroup {
+  const meta = parseThreadMetaJson(thread)
+  const telegram = meta.telegram && typeof meta.telegram === 'object' ? meta.telegram : null
+  const chatId = telegram ? (telegram.chat_id ?? null) : null
+  if (chatId !== null && chatId !== undefined && String(chatId).trim() !== '') {
+    const title = typeof telegram?.title === 'string' ? telegram.title.trim() : ''
+    return {
+      key: `telegram:${String(chatId)}`,
+      label: title ? `${title} (${chatId})` : `Chat ${chatId}`,
+      chatId,
+      threadIds: [thread.id],
+    }
+  }
+  return {
+    key: 'ungrouped',
+    label: 'Ungrouped',
+    chatId: null,
+    threadIds: [thread.id],
+  }
+}
+
+function readTelegramInitData(): string {
+  if (typeof window === 'undefined') return ''
+  const tg = (window as any).Telegram
+  const webApp = tg?.WebApp
+  const initData = typeof webApp?.initData === 'string' ? webApp.initData.trim() : ''
+  return initData
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const raw = (error.message || '').trim()
+    if (!raw) return 'Unknown error'
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && typeof (parsed as any).detail === 'string') {
+        return String((parsed as any).detail)
+      }
+    } catch {
+      // ignore JSON parse errors
+    }
+    return raw
+  }
+  return String(error || 'Unknown error')
+}
+
 function captureTokenFromHash(): void {
   if (typeof window === 'undefined') return
   const rawHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
@@ -90,7 +172,10 @@ function readDeepLinkSelection(): { threadId: string | null; ctxId: string | nul
 
 export default function WorkspaceApp() {
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const [authGateState, setAuthGateState] = useState<AuthGateState>('checking')
+  const [authGateMessage, setAuthGateMessage] = useState<string>('')
   const [threads, setThreads] = useState<any[]>([])
+  const [workspaceKey, setWorkspaceKey] = useState<string>(() => readStoredWorkspaceKey())
   const [threadId, setThreadId] = useState<string | null>(null)
 
   const [ctxSets, setCtxSets] = useState<any[]>([])
@@ -126,6 +211,35 @@ export default function WorkspaceApp() {
   const [mobileSection, setMobileSection] = useState<MobileSection>(() => readStoredMobileSection())
   const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() => detectMobileLayout())
   const initialDeepLink = useMemo(() => readDeepLinkSelection(), [])
+  const workspaceGroups = useMemo<WorkspaceGroup[]>(() => {
+    const byKey = new Map<string, WorkspaceGroup>()
+    for (const thread of threads) {
+      const group = buildWorkspaceGroup(thread)
+      const existing = byKey.get(group.key)
+      if (!existing) {
+        byKey.set(group.key, group)
+        continue
+      }
+      existing.threadIds.push(thread.id)
+      if (existing.label === `Chat ${String(existing.chatId)}` && group.label) {
+        existing.label = group.label
+      }
+    }
+    const groups = Array.from(byKey.values())
+    groups.sort((a, b) => {
+      if (a.key === 'ungrouped') return 1
+      if (b.key === 'ungrouped') return -1
+      return a.label.localeCompare(b.label)
+    })
+    return groups
+  }, [threads])
+  const visibleThreads = useMemo(() => {
+    if (!workspaceKey) return threads
+    const group = workspaceGroups.find((item) => item.key === workspaceKey)
+    if (!group) return threads
+    const idSet = new Set(group.threadIds)
+    return threads.filter((thread) => idSet.has(thread.id))
+  }, [threads, workspaceGroups, workspaceKey])
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
@@ -204,6 +318,11 @@ export default function WorkspaceApp() {
     let tid = ts[0]?.id
     if (preferredThreadId && ts.some((t) => t.id === preferredThreadId)) {
       tid = preferredThreadId
+    } else if (threadId && ts.some((t) => t.id === threadId)) {
+      tid = threadId
+    } else if (workspaceKey) {
+      const inWorkspace = ts.find((t) => buildWorkspaceGroup(t).key === workspaceKey)
+      if (inWorkspace) tid = inWorkspace.id
     }
     if (!tid) {
       const t = await api.createThread('Demo Thread')
@@ -248,6 +367,10 @@ export default function WorkspaceApp() {
     const seq = ++switchSeqRef.current
 
     setThreadId(nextThreadId)
+    const nextThread = threads.find((t) => t.id === nextThreadId)
+    if (nextThread) {
+      setWorkspaceKey(buildWorkspaceGroup(nextThread).key)
+    }
     clearThreadScopedState()
 
     try {
@@ -278,11 +401,47 @@ export default function WorkspaceApp() {
   }
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false
+    ;(async () => {
+      setAuthGateState('checking')
+      setAuthGateMessage('')
       captureTokenFromHash()
+
+      let token = getStoredBearerToken()
+      if (!token) {
+        const initData = readTelegramInitData()
+        if (!initData) {
+          if (!cancelled) {
+            setAuthGateState('blocked')
+          }
+          return
+        }
+        try {
+          const out = await api.telegramWebAppLogin({ init_data: initData })
+          const nextToken = (out?.token || '').trim()
+          if (!nextToken) {
+            throw new Error('telegram login response missing token')
+          }
+          setStoredBearerToken(nextToken)
+          token = nextToken
+        } catch (error) {
+          if (!cancelled) {
+            setAuthGateState('error')
+            setAuthGateMessage(toErrorMessage(error))
+          }
+          return
+        }
+      }
+
+      if (!token || cancelled) return
+      setAuthGateState('ready')
       const tid = await loadThreads(initialDeepLink.threadId)
+      if (cancelled) return
       await switchThread(tid, initialDeepLink.ctxId)
     })()
+    return () => {
+      cancelled = true
+    }
   }, [initialDeepLink])
 
   useEffect(() => {
@@ -308,6 +467,32 @@ export default function WorkspaceApp() {
       // ignore localStorage errors
     }
   }, [mobileSection])
+
+  useEffect(() => {
+    if (workspaceGroups.length === 0) return
+    const exists = workspaceKey && workspaceGroups.some((group) => group.key === workspaceKey)
+    if (exists) return
+    if (threadId) {
+      const currentThread = threads.find((thread) => thread.id === threadId)
+      if (currentThread) {
+        setWorkspaceKey(buildWorkspaceGroup(currentThread).key)
+        return
+      }
+    }
+    setWorkspaceKey(workspaceGroups[0].key)
+  }, [workspaceGroups, workspaceKey, threadId, threads])
+
+  useEffect(() => {
+    try {
+      if (workspaceKey) {
+        window.localStorage.setItem(WORKSPACE_STORAGE_KEY, workspaceKey)
+      } else {
+        window.localStorage.removeItem(WORKSPACE_STORAGE_KEY)
+      }
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [workspaceKey])
 
   useEffect(() => {
     function handleResize() {
@@ -578,10 +763,17 @@ export default function WorkspaceApp() {
         const created = await api.createThread('New Thread')
         const refreshed = await api.threads()
         setThreads(refreshed)
+        setWorkspaceKey(buildWorkspaceGroup(created).key)
         await switchThread(created.id)
         return
       }
 
+      const nextInWorkspace = ts.find((t) => buildWorkspaceGroup(t).key === workspaceKey)
+      if (nextInWorkspace) {
+        await switchThread(nextInWorkspace.id)
+        return
+      }
+      setWorkspaceKey(buildWorkspaceGroup(ts[0]).key)
       await switchThread(ts[0].id)
     } catch (e) {
       console.error('failed to delete thread', e)
@@ -626,6 +818,30 @@ export default function WorkspaceApp() {
     await reloadAll()
   }
 
+  if (authGateState !== 'ready') {
+    const isChecking = authGateState === 'checking'
+    const isBlocked = authGateState === 'blocked'
+    const title = isChecking ? 'Signing in...' : isBlocked ? 'Telegram Login Required' : 'Telegram Login Failed'
+    const description = isChecking
+      ? 'Checking auth token and Telegram WebApp session.'
+      : isBlocked
+        ? 'Telegram에서 Open GoC 버튼으로 이 페이지를 열어주세요. 또는 #token=... 링크를 사용하세요.'
+        : `인증에 실패했습니다. ${authGateMessage || ''}`.trim()
+    return (
+      <div className="routePage">
+        <div className="routeCard" style={{ maxWidth: 720 }}>
+          <h3 style={{ marginTop: 0 }}>{title}</h3>
+          <p className="muted" style={{ fontSize: 14 }}>{description}</p>
+          {!isChecking && (
+            <div className="row">
+              <button onClick={() => window.location.reload()}>Retry</button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="appShell">
       {isMobileLayout && (
@@ -646,10 +862,32 @@ export default function WorkspaceApp() {
       <div className="wrap" ref={wrapRef} style={wrapStyle}>
       <div className={`col col-left ${showLeftPanel ? '' : 'isMobileHidden'}`}>
         <div className="row">
+          <select
+            value={workspaceKey}
+            onChange={async (e) => {
+              const nextWorkspaceKey = e.target.value
+              setWorkspaceKey(nextWorkspaceKey)
+              const nextGroup = workspaceGroups.find((group) => group.key === nextWorkspaceKey)
+              if (!nextGroup || nextGroup.threadIds.length === 0) return
+              if (threadId && nextGroup.threadIds.includes(threadId)) return
+              await switchThread(nextGroup.threadIds[0])
+            }}
+            style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}
+          >
+            {workspaceGroups.map((group) => (
+              <option key={group.key} value={group.key}>
+                {group.label} ({group.threadIds.length})
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="row">
           <button onClick={async () => {
             const t = await api.createThread('New Thread')
             const ts = await api.threads()
             setThreads(ts)
+            setWorkspaceKey(buildWorkspaceGroup(t).key)
             await switchThread(t.id)
           }}>New Thread</button>
           <button className="danger" onClick={handleDeleteCurrentThread} disabled={!threadId}>Delete Thread</button>
@@ -657,7 +895,7 @@ export default function WorkspaceApp() {
           <select value={threadId || ''} onChange={async (e) => {
             await switchThread(e.target.value)
           }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
-            {threads.map(t => (
+            {visibleThreads.map(t => (
               <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0,6)})</option>
             ))}
           </select>

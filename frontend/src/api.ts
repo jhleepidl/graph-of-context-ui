@@ -139,6 +139,12 @@ async function j<T>(resOrPromise: Response | Promise<Response>): Promise<T> {
 }
 
 export const api = {
+  telegramWebAppLogin: (body: { init_data: string; max_age_sec?: number; ttl_sec?: number }) =>
+    j<any>(apiFetch('/api/auth/telegram/webapp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
   createServiceRequest: (name: string, description?: string | null) =>
     j<any>(apiFetch('/api/service_requests', {
       method: 'POST',
@@ -191,8 +197,36 @@ export const api = {
     })),
 
   threads: () => j<any[]>(apiFetch('/api/threads')),
-  createThread: (title?: string) =>
-    j<any>(apiFetch('/api/threads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }) })),
+  createThread: (
+    title?: string,
+    options?: {
+      external_ref?: string | null
+      meta_json?: Record<string, unknown> | null
+    },
+  ) =>
+    j<any>(apiFetch('/api/threads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title,
+        external_ref: options?.external_ref || null,
+        meta_json: options?.meta_json || null,
+      }),
+    })),
+  ensureThread: (
+    body: {
+      external_ref: string
+      title?: string | null
+      meta_json?: Record<string, unknown> | null
+      service_id?: string | null
+    },
+  ) => j<any>(
+    apiFetch('/api/threads/ensure', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
   deleteThread: (threadId: string) =>
     j<any>(apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })),
 

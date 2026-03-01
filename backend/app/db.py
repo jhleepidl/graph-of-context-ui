@@ -9,7 +9,7 @@ DB_URL = get_env("GOC_DB_URL", DEFAULT_DB_URL) or DEFAULT_DB_URL
 engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
 
 
-def _ensure_thread_service_column() -> None:
+def _ensure_thread_columns() -> None:
     table_name = getattr(Thread, "__tablename__", "thread")
     with engine.begin() as conn:
         inspector = inspect(conn)
@@ -32,6 +32,22 @@ def _ensure_thread_service_column() -> None:
         conn.execute(text(f"UPDATE {table_name} SET service_id = 'default' WHERE service_id IS NULL"))
         conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_service_id ON {table_name} (service_id)"))
 
+        if "external_ref" not in cols:
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN external_ref VARCHAR(255)"))
+            cols.add("external_ref")
+        conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_external_ref ON {table_name} (external_ref)"))
+        conn.execute(
+            text(
+                f"CREATE INDEX IF NOT EXISTS ix_{table_name}_service_id_external_ref "
+                f"ON {table_name} (service_id, external_ref)"
+            )
+        )
+
+        if "meta_json" not in cols:
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN meta_json TEXT DEFAULT '{{}}'"))
+            cols.add("meta_json")
+        conn.execute(text(f"UPDATE {table_name} SET meta_json = '{{}}' WHERE meta_json IS NULL"))
+
 
 def _ensure_service_request_columns() -> None:
     table_name = getattr(ServiceRequest, "__tablename__", "servicerequest")
@@ -46,5 +62,5 @@ def _ensure_service_request_columns() -> None:
 
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
-    _ensure_thread_service_column()
+    _ensure_thread_columns()
     _ensure_service_request_columns()

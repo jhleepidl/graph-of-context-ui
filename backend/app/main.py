@@ -25,6 +25,7 @@ from app.routers.nodes import router as nodes_router
 from app.routers.hierarchy import router as hierarchy_router
 from app.routers.service_auth import router as service_auth_router
 from app.routers.publish_requests import router as publish_requests_router
+from app.routers.telegram_auth import router as telegram_auth_router
 
 app = FastAPI(title="Graph-of-Context MVP API")
 
@@ -50,8 +51,10 @@ async def auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS" or not request.url.path.startswith("/api"):
         return await call_next(request)
 
-    is_public_service_request = request.method == "POST" and request.url.path == "/api/service_requests"
-    if is_public_service_request:
+    normalized_path = request.url.path.rstrip("/") or "/"
+    is_public_service_request = request.method == "POST" and normalized_path == "/api/service_requests"
+    is_public_telegram_webapp_login = request.method == "POST" and normalized_path == "/api/auth/telegram/webapp"
+    if is_public_service_request or is_public_telegram_webapp_login:
         token = set_current_principal(Principal(role="anonymous", service_id=None))
         try:
             return await call_next(request)
@@ -89,5 +92,6 @@ app.include_router(tokens_router)
 app.include_router(nodes_router)
 app.include_router(service_auth_router)
 app.include_router(publish_requests_router)
+app.include_router(telegram_auth_router)
 
 app.include_router(hierarchy_router)

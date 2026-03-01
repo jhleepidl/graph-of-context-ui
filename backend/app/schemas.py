@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime
 from typing import Any, List, Literal, Optional
 from pydantic import BaseModel
 
@@ -6,6 +7,24 @@ from pydantic import BaseModel
 class ThreadCreate(BaseModel):
     title: Optional[str] = None
     service_id: Optional[str] = None  # admin-only override
+    external_ref: Optional[str] = None
+    meta_json: Optional[dict[str, Any]] = None
+
+
+class ThreadEnsureRequest(BaseModel):
+    external_ref: str
+    title: Optional[str] = None
+    service_id: Optional[str] = None  # admin-only override
+    meta_json: Optional[dict[str, Any]] = None
+
+
+class ThreadRead(BaseModel):
+    id: str
+    service_id: str
+    title: str
+    external_ref: Optional[str] = None
+    meta_json: dict[str, Any]
+    created_at: datetime
 
 
 class MessageCreate(BaseModel):

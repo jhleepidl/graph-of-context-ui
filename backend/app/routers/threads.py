@@ -1,13 +1,14 @@
 from __future__ import annotations
 import json
 import logging
+from typing import Any
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import Thread, ContextSet, ContextSetVersion, Node, Edge, NodeEmbedding
-from app.schemas import ThreadCreate, NodeLayoutUpdate, EdgeCreate
+from app.schemas import ThreadCreate, ThreadEnsureRequest, ThreadRead, NodeLayoutUpdate, EdgeCreate
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
 from app.auth import get_current_principal
@@ -26,6 +27,70 @@ def jload(s: str, default):
         return json.loads(s)
     except Exception:
         return default
+
+
+def _normalize_external_ref(value: str | None) -> str | None:
+    clean = (value or "").strip()
+    return clean or None
+
+
+def _normalize_meta_json(value: dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _thread_to_response(thread: Thread) -> ThreadRead:
+    out = thread.model_dump()
+    out["meta_json"] = jload(thread.meta_json or "{}", {})
+    return ThreadRead(**out)
+
+
+def _resolve_target_service_id_from_body(service_id_override: str | None) -> str:
+    principal = get_current_principal()
+    if principal.role == "admin":
+        service_id = (service_id_override or "").strip()
+        if not service_id:
+            raise HTTPException(400, "admin must provide service_id")
+        return service_id
+    return current_service_id()
+
+
+def _find_thread_by_external_ref(session: Session, service_id: str, external_ref: str) -> Thread | None:
+    return session.exec(
+        select(Thread)
+        .where(Thread.service_id == service_id)
+        .where(Thread.external_ref == external_ref)
+        .order_by(Thread.created_at.asc(), Thread.id.asc())
+        .limit(1)
+    ).first()
+
+
+def _create_thread_with_default_context_set(
+    session: Session,
+    service_id: str,
+    title: str,
+    external_ref: str | None,
+    meta_json: dict[str, Any],
+) -> Thread:
+    thread = Thread(
+        title=title or "Untitled",
+        service_id=service_id,
+        external_ref=external_ref,
+        meta_json=jdump(meta_json),
+    )
+    session.add(thread)
+    session.flush()
+    context_set = ContextSet(thread_id=thread.id, name="default")
+    session.add(context_set)
+    session.flush()
+    snapshot_context_set(
+        session,
+        context_set,
+        reason="create",
+        meta={"name": "default", "thread_id": thread.id},
+    )
+    return thread
 
 
 ALLOWED_EDGE_TYPES = {
@@ -48,7 +113,7 @@ ALLOWED_EDGE_TYPES = {
 }
 
 
-@router.get("")
+@router.get("", response_model=list[ThreadRead])
 def list_threads():
     principal = get_current_principal()
     with Session(engine) as s:
@@ -62,30 +127,55 @@ def list_threads():
                 )
             )
         threads = s.exec(query).all()
-        return [t.model_dump() for t in threads]
+        return [_thread_to_response(t) for t in threads]
 
 
-@router.post("")
+@router.post("", response_model=ThreadRead)
 def create_thread(body: ThreadCreate):
-    principal = get_current_principal()
-    if principal.role == "admin":
-        service_id = (body.service_id or "").strip()
-        if not service_id:
-            raise HTTPException(400, "admin must provide service_id")
-    else:
-        service_id = current_service_id()
-    t = Thread(title=body.title or "Untitled", service_id=service_id)
+    service_id = _resolve_target_service_id_from_body(body.service_id)
+    external_ref = _normalize_external_ref(body.external_ref)
+    meta_json = _normalize_meta_json(body.meta_json)
     with Session(engine) as s:
-        s.add(t)
+        if external_ref:
+            existing = _find_thread_by_external_ref(s, service_id, external_ref)
+            if existing:
+                return _thread_to_response(existing)
+
+        t = _create_thread_with_default_context_set(
+            s,
+            service_id=service_id,
+            title=body.title or "Untitled",
+            external_ref=external_ref,
+            meta_json=meta_json,
+        )
         s.commit()
         s.refresh(t)
-        cs = ContextSet(thread_id=t.id, name="default")
-        s.add(cs)
-        s.flush()
-        snapshot_context_set(s, cs, reason="create", meta={"name": "default", "thread_id": t.id})
+    return _thread_to_response(t)
+
+
+@router.post("/ensure", response_model=ThreadRead)
+def ensure_thread(body: ThreadEnsureRequest):
+    external_ref = _normalize_external_ref(body.external_ref)
+    if not external_ref:
+        raise HTTPException(400, "external_ref is required")
+    service_id = _resolve_target_service_id_from_body(body.service_id)
+    meta_json = _normalize_meta_json(body.meta_json)
+
+    with Session(engine) as s:
+        existing = _find_thread_by_external_ref(s, service_id, external_ref)
+        if existing:
+            return _thread_to_response(existing)
+
+        t = _create_thread_with_default_context_set(
+            s,
+            service_id=service_id,
+            title=body.title or "Untitled",
+            external_ref=external_ref,
+            meta_json=meta_json,
+        )
         s.commit()
         s.refresh(t)
-    return t.model_dump()
+        return _thread_to_response(t)
 
 
 @router.delete("/{thread_id}")
@@ -146,7 +236,7 @@ def get_graph(thread_id: str):
             .order_by(Edge.created_at.asc(), Edge.id.asc())
         ).all()
         return {
-            "thread": t.model_dump(),
+            "thread": _thread_to_response(t),
             "nodes": [n.model_dump() for n in nodes],
             "edges": [e.model_dump() for e in edges],
         }

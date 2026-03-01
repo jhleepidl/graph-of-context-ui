@@ -18,6 +18,8 @@ class Thread(SQLModel, table=True):
     id: str = Field(default_factory=new_id, primary_key=True)
     service_id: str = Field(default="default", index=True)
     title: str = Field(default="Untitled")
+    external_ref: Optional[str] = Field(default=None, index=True)
+    meta_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utcnow)
 
 
