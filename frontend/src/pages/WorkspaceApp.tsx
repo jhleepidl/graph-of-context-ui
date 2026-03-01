@@ -822,16 +822,29 @@ export default function WorkspaceApp() {
     const isChecking = authGateState === 'checking'
     const isBlocked = authGateState === 'blocked'
     const title = isChecking ? 'Signing in...' : isBlocked ? 'Telegram Login Required' : 'Telegram Login Failed'
-    const description = isChecking
-      ? 'Checking auth token and Telegram WebApp session.'
-      : isBlocked
-        ? 'Telegram에서 Open GoC 버튼으로 이 페이지를 열어주세요. 또는 #token=... 링크를 사용하세요.'
-        : `인증에 실패했습니다. ${authGateMessage || ''}`.trim()
     return (
       <div className="routePage">
         <div className="routeCard" style={{ maxWidth: 720 }}>
           <h3 style={{ marginTop: 0 }}>{title}</h3>
-          <p className="muted" style={{ fontSize: 14 }}>{description}</p>
+          {isChecking && (
+            <p className="muted" style={{ fontSize: 14 }}>
+              Checking auth token and Telegram WebApp session.
+            </p>
+          )}
+          {isBlocked && (
+            <div className="muted" style={{ fontSize: 14 }}>
+              <p style={{ marginTop: 0, marginBottom: 8 }}>로그인 정보를 찾을 수 없습니다. 아래 방법으로 접속해 주세요.</p>
+              <ol style={{ marginTop: 0, marginBottom: 0, paddingLeft: 18 }}>
+                <li>Telegram에서 Open GoC (Mini App) 버튼으로 열면 자동 로그인됩니다(HTTPS 필요).</li>
+                <li>브라우저로 열려면 봇에서 /context로 받은 Browser 링크(토큰 포함)를 사용하세요.</li>
+              </ol>
+            </div>
+          )}
+          {!isChecking && !isBlocked && (
+            <p className="muted" style={{ fontSize: 14 }}>
+              {`인증에 실패했습니다. ${authGateMessage || ''}`.trim()}
+            </p>
+          )}
           {!isChecking && (
             <div className="row">
               <button onClick={() => window.location.reload()}>Retry</button>
