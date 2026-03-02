@@ -416,8 +416,49 @@ export const api = {
   createCtx: (threadId: string, name: string) =>
     j<any>(apiFetch('/api/context_sets', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ thread_id: threadId, name }) })),
   ctx: (ctxId: string) => j<any>(apiFetch(`/api/context_sets/${ctxId}`)),
-  ctxCompiled: (ctxId: string, includeExplain = true) =>
-    j<any>(apiFetch(`/api/context_sets/${ctxId}/compiled?include_explain=${includeExplain ? 'true' : 'false'}`)),
+  ctxCompiled: (
+    ctxId: string,
+    includeExplainOrOptions: boolean | {
+      includeExplain?: boolean
+      maxChars?: number | null
+      excludeTypes?: string[] | null
+      excludeResourceKinds?: string[] | null
+      includeMeta?: boolean
+    } = true,
+    extraOptions?: {
+      maxChars?: number | null
+      excludeTypes?: string[] | null
+      excludeResourceKinds?: string[] | null
+      includeMeta?: boolean
+    },
+  ) => {
+    let includeExplain = true
+    let opts: {
+      maxChars?: number | null
+      excludeTypes?: string[] | null
+      excludeResourceKinds?: string[] | null
+      includeMeta?: boolean
+    } = {}
+
+    if (typeof includeExplainOrOptions === 'boolean') {
+      includeExplain = includeExplainOrOptions
+      opts = extraOptions || {}
+    } else {
+      includeExplain = includeExplainOrOptions.includeExplain ?? true
+      opts = includeExplainOrOptions
+    }
+
+    const q = new URLSearchParams()
+    q.set('include_explain', includeExplain ? 'true' : 'false')
+    if (opts.maxChars != null) q.set('max_chars', String(opts.maxChars))
+    if (opts.excludeTypes && opts.excludeTypes.length > 0) q.set('exclude_types', opts.excludeTypes.join(','))
+    if (opts.excludeResourceKinds && opts.excludeResourceKinds.length > 0) {
+      q.set('exclude_resource_kinds', opts.excludeResourceKinds.join(','))
+    }
+    if (opts.includeMeta) q.set('include_meta', 'true')
+
+    return j<any>(apiFetch(`/api/context_sets/${ctxId}/compiled?${q.toString()}`))
+  },
   ctxVersions: (ctxId: string, limit = 20) =>
     j<any>(apiFetch(`/api/context_sets/${ctxId}/versions?limit=${limit}`)),
   ctxVersionDiff: (ctxId: string, fromVersion: number, toVersion: number) =>
@@ -463,6 +504,23 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ node_ids: nodeIds }),
     })),
+  ctxRebuildActive: (
+    ctxId: string,
+    policy?: {
+      recent_user_messages?: number
+      recent_assistant_messages?: number
+      recent_steps?: number
+      recent_artifacts?: number
+      exclude_resource_kinds?: string[]
+      include_pinned?: boolean
+    },
+  ) => j<any>(
+    apiFetch(`/api/context_sets/${ctxId}/rebuild_active`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ policy: policy || {} }),
+    }),
+  ),
 
   activate: (ctxId: string, nodeIds: string[]) =>
     j<any>(apiFetch(`/api/context_sets/${ctxId}/activate`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ node_ids: nodeIds }) })),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ThreadCreate(BaseModel):
@@ -204,3 +204,16 @@ class ApplyUnfoldPlanRequest(BaseModel):
     closure_direction: Literal["out", "in", "both"] = "both"
     max_closure_nodes: Optional[int] = 12
     include_explain: bool = True
+
+
+class RebuildActivePolicy(BaseModel):
+    recent_user_messages: int = 6
+    recent_assistant_messages: int = 6
+    recent_steps: int = 10
+    recent_artifacts: int = 5
+    exclude_resource_kinds: List[str] = []
+    include_pinned: bool = True
+
+
+class RebuildActiveRequest(BaseModel):
+    policy: RebuildActivePolicy = Field(default_factory=RebuildActivePolicy)

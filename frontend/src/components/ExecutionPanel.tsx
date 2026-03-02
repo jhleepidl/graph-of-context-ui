@@ -53,6 +53,27 @@ type CompiledPreviewState = {
   error: string
 }
 
+type CompiledLineDiffState = {
+  loading: boolean
+  error: string
+  sharedText: string
+  lensText: string
+  addedLines: string[]
+  removedLines: string[]
+}
+
+type SharedLensDiffState = {
+  sharedContextSetId: string
+  lensContextSetId: string
+  loading: boolean
+  error: string
+  sharedActiveIds: string[]
+  lensActiveIds: string[]
+  addedIds: string[]
+  removedIds: string[]
+  compiledDiff: CompiledLineDiffState | null
+}
+
 const NODE_TYPE = { executionNode: ExecutionNodeCard }
 const TOOL_TYPES = new Set(['ToolCall', 'ToolResult'])
 const ARTIFACT_TYPES = new Set(['Artifact', 'Resource'])
@@ -99,6 +120,42 @@ function shortText(value: string, max = 96): string {
   const oneLine = (value || '').replace(/\s+/g, ' ').trim()
   if (!oneLine) return ''
   return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine
+}
+
+function orderedUniqueIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue
+    const clean = raw.trim()
+    if (!clean || seen.has(clean)) continue
+    seen.add(clean)
+    out.push(clean)
+  }
+  return out
+}
+
+function buildLineDiff(sharedText: string, lensText: string): { addedLines: string[]; removedLines: string[] } {
+  const splitLines = (text: string): string[] => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const line of text.split(/\r?\n/)) {
+      const clean = line.trim()
+      if (!clean || seen.has(clean)) continue
+      seen.add(clean)
+      out.push(clean)
+    }
+    return out
+  }
+  const sharedLines = splitLines(sharedText)
+  const lensLines = splitLines(lensText)
+  const sharedSet = new Set(sharedLines)
+  const lensSet = new Set(lensLines)
+  return {
+    addedLines: lensLines.filter((line) => !sharedSet.has(line)),
+    removedLines: sharedLines.filter((line) => !lensSet.has(line)),
+  }
 }
 
 function normalizeStatus(raw: unknown): 'queued' | 'running' | 'done' | 'error' | 'unknown' {
@@ -297,6 +354,8 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
   const [compiledPreview, setCompiledPreview] = useState<CompiledPreviewState | null>(null)
   const [traceExportBusy, setTraceExportBusy] = useState(false)
   const [traceExportError, setTraceExportError] = useState('')
+  const [sharedLensDiff, setSharedLensDiff] = useState<SharedLensDiffState | null>(null)
+  const [showSharedLensIdsModal, setShowSharedLensIdsModal] = useState(false)
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const lastFittedLayoutRef = useRef('')
   const lastFollowKeyRef = useRef('')
@@ -581,6 +640,69 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
     return [...byId.values()].sort((a, b) => String(a.node.created_at || '').localeCompare(String(b.node.created_at || '')))
   }, [selectedNode, edges, nodesById])
 
+  useEffect(() => {
+    setShowSharedLensIdsModal(false)
+    if (!selectedIsStep || !sharedContextSetId || !lensContextSetId) {
+      setSharedLensDiff(null)
+      return
+    }
+
+    let cancelled = false
+    const sharedId = sharedContextSetId
+    const lensId = lensContextSetId
+    setSharedLensDiff({
+      sharedContextSetId: sharedId,
+      lensContextSetId: lensId,
+      loading: true,
+      error: '',
+      sharedActiveIds: [],
+      lensActiveIds: [],
+      addedIds: [],
+      removedIds: [],
+      compiledDiff: null,
+    })
+
+    ;(async () => {
+      try {
+        const [shared, lens] = await Promise.all([api.ctx(sharedId), api.ctx(lensId)])
+        if (cancelled) return
+
+        const sharedIds = orderedUniqueIds(shared?.active_node_ids)
+        const lensIds = orderedUniqueIds(lens?.active_node_ids)
+        const sharedSet = new Set(sharedIds)
+        const lensSet = new Set(lensIds)
+        setSharedLensDiff({
+          sharedContextSetId: sharedId,
+          lensContextSetId: lensId,
+          loading: false,
+          error: '',
+          sharedActiveIds: sharedIds,
+          lensActiveIds: lensIds,
+          addedIds: lensIds.filter((id) => !sharedSet.has(id)),
+          removedIds: sharedIds.filter((id) => !lensSet.has(id)),
+          compiledDiff: null,
+        })
+      } catch (e: any) {
+        if (cancelled) return
+        setSharedLensDiff({
+          sharedContextSetId: sharedId,
+          lensContextSetId: lensId,
+          loading: false,
+          error: e?.message || String(e),
+          sharedActiveIds: [],
+          lensActiveIds: [],
+          addedIds: [],
+          removedIds: [],
+          compiledDiff: null,
+        })
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedIsStep, sharedContextSetId, lensContextSetId])
+
   const runningAgentIds = useMemo(() => {
     const out = new Set<string>()
     for (const node of runningStepNodes) {
@@ -641,6 +763,78 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
     if (!compiledPreview) return
     const ok = await copyText(compiledPreview.text || '')
     setCopyState(ok ? 'Compiled text copied' : 'Copy failed')
+  }
+
+  async function handleLoadSharedLensCompiledDiff() {
+    if (!sharedLensDiff || sharedLensDiff.loading) return
+    const sharedId = sharedLensDiff.sharedContextSetId
+    const lensId = sharedLensDiff.lensContextSetId
+
+    setSharedLensDiff((prev) => {
+      if (!prev || prev.sharedContextSetId !== sharedId || prev.lensContextSetId !== lensId) return prev
+      return {
+        ...prev,
+        compiledDiff: {
+          loading: true,
+          error: '',
+          sharedText: '',
+          lensText: '',
+          addedLines: [],
+          removedLines: [],
+        },
+      }
+    })
+
+    try {
+      const [sharedCompiled, lensCompiled] = await Promise.all([
+        api.ctxCompiled(sharedId, {
+          includeExplain: false,
+          includeMeta: false,
+          maxChars: 3000,
+          excludeResourceKinds: ['job_config', 'tracking_append'],
+        }),
+        api.ctxCompiled(lensId, {
+          includeExplain: false,
+          includeMeta: false,
+          maxChars: 3000,
+          excludeResourceKinds: ['job_config', 'tracking_append'],
+        }),
+      ])
+
+      const sharedText = String(sharedCompiled?.compiled_text || '')
+      const lensText = String(lensCompiled?.compiled_text || '')
+      const lineDiff = buildLineDiff(sharedText, lensText)
+
+      setSharedLensDiff((prev) => {
+        if (!prev || prev.sharedContextSetId !== sharedId || prev.lensContextSetId !== lensId) return prev
+        return {
+          ...prev,
+          compiledDiff: {
+            loading: false,
+            error: '',
+            sharedText,
+            lensText,
+            addedLines: lineDiff.addedLines,
+            removedLines: lineDiff.removedLines,
+          },
+        }
+      })
+    } catch (e: any) {
+      setSharedLensDiff((prev) => {
+        if (!prev || prev.sharedContextSetId !== sharedId || prev.lensContextSetId !== lensId) return prev
+        return {
+          ...prev,
+          compiledDiff: {
+            loading: false,
+            error: e?.message || String(e),
+            sharedText: '',
+            lensText: '',
+            addedLines: [],
+            removedLines: [],
+          },
+        }
+      })
+    }
   }
 
   async function handleTraceExport() {
@@ -841,6 +1035,65 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
                       Open lens compiled
                     </button>
                   </div>
+
+                  {sharedContextSetId && lensContextSetId && (
+                    <div className="executionSharedLensDiffBlock">
+                      <div><b>shared vs lens active diff</b></div>
+                      {sharedLensDiff?.loading && <div className="muted">Loading shared/lens active IDs...</div>}
+                      {!sharedLensDiff?.loading && sharedLensDiff?.error && (
+                        <div className="muted" style={{ color: '#b91c1c' }}>{sharedLensDiff.error}</div>
+                      )}
+                      {!sharedLensDiff?.loading && !sharedLensDiff?.error && sharedLensDiff && (
+                        <>
+                          <div className="executionSharedLensSummary">
+                            <span className="pill">shared {sharedLensDiff.sharedActiveIds.length}</span>
+                            <span className="pill">lens {sharedLensDiff.lensActiveIds.length}</span>
+                            <span className="pill">added {sharedLensDiff.addedIds.length}</span>
+                            <span className="pill">removed {sharedLensDiff.removedIds.length}</span>
+                          </div>
+                          <div className="executionInspectorActions" style={{ marginTop: 6, marginBottom: 0 }}>
+                            <button onClick={() => setShowSharedLensIdsModal(true)}>
+                              Show added/removed IDs
+                            </button>
+                            <button
+                              onClick={() => void handleLoadSharedLensCompiledDiff()}
+                              disabled={sharedLensDiff.compiledDiff?.loading}
+                            >
+                              {sharedLensDiff.compiledDiff?.loading ? 'Loading compiled diff...' : 'Load compiled line diff'}
+                            </button>
+                          </div>
+
+                          {sharedLensDiff.compiledDiff && !sharedLensDiff.compiledDiff.loading && (
+                            <div className="executionSharedLensCompiledDiff">
+                              {sharedLensDiff.compiledDiff.error ? (
+                                <div className="muted" style={{ color: '#b91c1c' }}>{sharedLensDiff.compiledDiff.error}</div>
+                              ) : (
+                                <>
+                                  <div className="muted">compiled line diff (max 3000 chars each, excluding job_config/tracking_append)</div>
+                                  <div className="executionSharedLensLineDiffGrid">
+                                    <div className="executionSharedLensLineDiffCol">
+                                      <div><b>Added lines ({sharedLensDiff.compiledDiff.addedLines.length})</b></div>
+                                      <pre>{sharedLensDiff.compiledDiff.addedLines.slice(0, 28).join('\n') || '(none)'}</pre>
+                                      {sharedLensDiff.compiledDiff.addedLines.length > 28 && (
+                                        <div className="muted">... +{sharedLensDiff.compiledDiff.addedLines.length - 28} more lines</div>
+                                      )}
+                                    </div>
+                                    <div className="executionSharedLensLineDiffCol">
+                                      <div><b>Removed lines ({sharedLensDiff.compiledDiff.removedLines.length})</b></div>
+                                      <pre>{sharedLensDiff.compiledDiff.removedLines.slice(0, 28).join('\n') || '(none)'}</pre>
+                                      {sharedLensDiff.compiledDiff.removedLines.length > 28 && (
+                                        <div className="muted">... +{sharedLensDiff.compiledDiff.removedLines.length - 28} more lines</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -871,6 +1124,30 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
           )}
         </div>
       </div>
+
+      {showSharedLensIdsModal && sharedLensDiff && (
+        <div className="modalOverlay" onClick={() => setShowSharedLensIdsModal(false)}>
+          <div className="modalCard executionSharedLensModal" onClick={(e) => e.stopPropagation()}>
+            <div className="row modalHeader">
+              <h3 style={{ margin: 0 }}>Shared vs Lens IDs</h3>
+              <button onClick={() => setShowSharedLensIdsModal(false)}>Close</button>
+            </div>
+            <div className="muted" style={{ marginBottom: 8 }}>
+              shared: {sharedLensDiff.sharedContextSetId} | lens: {sharedLensDiff.lensContextSetId}
+            </div>
+            <div className="executionSharedLensIdGrid">
+              <div className="executionSharedLensIdCol">
+                <div><b>Added in lens ({sharedLensDiff.addedIds.length})</b></div>
+                <pre>{sharedLensDiff.addedIds.join('\n') || '(none)'}</pre>
+              </div>
+              <div className="executionSharedLensIdCol">
+                <div><b>Removed from shared ({sharedLensDiff.removedIds.length})</b></div>
+                <pre>{sharedLensDiff.removedIds.join('\n') || '(none)'}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {compiledPreview && (
         <div className="modalOverlay" onClick={() => setCompiledPreview(null)}>

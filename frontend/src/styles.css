@@ -864,6 +864,74 @@ button.tiny.isActive {
   background: #f8fafc;
 }
 
+.executionSharedLensDiffBlock {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #dbe2ea;
+}
+
+.executionSharedLensSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.executionSharedLensCompiledDiff {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.executionSharedLensLineDiffGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.executionSharedLensLineDiffCol {
+  border: 1px solid #dbe3ed;
+  border-radius: 10px;
+  background: #fff;
+  padding: 8px;
+}
+
+.executionSharedLensLineDiffCol pre {
+  margin: 6px 0 0;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
+.executionSharedLensModal {
+  width: min(920px, 100%);
+}
+
+.executionSharedLensIdGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.executionSharedLensIdCol {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 8px;
+}
+
+.executionSharedLensIdCol pre {
+  margin: 6px 0 0;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
 .executionCompiledModal {
   width: min(960px, 100%);
 }
@@ -901,5 +969,9 @@ button.tiny.isActive {
   }
   .executionRightColumn {
     grid-template-rows: auto auto;
+  }
+  .executionSharedLensLineDiffGrid,
+  .executionSharedLensIdGrid {
+    grid-template-columns: 1fr;
   }
 }

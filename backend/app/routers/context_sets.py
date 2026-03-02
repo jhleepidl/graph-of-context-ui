@@ -1,11 +1,13 @@
 from __future__ import annotations
 import json
+import math
+from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.db import engine
 from app.goc_core import apply_unfold_seed_selection, plan_unfold_candidates
-from app.models import ContextSet, ContextSetVersion
+from app.models import ContextSet, ContextSetVersion, Node
 from app.schemas import (
     ContextSetCreate,
     CloneContextSetRequest,
@@ -13,6 +15,7 @@ from app.schemas import (
     ActiveOrderUpdate,
     UnfoldPlanRequest,
     ApplyUnfoldPlanRequest,
+    RebuildActiveRequest,
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import compile_active_context_explain, load_thread_graph
@@ -28,6 +31,11 @@ router = APIRouter(prefix="/api", tags=["context_sets"])
 
 _DEFAULT_PLANNER_EDGES = ["DEPENDS", "HAS_PART", "SPLIT_FROM", "REFERENCES"]
 
+try:
+    import tiktoken
+except Exception:
+    tiktoken = None
+
 
 def jdump(x) -> str:
     return json.dumps(x, ensure_ascii=False)
@@ -38,6 +46,140 @@ def jload(s: str, default):
         return json.loads(s)
     except Exception:
         return default
+
+
+def _normalize_string_set(values: list[str] | set[str] | tuple[str, ...] | None) -> set[str]:
+    out: set[str] = set()
+    for raw in values or []:
+        if not isinstance(raw, str):
+            continue
+        clean = raw.strip().lower()
+        if clean:
+            out.add(clean)
+    return out
+
+
+def _parse_csv_query(value: str | None) -> set[str]:
+    if not value:
+        return set()
+    return _normalize_string_set(value.split(","))
+
+
+def _node_payload(node: Node) -> dict[str, Any]:
+    payload = jload(node.payload_json or "{}", {})
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _node_type(node: Node) -> str:
+    return str(node.type or "").strip() or "Unknown"
+
+
+def _node_resource_kind(payload: dict[str, Any]) -> str:
+    return str(payload.get("resource_kind") or "").strip().lower()
+
+
+def _is_excluded_by_resource_kind(payload: dict[str, Any], exclude_resource_kinds: set[str]) -> bool:
+    if not exclude_resource_kinds:
+        return False
+    kind = _node_resource_kind(payload)
+    return bool(kind and kind in exclude_resource_kinds)
+
+
+def _should_exclude_for_compiled(
+    node: Node,
+    payload: dict[str, Any],
+    exclude_types: set[str],
+    exclude_resource_kinds: set[str],
+) -> bool:
+    ntype = _node_type(node).lower()
+    if exclude_types and ntype in exclude_types:
+        return True
+    if _is_excluded_by_resource_kind(payload, exclude_resource_kinds):
+        return True
+    return False
+
+
+def _has_hangul(text: str) -> bool:
+    for ch in text:
+        code = ord(ch)
+        if 0xAC00 <= code <= 0xD7A3:
+            return True
+    return False
+
+
+def _count_tokens_heuristic(text: str) -> int:
+    if not text:
+        return 0
+    divisor = 3.0 if _has_hangul(text) else 4.0
+    return int(math.ceil(len(text) / divisor))
+
+
+def _estimate_tokens(text: str) -> tuple[int, str]:
+    if not text:
+        return 0, "heuristic"
+    if tiktoken is not None:
+        try:
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(text)), "tiktoken"
+        except Exception:
+            pass
+    return _count_tokens_heuristic(text), "heuristic"
+
+
+def _is_pinned_payload(payload: dict[str, Any]) -> bool:
+    if payload.get("pinned") is True or payload.get("is_pinned") is True or payload.get("pin") is True:
+        return True
+
+    raw_rule = str(
+        payload.get("manual_priority_rule")
+        or payload.get("priority_rule")
+        or payload.get("pin_rule")
+        or ""
+    ).strip().lower()
+    if raw_rule in {"pin", "pinned", "always"}:
+        return True
+
+    tags = payload.get("tags")
+    if isinstance(tags, list):
+        for tag in tags:
+            if isinstance(tag, str) and tag.strip().lower() in {"pin", "pinned"}:
+                return True
+    return False
+
+
+def _pick_recent_ids(
+    *,
+    nodes_desc: list[Node],
+    payload_by_id: dict[str, dict[str, Any]],
+    limit: int,
+    predicate,
+    exclude_resource_kinds: set[str],
+) -> list[str]:
+    if limit <= 0:
+        return []
+    out: list[str] = []
+    for node in nodes_desc:
+        if len(out) >= limit:
+            break
+        payload = payload_by_id.get(node.id) or {}
+        if _is_excluded_by_resource_kind(payload, exclude_resource_kinds):
+            continue
+        if not predicate(node, payload):
+            continue
+        out.append(node.id)
+    return out
+
+
+def _node_type_breakdown(nodes: list[Node], include_set: set[str]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for node in nodes:
+        if node.id not in include_set:
+            continue
+        ntype = _node_type(node)
+        out[ntype] = out.get(ntype, 0) + 1
+    return dict(sorted(out.items(), key=lambda item: item[0].lower()))
 
 
 def _validate_node_ids(session: Session, thread_id: str, node_ids: list[str]) -> list[str]:
@@ -202,23 +344,54 @@ def diff_context_set_versions(context_set_id: str, from_version: int, to_version
 
 
 @router.get("/context_sets/{context_set_id}/compiled")
-def get_compiled_context(context_set_id: str, include_explain: bool = Query(default=False)):
+def get_compiled_context(
+    context_set_id: str,
+    include_explain: bool = Query(default=False),
+    max_chars: int | None = Query(default=None, ge=0, le=200000),
+    exclude_types: str | None = Query(default=None),
+    exclude_resource_kinds: str | None = Query(default=None),
+    include_meta: bool = Query(default=False),
+):
     with Session(engine) as s:
         cs = require_context_set_access(s, context_set_id)
         active_ids = jload(cs.active_node_ids_json, [])
+        exclude_type_set = _parse_csv_query(exclude_types)
+        exclude_kind_set = _parse_csv_query(exclude_resource_kinds)
+
+        filtered_active_ids: list[str] = []
+        filtered_nodes: list[Node] = []
+        for node_id in active_ids:
+            node = s.get(Node, node_id)
+            if not node or node.thread_id != cs.thread_id:
+                continue
+            payload = _node_payload(node)
+            if _should_exclude_for_compiled(node, payload, exclude_type_set, exclude_kind_set):
+                continue
+            filtered_active_ids.append(node_id)
+            filtered_nodes.append(node)
+
         # Strategy for freshness: no compiled_text cache.
         # Every call rebuilds from current DB state so node/edge/active edits are reflected immediately.
-        compiled = compile_active_context_explain(s, cs.thread_id, active_ids)
+        compiled = compile_active_context_explain(s, cs.thread_id, filtered_active_ids)
+        compiled_text = str(compiled.get("compiled_text") or "")
+        if max_chars is not None:
+            compiled_text = compiled_text[:max_chars]
         resp = {
             "ok": True,
             "context_set_id": cs.id,
             "thread_id": cs.thread_id,
             "version": cs.version,
-            "active_node_ids": active_ids,
-            "compiled_text": compiled["compiled_text"],
+            "active_node_ids": filtered_active_ids,
+            "compiled_text": compiled_text,
         }
         if include_explain:
             resp["explain"] = compiled["explain"]
+        if include_meta:
+            token_estimate, token_method = _estimate_tokens(compiled_text)
+            resp["token_estimate"] = token_estimate
+            resp["token_estimate_method"] = token_method
+            resp["node_count"] = len(filtered_active_ids)
+            resp["node_type_breakdown"] = _node_type_breakdown(filtered_nodes, set(filtered_active_ids))
         return resp
 
 
@@ -282,6 +455,103 @@ def reorder_nodes(context_set_id: str, body: ActiveOrderUpdate):
         snapshot_context_set(s, cs, reason="reorder", changed_node_ids=requested, meta={"active_count": len(reordered)})
         s.commit()
         return {"ok": True, "active_node_ids": reordered, "version": cs.version}
+
+
+@router.post("/context_sets/{context_set_id}/rebuild_active")
+def rebuild_active_nodes(context_set_id: str, body: RebuildActiveRequest):
+    with Session(engine) as s:
+        cs = require_context_set_write_access(s, context_set_id)
+        policy = body.policy
+        exclude_kind_set = _normalize_string_set(policy.exclude_resource_kinds)
+
+        nodes, _ = load_thread_graph(s, cs.thread_id)
+        nodes_desc = list(reversed(nodes))
+        payload_by_id = {node.id: _node_payload(node) for node in nodes}
+
+        user_message_ids = _pick_recent_ids(
+            nodes_desc=nodes_desc,
+            payload_by_id=payload_by_id,
+            limit=max(0, int(policy.recent_user_messages)),
+            exclude_resource_kinds=exclude_kind_set,
+            predicate=lambda n, payload: _node_type(n) == "Message" and str(payload.get("role") or "").strip().lower() == "user",
+        )
+        assistant_message_ids = _pick_recent_ids(
+            nodes_desc=nodes_desc,
+            payload_by_id=payload_by_id,
+            limit=max(0, int(policy.recent_assistant_messages)),
+            exclude_resource_kinds=exclude_kind_set,
+            predicate=lambda n, payload: _node_type(n) == "Message" and str(payload.get("role") or "").strip().lower() == "assistant",
+        )
+        recent_step_ids = _pick_recent_ids(
+            nodes_desc=nodes_desc,
+            payload_by_id=payload_by_id,
+            limit=max(0, int(policy.recent_steps)),
+            exclude_resource_kinds=exclude_kind_set,
+            predicate=lambda n, _payload: _node_type(n) == "Step",
+        )
+        recent_artifact_ids = _pick_recent_ids(
+            nodes_desc=nodes_desc,
+            payload_by_id=payload_by_id,
+            limit=max(0, int(policy.recent_artifacts)),
+            exclude_resource_kinds=exclude_kind_set,
+            predicate=lambda n, _payload: _node_type(n) in {"Artifact", "Resource"},
+        )
+
+        pinned_ids: list[str] = []
+        if policy.include_pinned:
+            for node in nodes_desc:
+                payload = payload_by_id.get(node.id) or {}
+                if _is_excluded_by_resource_kind(payload, exclude_kind_set):
+                    continue
+                if _is_pinned_payload(payload):
+                    pinned_ids.append(node.id)
+
+        selected_set = set(user_message_ids) | set(assistant_message_ids) | set(recent_step_ids) | set(recent_artifact_ids) | set(pinned_ids)
+        next_active_ids = [node.id for node in nodes if node.id in selected_set]
+
+        before_active_ids = jload(cs.active_node_ids_json, [])
+        before_set = set(before_active_ids)
+        next_set = set(next_active_ids)
+        added_ids = [nid for nid in next_active_ids if nid not in before_set]
+        removed_ids = [nid for nid in before_active_ids if nid not in next_set]
+        changed_ids = added_ids + removed_ids
+
+        cs.active_node_ids_json = jdump(next_active_ids)
+        breakdown = {
+            "selected_counts": {
+                "recent_user_messages": len(user_message_ids),
+                "recent_assistant_messages": len(assistant_message_ids),
+                "recent_steps": len(recent_step_ids),
+                "recent_artifacts": len(recent_artifact_ids),
+                "pinned": len(pinned_ids),
+            },
+            "active_before_count": len(before_active_ids),
+            "active_after_count": len(next_active_ids),
+            "added_count": len(added_ids),
+            "removed_count": len(removed_ids),
+            "excluded_resource_kinds": sorted(exclude_kind_set),
+            "node_type_breakdown": _node_type_breakdown(nodes, next_set),
+        }
+
+        snapshot_context_set(
+            s,
+            cs,
+            reason="rebuild_active",
+            changed_node_ids=changed_ids,
+            meta={"policy": policy.model_dump(), "breakdown": breakdown},
+        )
+        s.commit()
+        return {
+            "ok": True,
+            "context_set_id": cs.id,
+            "version": cs.version,
+            "active_node_ids": next_active_ids,
+            "breakdown": {
+                **breakdown,
+                "added_ids": added_ids,
+                "removed_ids": removed_ids,
+            },
+        }
 
 
 @router.post("/context_sets/{context_set_id}/unfold_plan")
