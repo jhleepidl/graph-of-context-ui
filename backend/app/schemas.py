@@ -144,8 +144,8 @@ class SplitNodeRequest(BaseModel):
 
 
 class NodePatchRequest(BaseModel):
-    text: str
-    payload_json: Optional[str] = None
+    text: Optional[str] = None
+    payload_json: Optional[str | dict[str, Any]] = None
 
 
 class ServiceRequestCreate(BaseModel):

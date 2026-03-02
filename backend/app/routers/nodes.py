@@ -423,25 +423,33 @@ def get_node(node_id: str):
 def patch_node(node_id: str, body: NodePatchRequest):
     with Session(engine) as s:
         node = require_node_write_access(s, node_id)
+        text_changed = False
 
         if body.payload_json is not None:
-            try:
-                json.loads(body.payload_json)
-            except Exception as exc:
-                raise HTTPException(400, "payload_json must be valid JSON") from exc
-            node.payload_json = body.payload_json
+            if isinstance(body.payload_json, dict):
+                node.payload_json = json.dumps(body.payload_json, ensure_ascii=False)
+            else:
+                try:
+                    json.loads(body.payload_json)
+                except Exception as exc:
+                    raise HTTPException(400, "payload_json must be valid JSON") from exc
+                node.payload_json = body.payload_json
 
-        node.text = body.text
-        existing_embedding = s.get(NodeEmbedding, node.id)
-        if existing_embedding:
-            s.delete(existing_embedding)
+        if body.text is not None:
+            text_changed = body.text != node.text
+            node.text = body.text
+
+        if text_changed:
+            existing_embedding = s.get(NodeEmbedding, node.id)
+            if existing_embedding:
+                s.delete(existing_embedding)
         s.add(node)
         s.commit()
         s.refresh(node)
 
         warning = None
         try:
-            if (node.text or "").strip():
+            if text_changed and (node.text or "").strip():
                 ensure_node_embedding(s, node, commit=True)
             rebuild_thread_index(s, node.thread_id)
         except Exception as exc:
