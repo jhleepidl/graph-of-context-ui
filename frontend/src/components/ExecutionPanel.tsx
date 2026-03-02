@@ -12,6 +12,7 @@ import ReactFlow, {
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { copyText } from '../utils/clipboard'
+import { api } from '../api'
 
 type Props = {
   nodes: any[]
@@ -41,10 +42,37 @@ type FilterState = {
   showContextNodes: boolean
 }
 
+type TimelineZoomPreset = 'auto' | '5m' | '15m' | '30m' | '60m'
+
+type CompiledPreviewState = {
+  contextSetId: string
+  title: string
+  text: string
+  loading: boolean
+  error: string
+}
+
 const NODE_TYPE = { executionNode: ExecutionNodeCard }
 const TOOL_TYPES = new Set(['ToolCall', 'ToolResult'])
 const ARTIFACT_TYPES = new Set(['Artifact', 'Resource'])
 const RUN_STEP_TYPES = new Set(['Run', 'Step'])
+const TIMELINE_ZOOM_PRESETS: Array<{ value: TimelineZoomPreset; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: '5m', label: '5m' },
+  { value: '15m', label: '15m' },
+  { value: '30m', label: '30m' },
+  { value: '60m', label: '60m' },
+]
+const TIMELINE_SPAN_MS: Record<Exclude<TimelineZoomPreset, 'auto'>, number> = {
+  '5m': 5 * 60 * 1000,
+  '15m': 15 * 60 * 1000,
+  '30m': 30 * 60 * 1000,
+  '60m': 60 * 60 * 1000,
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
 
 function parsePayload(node: any): Record<string, any> {
   try {
@@ -119,6 +147,41 @@ function stepAgent(payload: Record<string, any>): string {
 function stepGoal(node: any, payload: Record<string, any>): string {
   const goal = String(payload.goal || payload.title || node?.text || '').trim()
   return shortText(goal || '(no goal)', 140)
+}
+
+function pickContextSetId(payload: Record<string, any>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = payload[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function pickLensSpec(payload: Record<string, any>): Record<string, any> | null {
+  const raw = payload.lens_spec
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, any>
+  }
+  const fallback: Record<string, any> = {}
+  if (payload.lens_mode != null) fallback.mode = payload.lens_mode
+  if (payload.lens_query != null) fallback.query = payload.lens_query
+  if (payload.lens_budget_tokens != null) fallback.budget_tokens = payload.lens_budget_tokens
+  if (payload.lens_budget != null && fallback.budget_tokens == null) fallback.budget_tokens = payload.lens_budget
+  if (payload.lens_closure != null) fallback.closure = payload.lens_closure
+  return Object.keys(fallback).length > 0 ? fallback : null
+}
+
+function pickLensAddedCount(payload: Record<string, any>): number {
+  if (typeof payload.lens_added_ids_count === 'number' && Number.isFinite(payload.lens_added_ids_count)) {
+    return Math.max(0, Math.round(payload.lens_added_ids_count))
+  }
+  if (typeof payload.lens_added_count === 'number' && Number.isFinite(payload.lens_added_count)) {
+    return Math.max(0, Math.round(payload.lens_added_count))
+  }
+  if (Array.isArray(payload.lens_added_ids)) {
+    return payload.lens_added_ids.length
+  }
+  return 0
 }
 
 function sizeForNode(nodeType: string): { width: number; height: number } {
@@ -226,9 +289,11 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
     showArtifacts: false,
     showContextNodes: false,
   })
+  const [timelineZoom, setTimelineZoom] = useState<TimelineZoomPreset>('auto')
   const [followActive, setFollowActive] = useState(true)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [copyState, setCopyState] = useState('')
+  const [compiledPreview, setCompiledPreview] = useState<CompiledPreviewState | null>(null)
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const lastFittedLayoutRef = useRef('')
   const lastFollowKeyRef = useRef('')
@@ -354,6 +419,15 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
 
   const selectedNode = selectedNodeId ? nodesById.get(selectedNodeId) || null : null
   const selectedPayload = selectedNode ? payloadById.get(selectedNode.id) || {} : {}
+  const selectedIsStep = selectedNode?.type === 'Step'
+  const sharedContextSetId = selectedIsStep
+    ? pickContextSetId(selectedPayload, ['shared_context_set_id', 'shared_ctx_set_id', 'base_context_set_id', 'context_set_id'])
+    : null
+  const lensContextSetId = selectedIsStep
+    ? pickContextSetId(selectedPayload, ['lens_context_set_id', 'lens_ctx_set_id', 'step_context_set_id', 'agent_context_set_id'])
+    : null
+  const lensSpec = selectedIsStep ? pickLensSpec(selectedPayload) : null
+  const lensAddedIdsCount = selectedIsStep ? pickLensAddedCount(selectedPayload) : 0
 
   const layoutSignature = useMemo(() => {
     const nodeIds = filteredNodes.map((node) => node.id).join(',')
@@ -436,18 +510,22 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
 
   const timelineWindow = useMemo(() => {
     const now = Date.now()
+    const fixedSpanMs = timelineZoom === 'auto' ? null : TIMELINE_SPAN_MS[timelineZoom]
+
     if (timelineSteps.length === 0) {
-      const start = now - 30 * 60 * 1000
-      return { start, end: now, now, spanMs: 30 * 60 * 1000 }
+      const spanMs = fixedSpanMs || (15 * 60 * 1000)
+      const start = now - spanMs
+      return { start, end: now, now, spanMs, observedSpanMs: 0, autoSpanMs: spanMs }
     }
     const minStart = Math.min(...timelineSteps.map((step) => step.startMs))
     const maxEnd = Math.max(...timelineSteps.map((step) => step.endMs || now), now)
     const observedSpan = Math.max(1, maxEnd - minStart)
-    const spanMs = observedSpan <= 30 * 60 * 1000 ? 30 * 60 * 1000 : 60 * 60 * 1000
+    const autoSpanMs = Math.round(clampNumber(observedSpan * 1.4, 5 * 60 * 1000, 60 * 60 * 1000))
+    const spanMs = fixedSpanMs || autoSpanMs
     const end = Math.max(now, maxEnd)
     const start = end - spanMs
-    return { start, end, now, spanMs }
-  }, [timelineSteps])
+    return { start, end, now, spanMs, observedSpanMs: observedSpan, autoSpanMs }
+  }, [timelineSteps, timelineZoom])
 
   const relatedStepNodes = useMemo(() => {
     if (!selectedNode || selectedNode.type !== 'Step') return []
@@ -506,6 +584,42 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
     setCopyState(ok ? 'Node text copied' : 'Copy failed')
   }
 
+  async function openCompiledPreview(contextSetId: string, title: string) {
+    const cleanId = (contextSetId || '').trim()
+    if (!cleanId) return
+    setCompiledPreview({
+      contextSetId: cleanId,
+      title,
+      text: '',
+      loading: true,
+      error: '',
+    })
+    try {
+      const out = await api.ctxCompiled(cleanId, false)
+      setCompiledPreview({
+        contextSetId: cleanId,
+        title,
+        text: String(out?.compiled_text || ''),
+        loading: false,
+        error: '',
+      })
+    } catch (e: any) {
+      setCompiledPreview({
+        contextSetId: cleanId,
+        title,
+        text: '',
+        loading: false,
+        error: e?.message || String(e),
+      })
+    }
+  }
+
+  async function handleCopyCompiledPreview() {
+    if (!compiledPreview) return
+    const ok = await copyText(compiledPreview.text || '')
+    setCopyState(ok ? 'Compiled text copied' : 'Copy failed')
+  }
+
   return (
     <div className="executionLayout">
       <div className="executionGraphCard card">
@@ -549,9 +663,21 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
         <div className="executionTimelineCard card">
           <div className="executionSectionTitleRow">
             <h3>Timeline</h3>
-            <span className="muted">
-              {formatTime(timelineWindow.start)} - {formatTime(timelineWindow.end)}
-            </span>
+            <div className="executionTimelineControls">
+              <label className="muted" htmlFor="execution-timeline-zoom">Zoom</label>
+              <select
+                id="execution-timeline-zoom"
+                value={timelineZoom}
+                onChange={(e) => setTimelineZoom(e.target.value as TimelineZoomPreset)}
+              >
+                {TIMELINE_ZOOM_PRESETS.map((preset) => (
+                  <option key={preset.value} value={preset.value}>{preset.label}</option>
+                ))}
+              </select>
+              <span className="muted">
+                {formatTime(timelineWindow.start)} - {formatTime(timelineWindow.end)}
+              </span>
+            </div>
           </div>
           {timelineRows.length === 0 ? (
             <div className="muted">started_at / ended_at 정보가 있는 Step이 아직 없습니다.</div>
@@ -572,8 +698,11 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
                         const start = Math.max(rawStart, timelineWindow.start)
                         const end = Math.min(rawEnd, timelineWindow.end)
                         const leftPct = ((start - timelineWindow.start) / timelineWindow.spanMs) * 100
-                        const widthPct = Math.max(1.2, ((end - start) / timelineWindow.spanMs) * 100)
+                        const widthPctRaw = ((end - start) / timelineWindow.spanMs) * 100
+                        const widthPct = Math.max(0.9, widthPctRaw)
                         const selected = selectedNodeId === step.node.id
+                        const fullGoal = String(step.payload.goal || step.payload.title || step.node.text || '(no goal)')
+                        const tinyLabel = widthPctRaw < 2
 
                         return (
                           <button
@@ -581,9 +710,13 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
                             className={`executionTimelineBar status-${step.status} ${selected ? 'isSelected' : ''}`}
                             style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                             onClick={() => handleSelectNode(step.node.id)}
-                            title={`${stepGoal(step.node, step.payload)} (${formatTime(step.startMs)} ~ ${formatTime(step.endMs || timelineWindow.now)})`}
+                            title={`${fullGoal} (${formatTime(step.startMs)} ~ ${formatTime(step.endMs || timelineWindow.now)})`}
                           >
-                            <span>{stepGoal(step.node, step.payload)}</span>
+                            {tinyLabel ? (
+                              <span className="executionTimelineBarDot">•</span>
+                            ) : (
+                              <span className="executionTimelineBarLabel">{stepGoal(step.node, step.payload)}</span>
+                            )}
                           </button>
                         )
                       })}
@@ -631,6 +764,30 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
 
               {selectedNode.type === 'Step' && (
                 <div className="executionInspectorBlock">
+                  <div><b>shared_context_set_id</b> {sharedContextSetId || '-'}</div>
+                  <div><b>lens_context_set_id</b> {lensContextSetId || '-'}</div>
+                  <div><b>lens_added_ids_count</b> {lensAddedIdsCount}</div>
+                  <div><b>lens_spec</b></div>
+                  <pre>{lensSpec ? JSON.stringify(lensSpec, null, 2) : '-'}</pre>
+                  <div className="executionInspectorActions" style={{ marginTop: 6, marginBottom: 0 }}>
+                    <button
+                      onClick={() => sharedContextSetId && openCompiledPreview(sharedContextSetId, 'Shared Compiled')}
+                      disabled={!sharedContextSetId}
+                    >
+                      Open shared compiled
+                    </button>
+                    <button
+                      onClick={() => lensContextSetId && openCompiledPreview(lensContextSetId, 'Lens Compiled')}
+                      disabled={!lensContextSetId}
+                    >
+                      Open lens compiled
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {selectedNode.type === 'Step' && (
+                <div className="executionInspectorBlock">
                   <div><b>Related Tool/Artifact Nodes</b></div>
                   {relatedStepNodes.length === 0 ? (
                     <div className="muted">연결된 ToolCall/ToolResult/Artifact/Resource가 없습니다.</div>
@@ -656,7 +813,30 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
           )}
         </div>
       </div>
+
+      {compiledPreview && (
+        <div className="modalOverlay" onClick={() => setCompiledPreview(null)}>
+          <div className="modalCard executionCompiledModal" onClick={(e) => e.stopPropagation()}>
+            <div className="row modalHeader">
+              <h3 style={{ margin: 0 }}>{compiledPreview.title}</h3>
+              <button onClick={() => setCompiledPreview(null)}>Close</button>
+            </div>
+            <div className="muted" style={{ marginBottom: 8 }}>
+              ContextSet: {compiledPreview.contextSetId}
+            </div>
+            <div className="executionInspectorActions">
+              <button onClick={handleCopyCompiledPreview} disabled={!compiledPreview.text}>Copy compiled text</button>
+            </div>
+            {compiledPreview.loading && <div className="muted">Loading compiled context...</div>}
+            {!compiledPreview.loading && compiledPreview.error && (
+              <div className="muted" style={{ color: '#b91c1c' }}>{compiledPreview.error}</div>
+            )}
+            {!compiledPreview.loading && !compiledPreview.error && (
+              <pre className="executionCompiledText">{compiledPreview.text || '(empty)'}</pre>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
-

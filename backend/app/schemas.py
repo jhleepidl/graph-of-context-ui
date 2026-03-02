@@ -53,6 +53,11 @@ class ContextSetCreate(BaseModel):
     name: str = "default"
 
 
+class CloneContextSetRequest(BaseModel):
+    name: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None
+
+
 class ActivateNodes(BaseModel):
     node_ids: List[str]
 

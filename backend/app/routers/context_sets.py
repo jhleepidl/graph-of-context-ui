@@ -8,6 +8,7 @@ from app.goc_core import apply_unfold_seed_selection, plan_unfold_candidates
 from app.models import ContextSet, ContextSetVersion
 from app.schemas import (
     ContextSetCreate,
+    CloneContextSetRequest,
     ActivateNodes,
     ActiveOrderUpdate,
     UnfoldPlanRequest,
@@ -84,6 +85,43 @@ def create_context_set(body: ContextSetCreate):
         s.commit()
         s.refresh(cs)
     return cs.model_dump()
+
+
+@router.post("/context_sets/{base_context_set_id}/clone")
+def clone_context_set(base_context_set_id: str, body: CloneContextSetRequest | None = None):
+    req = body or CloneContextSetRequest()
+    incoming_meta = req.meta if isinstance(req.meta, dict) else {}
+
+    with Session(engine) as s:
+        base = require_context_set_access(s, base_context_set_id)
+        require_thread_write_access(s, base.thread_id)
+
+        base_active_ids = jload(base.active_node_ids_json, [])
+        clone_name = (req.name or "").strip() or f"{base.name}-lens"
+
+        clone = ContextSet(
+            thread_id=base.thread_id,
+            name=clone_name,
+            active_node_ids_json=jdump(base_active_ids),
+        )
+        s.add(clone)
+        s.flush()
+        snapshot_context_set(
+            s,
+            clone,
+            reason="clone",
+            changed_node_ids=[],
+            meta={
+                "base_context_set_id": base.id,
+                "active_count": len(base_active_ids),
+                **incoming_meta,
+            },
+        )
+        s.commit()
+        s.refresh(clone)
+        d = clone.model_dump()
+        d["active_node_ids"] = base_active_ids
+        return d
 
 
 @router.get("/context_sets/{context_set_id}")

@@ -654,6 +654,20 @@ button.tiny.isActive {
   margin: 0;
 }
 
+.executionTimelineControls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.executionTimelineControls select {
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid #d0dae7;
+  font-size: 12px;
+  background: #fff;
+}
+
 .executionTimelineRows {
   display: flex;
   flex-direction: column;
@@ -712,6 +726,7 @@ button.tiny.isActive {
   position: absolute;
   top: 7px;
   height: 28px;
+  box-sizing: border-box;
   border-radius: 8px;
   border: 1px solid transparent;
   display: flex;
@@ -724,6 +739,22 @@ button.tiny.isActive {
   text-overflow: ellipsis;
   font-size: 11px;
   font-weight: 600;
+}
+
+.executionTimelineBarLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.executionTimelineBarDot {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .executionTimelineBar.status-queued {
@@ -753,7 +784,9 @@ button.tiny.isActive {
 }
 
 .executionTimelineBar.isSelected {
-  box-shadow: inset 0 0 0 1px #0f172a, 0 0 0 2px rgba(15, 23, 42, 0.12);
+  outline: 2px solid #0f172a;
+  outline-offset: -2px;
+  box-shadow: none;
 }
 
 @keyframes executionRunningPulse {
@@ -802,6 +835,22 @@ button.tiny.isActive {
   border: 1px solid #dbe4ee;
   border-radius: 10px;
   background: #f8fafc;
+}
+
+.executionCompiledModal {
+  width: min(960px, 100%);
+}
+
+.executionCompiledText {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 10px;
+  font-size: 12px;
 }
 
 @media (max-width: 1360px) {

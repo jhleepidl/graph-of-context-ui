@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, getStoredBearerToken, setStoredBearerToken } from '../api'
+import { api, getStoredAdminKey, getStoredBearerToken, setStoredBearerToken } from '../api'
 import Timeline from '../components/Timeline'
 import GraphPanel from '../components/GraphPanel'
 import ActiveContext from '../components/ActiveContext'
@@ -451,6 +451,16 @@ export default function WorkspaceApp() {
       setAuthGateState('checking')
       setAuthGateMessage('')
       captureTokenFromHash()
+
+      const adminKey = getStoredAdminKey()
+      if (adminKey) {
+        if (cancelled) return
+        setAuthGateState('ready')
+        const tid = await loadThreads(initialDeepLink.threadId)
+        if (cancelled) return
+        await switchThread(tid, initialDeepLink.ctxId)
+        return
+      }
 
       let token = getStoredBearerToken()
       if (!token) {
