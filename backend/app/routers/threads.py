@@ -1,8 +1,13 @@
 from __future__ import annotations
+import io
 import json
 import logging
+import zipfile
+from datetime import datetime, timezone
 from typing import Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import Response
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
@@ -19,7 +24,7 @@ from app.schemas import (
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
-from app.services.graph import add_edge, get_last_node
+from app.services.graph import add_edge, compile_active_context_explain, get_last_node, load_thread_graph
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -219,6 +224,210 @@ ALLOWED_NODE_TYPES = {
 }
 
 
+_CONTEXT_SET_HINT_KEYS = (
+    "shared_context_set_id",
+    "shared_ctx_set_id",
+    "base_context_set_id",
+    "context_set_id",
+    "lens_context_set_id",
+    "lens_ctx_set_id",
+    "step_context_set_id",
+    "agent_context_set_id",
+)
+
+_RUN_LINK_EDGE_TYPES = {"BELONGS_TO_RUN", "IN_RUN"}
+
+
+def _node_payload(node: Node | None) -> dict[str, Any]:
+    if not node:
+        return {}
+    raw = jload(node.payload_json or "{}", {})
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def _thread_graph_payload(session: Session, thread_id: str) -> tuple[dict[str, Any], list[Node], list[Edge]]:
+    nodes, edges = load_thread_graph(session, thread_id)
+    return {
+        "nodes": [n.model_dump() for n in nodes],
+        "edges": [e.model_dump() for e in edges],
+    }, nodes, edges
+
+
+def _append_id_value(target: set[str], value: Any) -> None:
+    if isinstance(value, str):
+        clean = value.strip()
+        if clean:
+            target.add(clean)
+        return
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            _append_id_value(target, item)
+        return
+    if isinstance(value, dict):
+        raw_id = value.get("id")
+        if isinstance(raw_id, str):
+            clean = raw_id.strip()
+            if clean:
+                target.add(clean)
+
+
+def _collect_context_set_ids(payload: dict[str, Any]) -> set[str]:
+    ids: set[str] = set()
+    for key in _CONTEXT_SET_HINT_KEYS:
+        _append_id_value(ids, payload.get(key))
+    for key, value in payload.items():
+        lowered = str(key or "").strip().lower()
+        if not lowered:
+            continue
+        if "context_set_id" in lowered or "ctx_set_id" in lowered:
+            _append_id_value(ids, value)
+    return ids
+
+
+def _pick_context_set_id(payload: dict[str, Any], keys: list[str]) -> str | None:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _pick_lens_spec(payload: dict[str, Any]) -> dict[str, Any] | None:
+    raw = payload.get("lens_spec")
+    if isinstance(raw, dict):
+        return raw
+
+    fallback: dict[str, Any] = {}
+    if payload.get("lens_mode") is not None:
+        fallback["mode"] = payload.get("lens_mode")
+    if payload.get("lens_query") is not None:
+        fallback["query"] = payload.get("lens_query")
+    if payload.get("lens_budget_tokens") is not None:
+        fallback["budget_tokens"] = payload.get("lens_budget_tokens")
+    if payload.get("lens_budget") is not None and fallback.get("budget_tokens") is None:
+        fallback["budget_tokens"] = payload.get("lens_budget")
+    if payload.get("lens_closure") is not None:
+        fallback["closure"] = payload.get("lens_closure")
+    return fallback or None
+
+
+def _pick_lens_added_count(payload: dict[str, Any]) -> int:
+    for key in ("lens_added_ids_count", "lens_added_count"):
+        value = payload.get(key)
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+    raw_ids = payload.get("lens_added_ids")
+    if isinstance(raw_ids, list):
+        return len(raw_ids)
+    return 0
+
+
+def _safe_file_component(value: str) -> str:
+    clean = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in (value or "").strip())
+    return clean or "unknown"
+
+
+def _json_text(obj: Any) -> str:
+    return json.dumps(jsonable_encoder(obj), ensure_ascii=False, indent=2)
+
+
+def _build_run_summaries(
+    nodes: list[Node],
+    edges: list[Edge],
+    scoped_steps: list[Node],
+    run_id_filter: str | None,
+) -> dict[str, dict[str, Any]]:
+    nodes_by_id = {n.id: n for n in nodes}
+    run_nodes = {n.id: n for n in nodes if n.type == "Run"}
+    scoped_step_ids = {s.id for s in scoped_steps}
+
+    run_to_step_ids: dict[str, set[str]] = {}
+
+    def add_step(run_id: str, step_id: str) -> None:
+        if not run_id or step_id not in scoped_step_ids:
+            return
+        run_to_step_ids.setdefault(run_id, set()).add(step_id)
+
+    for edge in edges:
+        if edge.type not in _RUN_LINK_EDGE_TYPES:
+            continue
+        src = nodes_by_id.get(edge.from_id)
+        dst = nodes_by_id.get(edge.to_id)
+        if not src or not dst:
+            continue
+        if src.type == "Run" and dst.type == "Step":
+            add_step(src.id, dst.id)
+        elif src.type == "Step" and dst.type == "Run":
+            add_step(dst.id, src.id)
+
+    for step in scoped_steps:
+        payload = _node_payload(step)
+        payload_run_id = str(payload.get("run_id") or "").strip()
+        if payload_run_id:
+            add_step(payload_run_id, step.id)
+
+    run_ids = set(run_to_step_ids.keys()) | set(run_nodes.keys())
+    if run_id_filter:
+        run_ids = {run_id_filter}
+
+    out: dict[str, dict[str, Any]] = {}
+    for run_id in sorted(run_ids):
+        run_node = run_nodes.get(run_id)
+        run_payload = _node_payload(run_node)
+
+        step_nodes = [nodes_by_id[sid] for sid in run_to_step_ids.get(run_id, set()) if sid in nodes_by_id]
+        step_nodes = [n for n in step_nodes if n.type == "Step"]
+        step_nodes.sort(key=lambda n: (n.created_at, n.id))
+
+        step_items: list[dict[str, Any]] = []
+        run_context_set_ids: set[str] = set()
+        lens_added_total = 0
+        for step in step_nodes:
+            payload = _node_payload(step)
+            context_set_ids = sorted(_collect_context_set_ids(payload))
+            run_context_set_ids.update(context_set_ids)
+            lens_added = _pick_lens_added_count(payload)
+            lens_added_total += lens_added
+            step_items.append({
+                "id": step.id,
+                "created_at": step.created_at,
+                "text": step.text,
+                "status": payload.get("status"),
+                "agent_id": payload.get("agent_id") or payload.get("agent") or payload.get("assignee"),
+                "goal": payload.get("goal") or payload.get("title") or step.text,
+                "run_id": payload.get("run_id") or run_id,
+                "started_at": payload.get("started_at"),
+                "ended_at": payload.get("ended_at"),
+                "shared_context_set_id": _pick_context_set_id(
+                    payload,
+                    ["shared_context_set_id", "shared_ctx_set_id", "base_context_set_id", "context_set_id"],
+                ),
+                "lens_context_set_id": _pick_context_set_id(
+                    payload,
+                    ["lens_context_set_id", "lens_ctx_set_id", "step_context_set_id", "agent_context_set_id"],
+                ),
+                "context_set_ids": context_set_ids,
+                "lens_spec": _pick_lens_spec(payload),
+                "lens_added_ids_count": lens_added,
+                "payload": payload,
+            })
+
+        out[run_id] = {
+            "run_id": run_id,
+            "run_node": run_node.model_dump() if run_node else None,
+            "run_payload": run_payload,
+            "step_count": len(step_items),
+            "step_ids": [s["id"] for s in step_items],
+            "context_set_ids": sorted(run_context_set_ids),
+            "lens_added_ids_total": lens_added_total,
+            "steps": step_items,
+        }
+
+    return out
+
+
 @router.get("", response_model=list[ThreadRead])
 def list_threads():
     principal = get_current_principal()
@@ -343,21 +552,124 @@ def delete_thread(thread_id: str):
 def get_graph(thread_id: str):
     with Session(engine) as s:
         t = require_thread_access(s, thread_id)
-        nodes = s.exec(
-            select(Node)
-            .where(Node.thread_id == thread_id)
-            .order_by(Node.created_at.asc(), Node.id.asc())
-        ).all()
-        edges = s.exec(
-            select(Edge)
-            .where(Edge.thread_id == thread_id)
-            .order_by(Edge.created_at.asc(), Edge.id.asc())
-        ).all()
+        graph, _, _ = _thread_graph_payload(s, thread_id)
         return {
             "thread": _thread_to_response(t),
-            "nodes": [n.model_dump() for n in nodes],
-            "edges": [e.model_dump() for e in edges],
+            **graph,
         }
+
+
+@router.get("/{thread_id}/trace_export")
+def export_thread_trace(
+    thread_id: str,
+    run_id: str | None = Query(default=None),
+    include_compiled: bool = Query(default=True),
+    max_compiled_chars: int = Query(default=10000, ge=0, le=200000),
+    format: str = Query(default="zip"),
+):
+    export_format = (format or "zip").strip().lower()
+    if export_format != "zip":
+        raise HTTPException(400, "unsupported format; only zip is currently supported")
+
+    scoped_run_id = (run_id or "").strip() or None
+
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        graph, nodes, edges = _thread_graph_payload(s, thread_id)
+
+        all_steps = [n for n in nodes if n.type == "Step"]
+        step_payload_by_id = {n.id: _node_payload(n) for n in all_steps}
+        scoped_steps = all_steps
+        if scoped_run_id:
+            scoped_steps = [n for n in all_steps if str(step_payload_by_id.get(n.id, {}).get("run_id") or "").strip() == scoped_run_id]
+
+        context_set_ids: set[str] = set()
+        for step in scoped_steps:
+            context_set_ids.update(_collect_context_set_ids(step_payload_by_id.get(step.id, {})))
+
+        context_sets_payload: dict[str, dict[str, Any]] = {}
+        compiled_payload: dict[str, str] = {}
+        missing_context_set_ids: list[str] = []
+
+        for context_set_id in sorted(context_set_ids):
+            cs = s.get(ContextSet, context_set_id)
+            if not cs or cs.thread_id != thread_id:
+                missing_context_set_ids.append(context_set_id)
+                continue
+
+            active_node_ids = jload(cs.active_node_ids_json, [])
+            context_item = cs.model_dump()
+            context_item["active_node_ids"] = active_node_ids
+            context_sets_payload[context_set_id] = context_item
+
+            if include_compiled:
+                compiled = compile_active_context_explain(s, cs.thread_id, active_node_ids)
+                compiled_text = str(compiled.get("compiled_text") or "")
+                compiled_payload[context_set_id] = compiled_text[:max_compiled_chars]
+
+        run_summaries = _build_run_summaries(nodes, edges, scoped_steps, scoped_run_id)
+
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y%m%dT%H%M%SZ")
+        filename = f"trace_export_{_safe_file_component(thread_id)}_{ts}.zip"
+
+        manifest = {
+            "kind": "goc_trace_export",
+            "version": 1,
+            "generated_at": now.isoformat(),
+            "thread_id": thread_id,
+            "scope": {
+                "run_id": scoped_run_id,
+                "scoped_step_count": len(scoped_steps),
+                "total_step_count": len(all_steps),
+            },
+            "options": {
+                "format": export_format,
+                "include_compiled": include_compiled,
+                "max_compiled_chars": max_compiled_chars,
+            },
+            "counts": {
+                "nodes": len(nodes),
+                "edges": len(edges),
+                "runs": len(run_summaries),
+                "context_sets": len(context_sets_payload),
+                "compiled_files": len(compiled_payload),
+            },
+            "run_ids": sorted(run_summaries.keys()),
+            "context_set_ids": sorted(context_sets_payload.keys()),
+            "missing_context_set_ids": missing_context_set_ids,
+        }
+
+        notes_text = (
+            "Graph-of-Context trace export\n"
+            "- manifest.json: export metadata and options.\n"
+            "- thread.json: thread metadata snapshot.\n"
+            "- graph.json: full node/edge graph snapshot.\n"
+            "- runs/*.json: run summary plus connected Step details.\n"
+            "- context_sets/*.json: active_node_ids/version snapshot per context set.\n"
+            "- compiled/*.txt: compiled context text (truncated to max_compiled_chars).\n"
+            "Caution: export is a point-in-time snapshot and may contain sensitive prompts/results.\n"
+        )
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", _json_text(manifest))
+            archive.writestr("thread.json", _json_text(_thread_to_response(thread).model_dump()))
+            archive.writestr("graph.json", _json_text(graph))
+            for exported_run_id, summary in run_summaries.items():
+                archive.writestr(f"runs/{_safe_file_component(exported_run_id)}.json", _json_text(summary))
+            for context_set_id, payload in context_sets_payload.items():
+                archive.writestr(f"context_sets/{_safe_file_component(context_set_id)}.json", _json_text(payload))
+            if include_compiled:
+                for context_set_id, compiled_text in compiled_payload.items():
+                    archive.writestr(f"compiled/{_safe_file_component(context_set_id)}.txt", compiled_text)
+            archive.writestr("notes.txt", notes_text)
+
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
 
 @router.post("/{thread_id}/layout")

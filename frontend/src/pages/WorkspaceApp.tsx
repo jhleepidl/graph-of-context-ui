@@ -1090,6 +1090,7 @@ export default function WorkspaceApp() {
 
         {workspaceMainTab === 'execution' ? (
           <ExecutionPanel
+            threadId={threadId}
             nodes={nodes}
             edges={edges}
             onOpenOldGraph={(nodeId) => {

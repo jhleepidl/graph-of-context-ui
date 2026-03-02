@@ -538,6 +538,28 @@ button.tiny.isActive {
   gap: 4px;
 }
 
+.executionToolbarError {
+  margin-bottom: 8px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.executionSpinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.2);
+  border-top-color: #111827;
+  margin-right: 6px;
+  vertical-align: -2px;
+  animation: executionSpin 0.8s linear infinite;
+}
+
 .executionRunningStrip {
   border: 1px solid #fde68a;
   background: #fffbeb;
@@ -792,6 +814,11 @@ button.tiny.isActive {
 @keyframes executionRunningPulse {
   0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.45); }
   100% { box-shadow: 0 0 0 7px rgba(74, 222, 128, 0); }
+}
+
+@keyframes executionSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .executionInspectorActions {

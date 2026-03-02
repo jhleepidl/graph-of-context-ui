@@ -138,6 +138,43 @@ async function j<T>(resOrPromise: Response | Promise<Response>): Promise<T> {
   return res.json() as Promise<T>
 }
 
+async function readApiErrorResponse(res: Response): Promise<string> {
+  const raw = await res.text().catch(() => '')
+  if (!raw) return `${res.status} ${res.statusText}`
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object') {
+      const detail = (parsed as Record<string, unknown>).detail
+      if (typeof detail === 'string' && detail.trim()) return detail.trim()
+    }
+  } catch {
+    // not JSON; keep raw string
+  }
+  return raw
+}
+
+function parseDownloadFilename(contentDisposition: string | null, fallback: string): string {
+  const raw = (contentDisposition || '').trim()
+  if (!raw) return fallback
+
+  const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim())
+    } catch {
+      return utf8Match[1].trim()
+    }
+  }
+
+  const quotedMatch = raw.match(/filename=\"([^\"]+)\"/i)
+  if (quotedMatch?.[1]) return quotedMatch[1].trim()
+
+  const plainMatch = raw.match(/filename=([^;]+)/i)
+  if (plainMatch?.[1]) return plainMatch[1].trim()
+
+  return fallback
+}
+
 export const api = {
   telegramWebAppLogin: (body: { init_data: string; max_age_sec?: number; ttl_sec?: number }) =>
     j<any>(apiFetch('/api/auth/telegram/webapp', {
@@ -231,6 +268,34 @@ export const api = {
     j<any>(apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })),
 
   graph: (threadId: string) => j<any>(apiFetch(`/api/threads/${threadId}/graph`)),
+  traceExport: async (
+    threadId: string,
+    params?: {
+      run_id?: string | null
+      include_compiled?: boolean
+      max_compiled_chars?: number
+      format?: 'zip'
+    },
+  ) => {
+    const q = new URLSearchParams()
+    q.set('include_compiled', params?.include_compiled === false ? 'false' : 'true')
+    q.set('max_compiled_chars', String(params?.max_compiled_chars ?? 10000))
+    q.set('format', params?.format || 'zip')
+    const runId = (params?.run_id || '').trim()
+    if (runId) q.set('run_id', runId)
+
+    const res = await apiFetch(`/api/threads/${threadId}/trace_export?${q.toString()}`)
+    if (!res.ok) {
+      throw new Error(await readApiErrorResponse(res))
+    }
+
+    const filename = parseDownloadFilename(
+      res.headers.get('Content-Disposition'),
+      `trace_export_${threadId}.zip`,
+    )
+    const blob = await res.blob()
+    return { blob, filename }
+  },
   createNode: (
     threadId: string,
     body: {

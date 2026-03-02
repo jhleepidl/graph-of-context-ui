@@ -15,6 +15,7 @@ import { copyText } from '../utils/clipboard'
 import { api } from '../api'
 
 type Props = {
+  threadId: string | null
   nodes: any[]
   edges: any[]
   onOpenOldGraph?: (nodeId: string | null) => void
@@ -282,7 +283,7 @@ function ExecutionNodeCard({ data, selected }: NodeProps<ExecutionNodeData>) {
   )
 }
 
-export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) {
+export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph }: Props) {
   const [filter, setFilter] = useState<FilterState>({
     showMessages: false,
     showTools: false,
@@ -294,6 +295,8 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [copyState, setCopyState] = useState('')
   const [compiledPreview, setCompiledPreview] = useState<CompiledPreviewState | null>(null)
+  const [traceExportBusy, setTraceExportBusy] = useState(false)
+  const [traceExportError, setTraceExportError] = useState('')
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null)
   const lastFittedLayoutRef = useRef('')
   const lastFollowKeyRef = useRef('')
@@ -428,6 +431,26 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
     : null
   const lensSpec = selectedIsStep ? pickLensSpec(selectedPayload) : null
   const lensAddedIdsCount = selectedIsStep ? pickLensAddedCount(selectedPayload) : 0
+  const selectedRunId = useMemo(() => {
+    if (!selectedNode) return ''
+    if (selectedNode.type === 'Run') {
+      return String(selectedNode.id || '').trim()
+    }
+    if (selectedNode.type !== 'Step') return ''
+    const fromPayload = String(selectedPayload.run_id || '').trim()
+    if (fromPayload) return fromPayload
+    for (const edge of edges) {
+      if (edge.from_id === selectedNode.id) {
+        const target = nodesById.get(edge.to_id)
+        if (target?.type === 'Run') return String(target.id || '').trim()
+      }
+      if (edge.to_id === selectedNode.id) {
+        const source = nodesById.get(edge.from_id)
+        if (source?.type === 'Run') return String(source.id || '').trim()
+      }
+    }
+    return ''
+  }, [selectedNode, selectedPayload, edges, nodesById])
 
   const layoutSignature = useMemo(() => {
     const nodeIds = filteredNodes.map((node) => node.id).join(',')
@@ -620,6 +643,35 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
     setCopyState(ok ? 'Compiled text copied' : 'Copy failed')
   }
 
+  async function handleTraceExport() {
+    if (!threadId || traceExportBusy) return
+    setTraceExportError('')
+    setTraceExportBusy(true)
+    try {
+      const out = await api.traceExport(threadId, {
+        include_compiled: true,
+        max_compiled_chars: 10000,
+        run_id: selectedRunId || null,
+        format: 'zip',
+      })
+      const objectUrl = URL.createObjectURL(out.blob)
+      try {
+        const anchor = document.createElement('a')
+        anchor.href = objectUrl
+        anchor.download = out.filename || `trace_export_${threadId}.zip`
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+      } finally {
+        URL.revokeObjectURL(objectUrl)
+      }
+    } catch (e: any) {
+      setTraceExportError(e?.message || String(e))
+    } finally {
+      setTraceExportBusy(false)
+    }
+  }
+
   return (
     <div className="executionLayout">
       <div className="executionGraphCard card">
@@ -633,9 +685,15 @@ export default function ExecutionPanel({ nodes, edges, onOpenOldGraph }: Props) 
           </div>
           <div className="executionToolbarRight">
             <label><input type="checkbox" checked={followActive} onChange={(e) => setFollowActive(e.target.checked)} /> Follow Active</label>
+            {selectedRunId && <span className="muted">run: {selectedRunId.slice(0, 8)}</span>}
+            <button onClick={() => void handleTraceExport()} disabled={!threadId || traceExportBusy}>
+              {traceExportBusy && <span className="executionSpinner" />}
+              {traceExportBusy ? 'Exporting...' : 'Export trace'}
+            </button>
             <button onClick={() => rfInstance?.fitView({ padding: 0.18, duration: 220 })}>Fit</button>
           </div>
         </div>
+        {traceExportError && <div className="executionToolbarError">{traceExportError}</div>}
         {runningStepNodes.length > 0 && (
           <div className="executionRunningStrip">
             running {runningStepNodes.length} step(s): {runningStepNodes.map((node) => stepAgent(payloadById.get(node.id) || {})).join(', ')}
