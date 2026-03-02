@@ -101,7 +101,7 @@ type Bounds = {
   centerY: number
 }
 
-const LEGACY_EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'RELATED', 'SUPPORTS', 'IN_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'INVOKES', 'RETURNS', 'USES']
+const LEGACY_EDGE_TYPE_OPTIONS = ['NEXT', 'REPLY_TO', 'ATTACHED_TO', 'REFERENCES', 'RELATED', 'SUPPORTS', 'IN_RUN', 'BELONGS_TO_RUN', 'USED_IN_RUN', 'FOLDS', 'HAS_PART', 'NEXT_PART', 'SPLIT_FROM', 'JOINS', 'INVOKES', 'RETURNS', 'USES']
 const LINK_EDGE_TYPE_OPTIONS = ['RELATED', 'REPLY_TO', 'SUPPORTS', 'REFERENCES', 'ATTACHED_TO']
 const HIERARCHY_SEMANTIC_EDGE_TYPES = new Set(['DEPENDS', 'REFERENCES', 'SUPPORTS', 'RELATED', 'NEXT_PART', 'HAS_PART', 'SPLIT_FROM', 'ATTACHED_TO', 'FOLDS'])
 const HIERARCHY_MESSAGE_WIDTH = 272
@@ -451,12 +451,14 @@ function edgePriority(t: string): number {
   if (t === 'REFERENCES') return 4
   if (t === 'ATTACHED_TO') return 5
   if (t === 'IN_RUN') return 6
-  if (t === 'USED_IN_RUN') return 7
-  if (t === 'FOLDS') return 8
-  if (t === 'HAS_PART') return 9
-  if (t === 'NEXT_PART') return 10
-  if (t === 'SPLIT_FROM') return 11
-  return 12
+  if (t === 'BELONGS_TO_RUN') return 7
+  if (t === 'USED_IN_RUN') return 8
+  if (t === 'FOLDS') return 9
+  if (t === 'HAS_PART') return 10
+  if (t === 'NEXT_PART') return 11
+  if (t === 'SPLIT_FROM') return 12
+  if (t === 'JOINS') return 13
+  return 14
 }
 
 function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
@@ -467,11 +469,13 @@ function edgeStyle(edgeType: string): { stroke: string; strokeWidth: number; str
   if (edgeType === 'REFERENCES') return { stroke: '#f97316', strokeWidth: 1.5, strokeDasharray: '5 4' }
   if (edgeType === 'ATTACHED_TO') return { stroke: '#0891b2', strokeWidth: 1.6, strokeDasharray: '6 4' }
   if (edgeType === 'IN_RUN') return { stroke: '#0284c7', strokeWidth: 1.5, strokeDasharray: '3 4' }
+  if (edgeType === 'BELONGS_TO_RUN') return { stroke: '#0369a1', strokeWidth: 1.7, strokeDasharray: '5 3' }
   if (edgeType === 'USED_IN_RUN') return { stroke: '#f59e0b', strokeWidth: 1.5, strokeDasharray: '3 4' }
   if (edgeType === 'FOLDS') return { stroke: '#10b981', strokeWidth: 1.5 }
   if (edgeType === 'HAS_PART') return { stroke: '#7c3aed', strokeWidth: 1.6 }
   if (edgeType === 'NEXT_PART') return { stroke: '#a855f7', strokeWidth: 1.4, strokeDasharray: '4 3' }
   if (edgeType === 'SPLIT_FROM') return { stroke: '#ec4899', strokeWidth: 1.3, strokeDasharray: '3 4' }
+  if (edgeType === 'JOINS') return { stroke: '#be185d', strokeWidth: 1.5, strokeDasharray: '2 3' }
   return { stroke: '#9ca3af', strokeWidth: 1.4 }
 }
 

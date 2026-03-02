@@ -9,12 +9,14 @@ import CopyToChatGPTPanel from '../components/CopyToChatGPTPanel'
 import NodeDetailModal from '../components/NodeDetailModal'
 import ContextInspector from '../components/ContextInspector'
 import JobSettingsPanel from '../components/JobSettingsPanel'
+import ExecutionPanel from '../components/ExecutionPanel'
 import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPriority'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
 const RIGHT_PANEL_TAB_STORAGE_KEY = 'goc:right-panel-tab:v1'
 const MOBILE_SECTION_STORAGE_KEY = 'goc:mobile-section:v1'
 const WORKSPACE_STORAGE_KEY = 'goc:selected-workspace:v1'
+const WORKSPACE_MAIN_TAB_STORAGE_KEY = 'goc:workspace-main-tab:v1'
 const LEFT_PANEL_MIN_WIDTH = 260
 const RIGHT_PANEL_MIN_WIDTH = 300
 const CENTER_PANEL_MIN_WIDTH = 520
@@ -32,6 +34,7 @@ type ResizeSession = {
 type MobileSection = 'left' | 'center' | 'right'
 type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings'
 type AuthGateState = 'checking' | 'ready' | 'blocked' | 'error'
+type WorkspaceMainTab = 'execution' | 'graph'
 
 type WorkspaceGroup = {
   key: string
@@ -78,6 +81,17 @@ function readStoredWorkspaceKey(): string {
   } catch {
     return ''
   }
+}
+
+function readStoredWorkspaceMainTab(): WorkspaceMainTab {
+  if (typeof window === 'undefined') return 'execution'
+  try {
+    const raw = window.localStorage.getItem(WORKSPACE_MAIN_TAB_STORAGE_KEY)
+    if (raw === 'execution' || raw === 'graph') return raw
+  } catch {
+    // ignore storage failures
+  }
+  return 'execution'
 }
 
 function parseThreadMetaJson(thread: any): Record<string, any> {
@@ -144,6 +158,36 @@ function toErrorMessage(error: unknown): string {
   return String(error || 'Unknown error')
 }
 
+function graphNodesEqual(a: any[], b: any[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i]
+    const right = b[i]
+    if (!left || !right) return false
+    if (left.id !== right.id) return false
+    if (left.type !== right.type) return false
+    if ((left.text || '') !== (right.text || '')) return false
+    if ((left.payload_json || '') !== (right.payload_json || '')) return false
+    if ((left.created_at || '') !== (right.created_at || '')) return false
+  }
+  return true
+}
+
+function graphEdgesEqual(a: any[], b: any[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i]
+    const right = b[i]
+    if (!left || !right) return false
+    if (left.id !== right.id) return false
+    if (left.from_id !== right.from_id || left.to_id !== right.to_id) return false
+    if (left.type !== right.type) return false
+    if ((left.payload_json || '') !== (right.payload_json || '')) return false
+    if ((left.created_at || '') !== (right.created_at || '')) return false
+  }
+  return true
+}
+
 function captureTokenFromHash(): void {
   if (typeof window === 'undefined') return
   const rawHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
@@ -174,6 +218,7 @@ export default function WorkspaceApp() {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [authGateState, setAuthGateState] = useState<AuthGateState>('checking')
   const [authGateMessage, setAuthGateMessage] = useState<string>('')
+  const [workspaceMainTab, setWorkspaceMainTab] = useState<WorkspaceMainTab>(() => readStoredWorkspaceMainTab())
   const [threads, setThreads] = useState<any[]>([])
   const [workspaceKey, setWorkspaceKey] = useState<string>(() => readStoredWorkspaceKey())
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -469,6 +514,14 @@ export default function WorkspaceApp() {
   }, [mobileSection])
 
   useEffect(() => {
+    try {
+      window.localStorage.setItem(WORKSPACE_MAIN_TAB_STORAGE_KEY, workspaceMainTab)
+    } catch {
+      // ignore localStorage errors
+    }
+  }, [workspaceMainTab])
+
+  useEffect(() => {
     if (workspaceGroups.length === 0) return
     const exists = workspaceKey && workspaceGroups.some((group) => group.key === workspaceKey)
     if (exists) return
@@ -539,6 +592,41 @@ export default function WorkspaceApp() {
     }
   }, [resizeSession])
 
+  useEffect(() => {
+    if (workspaceMainTab !== 'execution') return
+    if (!threadId) return
+
+    let cancelled = false
+    let inFlight = false
+
+    const poll = async () => {
+      if (cancelled || inFlight) return
+      inFlight = true
+      try {
+        const g = await api.graph(threadId)
+        if (cancelled) return
+        const nextNodes = Array.isArray(g?.nodes) ? g.nodes : []
+        const nextEdges = Array.isArray(g?.edges) ? g.edges : []
+        setNodes((prev) => (graphNodesEqual(prev, nextNodes) ? prev : nextNodes))
+        setEdges((prev) => (graphEdgesEqual(prev, nextEdges) ? prev : nextEdges))
+      } catch (e) {
+        console.error('execution graph poll failed', e)
+      } finally {
+        inFlight = false
+      }
+    }
+
+    void poll()
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 1500)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [workspaceMainTab, threadId])
+
   const startPanelResize = useCallback((handle: ResizeHandle, evt: React.MouseEvent<HTMLDivElement>) => {
     const wrap = wrapRef.current
     if (!wrap) return
@@ -561,7 +649,7 @@ export default function WorkspaceApp() {
   }, [panelWidths])
   const showLeftPanel = !isMobileLayout || mobileSection === 'left'
   const showCenterPanel = !isMobileLayout || mobileSection === 'center'
-  const showRightPanel = !isMobileLayout || mobileSection === 'right'
+  const showRightPanel = workspaceMainTab === 'graph' && (!isMobileLayout || mobileSection === 'right')
 
   async function toggleActive(nodeId: string, nextActive: boolean) {
     if (!ctxId) return
@@ -861,18 +949,22 @@ export default function WorkspaceApp() {
         <div className="mobileSectionTabs card">
           <div className="row" style={{ marginBottom: 0 }}>
             <button className={mobileSection === 'center' ? 'primary' : ''} onClick={() => setMobileSection('center')}>
-              Graph
+              {workspaceMainTab === 'execution' ? 'Execution' : 'Graph'}
             </button>
             <button className={mobileSection === 'left' ? 'primary' : ''} onClick={() => setMobileSection('left')}>
               Threads
             </button>
-            <button className={mobileSection === 'right' ? 'primary' : ''} onClick={() => setMobileSection('right')}>
+            <button
+              className={mobileSection === 'right' ? 'primary' : ''}
+              onClick={() => setMobileSection('right')}
+              disabled={workspaceMainTab === 'execution'}
+            >
               Context
             </button>
           </div>
         </div>
       )}
-      <div className="wrap" ref={wrapRef} style={wrapStyle}>
+      <div className={`wrap ${workspaceMainTab === 'execution' ? 'wrapExecutionMode' : ''}`} ref={wrapRef} style={wrapStyle}>
       <div className={`col col-left ${showLeftPanel ? '' : 'isMobileHidden'}`}>
         <div className="row">
           <select
@@ -974,61 +1066,86 @@ export default function WorkspaceApp() {
       )}
 
       <div className={`col col-center ${showCenterPanel ? '' : 'isMobileHidden'}`}>
-        <div className="card selectionActionBar">
-          <div className="row" style={{ marginBottom: 6 }}>
-            <b>Fallback Actions</b>
-            <span className="pill">selected: {selectedIds.length}</span>
-            {selectedFoldIds.length > 0 && <span className="pill pill--fold">folds: {selectedFoldIds.length}</span>}
-          </div>
+        <div className="card">
           <div className="row" style={{ marginBottom: 0 }}>
-            <button onClick={foldSelected} disabled={selectedIds.length < 2} title={selectedIds.length < 2 ? '그래프에서 2개 이상 선택하세요.' : '선택 노드를 Fold로 묶기'}>Fold selected</button>
-            <button onClick={() => selectedIds.length === 1 && setDetailNodeId(selectedIds[0])} disabled={selectedIds.length !== 1} title={selectedIds.length === 1 ? '선택 노드 상세/분할' : '노드를 1개 선택하세요.'}>Open detail / split</button>
-            <button onClick={unfoldSelectedFolds} disabled={selectedFoldIds.length === 0 || !ctxId} title={selectedFoldIds.length ? '선택 Fold 노드를 펼쳐 Active에 반영' : 'Fold 노드를 선택하세요.'}>Unfold selected folds</button>
-            <button onClick={activateSelected} disabled={selectedIds.length === 0 || !ctxId}>Add selected to Active</button>
-            <button onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0}>Clear selection</button>
-          </div>
-          <div className="muted" style={{ marginTop: 6 }}>
-            그래프 위 컨텍스트 메뉴가 기본 동선이며, 이 영역은 보조 동작입니다.
+            <button className={workspaceMainTab === 'execution' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('execution')}>Execution</button>
+            <button className={workspaceMainTab === 'graph' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('graph')}>Graph</button>
+            <span className="muted">
+              {workspaceMainTab === 'execution'
+                ? 'Run/Step/Tool trace graph + timeline + inspector'
+                : 'Context/folding/hierarchy graph'}
+            </span>
           </div>
         </div>
-        <div className="graphWorkspace">
-          <GraphPanel
+
+        {workspaceMainTab === 'execution' ? (
+          <ExecutionPanel
             nodes={nodes}
             edges={edges}
-            activeNodeIds={activeIds}
-            selectedNodeIds={selectedIds}
-            onSelectionChange={handleSelectionChange}
-            onNodeOpenDetail={(id) => setDetailNodeId(id)}
-            onCreateEdge={handleCreateEdge}
-            onDeleteEdges={handleDeleteEdges}
-            onDeleteNodes={handleDeleteNodes}
-            onFoldSelected={foldNodeIds}
-            onActivateNodes={activateNodeIds}
-            onDeactivateNodes={deactivateNodeIds}
-            onCommitUnfold={unfoldFold}
-            onSaveLayout={saveGraphLayoutPositions}
-            layoutScopeKey={threadId}
-            priorityBucketByNodeId={graphPriorityBucketById}
+            onOpenOldGraph={(nodeId) => {
+              setWorkspaceMainTab('graph')
+              if (nodeId) setSelectedIds([nodeId])
+            }}
           />
-          {detailNodeId && (
-            <NodeDetailModal
-              nodeId={detailNodeId}
-              threadId={threadId}
-              ctxId={ctxId}
-              mode="drawer"
-              onClose={() => setDetailNodeId(null)}
-              onAfterMutation={async () => {
-                await reloadAll()
-              }}
-            />
-          )}
-        </div>
-        <div className="muted" style={{ marginTop: 8 }}>
-          그래프에서 직접 선택/단축키/컨텍스트 액션으로 Fold·Unfold·Split·Activate·Link를 수행하세요.
-        </div>
+        ) : (
+          <>
+            <div className="card selectionActionBar">
+              <div className="row" style={{ marginBottom: 6 }}>
+                <b>Fallback Actions</b>
+                <span className="pill">selected: {selectedIds.length}</span>
+                {selectedFoldIds.length > 0 && <span className="pill pill--fold">folds: {selectedFoldIds.length}</span>}
+              </div>
+              <div className="row" style={{ marginBottom: 0 }}>
+                <button onClick={foldSelected} disabled={selectedIds.length < 2} title={selectedIds.length < 2 ? '그래프에서 2개 이상 선택하세요.' : '선택 노드를 Fold로 묶기'}>Fold selected</button>
+                <button onClick={() => selectedIds.length === 1 && setDetailNodeId(selectedIds[0])} disabled={selectedIds.length !== 1} title={selectedIds.length === 1 ? '선택 노드 상세/분할' : '노드를 1개 선택하세요.'}>Open detail / split</button>
+                <button onClick={unfoldSelectedFolds} disabled={selectedFoldIds.length === 0 || !ctxId} title={selectedFoldIds.length ? '선택 Fold 노드를 펼쳐 Active에 반영' : 'Fold 노드를 선택하세요.'}>Unfold selected folds</button>
+                <button onClick={activateSelected} disabled={selectedIds.length === 0 || !ctxId}>Add selected to Active</button>
+                <button onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0}>Clear selection</button>
+              </div>
+              <div className="muted" style={{ marginTop: 6 }}>
+                그래프 위 컨텍스트 메뉴가 기본 동선이며, 이 영역은 보조 동작입니다.
+              </div>
+            </div>
+            <div className="graphWorkspace">
+              <GraphPanel
+                nodes={nodes}
+                edges={edges}
+                activeNodeIds={activeIds}
+                selectedNodeIds={selectedIds}
+                onSelectionChange={handleSelectionChange}
+                onNodeOpenDetail={(id) => setDetailNodeId(id)}
+                onCreateEdge={handleCreateEdge}
+                onDeleteEdges={handleDeleteEdges}
+                onDeleteNodes={handleDeleteNodes}
+                onFoldSelected={foldNodeIds}
+                onActivateNodes={activateNodeIds}
+                onDeactivateNodes={deactivateNodeIds}
+                onCommitUnfold={unfoldFold}
+                onSaveLayout={saveGraphLayoutPositions}
+                layoutScopeKey={threadId}
+                priorityBucketByNodeId={graphPriorityBucketById}
+              />
+              {detailNodeId && (
+                <NodeDetailModal
+                  nodeId={detailNodeId}
+                  threadId={threadId}
+                  ctxId={ctxId}
+                  mode="drawer"
+                  onClose={() => setDetailNodeId(null)}
+                  onAfterMutation={async () => {
+                    await reloadAll()
+                  }}
+                />
+              )}
+            </div>
+            <div className="muted" style={{ marginTop: 8 }}>
+              그래프에서 직접 선택/단축키/컨텍스트 액션으로 Fold·Unfold·Split·Activate·Link를 수행하세요.
+            </div>
+          </>
+        )}
       </div>
 
-      {!isMobileLayout && (
+      {workspaceMainTab === 'graph' && !isMobileLayout && (
         <div
           className="panelResizer"
           role="separator"
@@ -1038,6 +1155,7 @@ export default function WorkspaceApp() {
         />
       )}
 
+      {workspaceMainTab === 'graph' && (
       <div className={`col col-right ${showRightPanel ? '' : 'isMobileHidden'}`}>
         <ActiveContext
           activeIds={activeIds}
@@ -1121,6 +1239,7 @@ export default function WorkspaceApp() {
           />
         )}
       </div>
+      )}
     </div>
     </div>
   )

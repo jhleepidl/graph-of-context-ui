@@ -91,6 +91,27 @@ class EdgeCreate(BaseModel):
     type: str = "NEXT"
 
 
+class NodeConnectFrom(BaseModel):
+    node_id: str
+    edge_type: str = "NEXT"
+
+
+class NodeCreate(BaseModel):
+    type: str
+    text: Optional[str] = None
+    payload_json: Optional[dict[str, Any]] = None
+    connect_from: Optional[Literal["last"] | NodeConnectFrom] = None
+
+
+class NodeCreateResponse(BaseModel):
+    id: str
+    thread_id: str
+    type: str
+    text: Optional[str] = None
+    payload_json: str
+    created_at: datetime
+
+
 class ActiveOrderUpdate(BaseModel):
     node_ids: List[str]
 

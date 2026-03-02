@@ -231,6 +231,21 @@ export const api = {
     j<any>(apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })),
 
   graph: (threadId: string) => j<any>(apiFetch(`/api/threads/${threadId}/graph`)),
+  createNode: (
+    threadId: string,
+    body: {
+      type: string
+      text?: string | null
+      payload_json?: Record<string, unknown> | null
+      connect_from?: 'last' | { node_id: string; edge_type?: string } | null
+    },
+  ) => j<any>(
+    apiFetch(`/api/threads/${threadId}/nodes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
   saveNodeLayout: (threadId: string, positions: Array<{ id: string; x: number; y: number }>) =>
     j<any>(apiFetch(`/api/threads/${threadId}/layout`, {
       method: 'POST',

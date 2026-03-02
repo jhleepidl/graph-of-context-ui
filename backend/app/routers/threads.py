@@ -8,9 +8,18 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import Thread, ContextSet, ContextSetVersion, Node, Edge, NodeEmbedding
-from app.schemas import ThreadCreate, ThreadEnsureRequest, ThreadRead, NodeLayoutUpdate, EdgeCreate
+from app.schemas import (
+    ThreadCreate,
+    ThreadEnsureRequest,
+    ThreadRead,
+    NodeLayoutUpdate,
+    EdgeCreate,
+    NodeCreate,
+    NodeCreateResponse,
+)
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
+from app.services.graph import add_edge, get_last_node
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -187,6 +196,26 @@ ALLOWED_EDGE_TYPES = {
     "ATTACHED_TO",
     "REFERENCES",
     "DEPENDS",
+    "JOINS",
+    "BELONGS_TO_RUN",
+}
+
+ALLOWED_NODE_TYPES = {
+    "Message",
+    "Run",
+    "Step",
+    "ToolCall",
+    "ToolResult",
+    "Artifact",
+    "Resource",
+    "Fold",
+    "Decision",
+    "Assumption",
+    "Plan",
+    "ContextCandidate",
+    "MemoryItem",
+    "Observation",
+    "ContextSummary",
 }
 
 
@@ -360,6 +389,58 @@ def save_layout(thread_id: str, body: NodeLayoutUpdate):
 
         s.commit()
         return {"ok": True, "updated": updated}
+
+
+@router.post("/{thread_id}/nodes", response_model=NodeCreateResponse)
+def create_node(thread_id: str, body: NodeCreate):
+    node_type = (body.type or "").strip()
+    if not node_type:
+        raise HTTPException(400, "type is required")
+    if node_type not in ALLOWED_NODE_TYPES:
+        raise HTTPException(400, f"invalid node type: {node_type}")
+
+    connect_from = body.connect_from
+    connect_source: Node | None = None
+    connect_edge_type: str | None = None
+
+    with Session(engine) as s:
+        require_thread_write_access(s, thread_id)
+
+        last_node_before_insert: Node | None = None
+        if connect_from == "last":
+            last_node_before_insert = get_last_node(s, thread_id)
+            connect_edge_type = "NEXT"
+        elif connect_from is not None:
+            source_id = (connect_from.node_id or "").strip()
+            edge_type = (connect_from.edge_type or "").strip() or "NEXT"
+            if not source_id:
+                raise HTTPException(400, "connect_from.node_id is required")
+            if edge_type not in ALLOWED_EDGE_TYPES:
+                raise HTTPException(400, f"invalid edge type: {edge_type}")
+
+            source_node = require_node_access(s, source_id)
+            if source_node.thread_id != thread_id:
+                raise HTTPException(404, "source node not found in thread")
+            connect_source = source_node
+            connect_edge_type = edge_type
+
+        node = Node(
+            thread_id=thread_id,
+            type=node_type,
+            text=body.text,
+            payload_json=jdump(body.payload_json if isinstance(body.payload_json, dict) else {}),
+        )
+        s.add(node)
+        s.flush()
+
+        if connect_from == "last" and last_node_before_insert and last_node_before_insert.id != node.id:
+            s.add(add_edge(thread_id, last_node_before_insert.id, node.id, "NEXT"))
+        elif connect_source and connect_edge_type and connect_source.id != node.id:
+            s.add(add_edge(thread_id, connect_source.id, node.id, connect_edge_type))
+
+        s.commit()
+        s.refresh(node)
+        return node.model_dump()
 
 
 @router.post("/{thread_id}/edges")
