@@ -221,3 +221,66 @@ class RebuildActivePolicy(BaseModel):
 
 class RebuildActiveRequest(BaseModel):
     policy: RebuildActivePolicy = Field(default_factory=RebuildActivePolicy)
+
+
+AgentVisibility = Literal["private", "unlisted", "public"]
+
+
+class AgentCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    system_prompt: str = ""
+    instruction: str = ""
+    tools: List[str] = Field(default_factory=list)
+    model: str = ""
+    visibility: AgentVisibility = "private"
+
+
+class AgentPatchRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    instruction: Optional[str] = None
+    tools: Optional[List[str]] = None
+    model: Optional[str] = None
+    visibility: Optional[AgentVisibility] = None
+
+
+class AgentForkRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    instruction: Optional[str] = None
+    tools: Optional[List[str]] = None
+    model: Optional[str] = None
+    visibility: AgentVisibility = "private"
+
+
+class AgentArchiveRequest(BaseModel):
+    archived: bool = True
+
+
+class AgentBootstrapDefaultsRequest(BaseModel):
+    thread_id: Optional[str] = None
+    add_to_conversation: bool = False
+
+
+class ConversationEnsureRequest(BaseModel):
+    thread_id: str
+
+
+class ConversationAgentCreateRequest(BaseModel):
+    agent_id: str
+    enabled: bool = True
+    order_index: Optional[int] = None
+    overrides_json: Optional[dict[str, Any]] = None
+
+
+class ConversationAgentPatchRequest(BaseModel):
+    enabled: Optional[bool] = None
+    order_index: Optional[int] = None
+    overrides_json: Optional[dict[str, Any]] = None
+
+
+class ConversationAgentReorderRequest(BaseModel):
+    agent_ids: List[str]

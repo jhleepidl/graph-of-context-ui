@@ -1,12 +1,16 @@
+import logging
+
 from sqlalchemy import inspect, text
-from sqlmodel import SQLModel, create_engine
+from sqlmodel import SQLModel, Session, create_engine
 
 from app.config import get_env
 from app.models import ServiceRequest, Thread
+from app.services.agent_defaults import ensure_default_agents
 
 DEFAULT_DB_URL = "postgresql+psycopg2://postgres:postgres@localhost:5432/goc"
 DB_URL = get_env("GOC_DB_URL", DEFAULT_DB_URL) or DEFAULT_DB_URL
 engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
+logger = logging.getLogger(__name__)
 
 
 def _ensure_thread_columns() -> None:
@@ -64,3 +68,9 @@ def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_thread_columns()
     _ensure_service_request_columns()
+    try:
+        with Session(engine) as session:
+            ensure_default_agents(session)
+            session.commit()
+    except Exception:
+        logger.exception("default agent seed failed during init_db")

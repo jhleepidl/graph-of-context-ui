@@ -1,429 +1,352 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 
-const AGENTS_THREAD_TITLES = ['agents:profiles', 'agents'] as const
-const PREFERRED_AGENTS_THREAD_TITLE = AGENTS_THREAD_TITLES[0]
-const AGENT_RESOURCE_KIND = 'agent_profile'
-type AgentsThreadTitle = (typeof AGENTS_THREAD_TITLES)[number]
-
 type Props = {
   onNavigate: (path: string) => void
 }
 
-type ThreadSummary = {
-  id: string
-  title?: string | null
-}
+type AgentVisibility = 'private' | 'unlisted' | 'public'
+type AgentScope = 'my' | 'public' | 'installed'
 
-type GraphNode = {
+type AgentRecord = {
   id: string
-  type?: string | null
-  text?: string | null
-  payload_json?: string | null
-  created_at?: string | null
-}
-
-type AgentProfile = {
-  nodeId: string
-  createdAt: string
-  rawText: string
-  payload: Record<string, unknown>
-  form: AgentForm
+  owner_user_id: string
+  service_id: string
+  name: string
+  description: string
+  system_prompt: string
+  instruction: string
+  tools: string[]
+  model: string
+  visibility: AgentVisibility
+  source_agent_id: string | null
+  system_key: string | null
+  is_system_default: boolean
+  is_archived: boolean
+  created_at: string
+  updated_at: string
+  can_write: boolean
 }
 
 type AgentForm = {
-  agent_id: string
-  title: string
-  provider: string
+  name: string
+  description: string
+  system_prompt: string
+  instruction: string
+  tools_text: string
   model: string
-  base_prompt: string
+  visibility: AgentVisibility
 }
 
-function createEmptyForm(): AgentForm {
+function asString(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+function asBool(value: unknown): boolean {
+  return value === true
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const row of value) {
+    const clean = asString(row)
+    if (!clean || seen.has(clean)) continue
+    seen.add(clean)
+    out.push(clean)
+  }
+  return out
+}
+
+function normalizeVisibility(value: unknown): AgentVisibility {
+  const clean = asString(value).toLowerCase()
+  if (clean === 'public') return 'public'
+  if (clean === 'unlisted') return 'unlisted'
+  return 'private'
+}
+
+function normalizeAgent(raw: any): AgentRecord | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = asString(raw.id)
+  if (!id) return null
   return {
-    agent_id: '',
-    title: '',
-    provider: '',
+    id,
+    owner_user_id: asString(raw.owner_user_id),
+    service_id: asString(raw.service_id),
+    name: asString(raw.name) || `agent-${id.slice(0, 8)}`,
+    description: asString(raw.description),
+    system_prompt: asString(raw.system_prompt),
+    instruction: asString(raw.instruction),
+    tools: asStringArray(raw.tools),
+    model: asString(raw.model),
+    visibility: normalizeVisibility(raw.visibility),
+    source_agent_id: asString(raw.source_agent_id) || null,
+    system_key: asString(raw.system_key) || null,
+    is_system_default: asBool(raw.is_system_default),
+    is_archived: asBool(raw.is_archived),
+    created_at: asString(raw.created_at),
+    updated_at: asString(raw.updated_at),
+    can_write: asBool(raw.can_write),
+  }
+}
+
+function emptyForm(defaultVisibility: AgentVisibility = 'private'): AgentForm {
+  return {
+    name: '',
+    description: '',
+    system_prompt: '',
+    instruction: '',
+    tools_text: '',
     model: '',
-    base_prompt: '',
+    visibility: defaultVisibility,
   }
 }
 
-function normalizeTitle(title?: string | null): string {
-  return (title || '').trim().toLowerCase()
-}
-
-function asAgentsThreadTitle(title?: string | null): AgentsThreadTitle | null {
-  const normalized = normalizeTitle(title)
-  for (const candidate of AGENTS_THREAD_TITLES) {
-    if (candidate === normalized) return candidate
+function toForm(agent: AgentRecord): AgentForm {
+  return {
+    name: agent.name,
+    description: agent.description,
+    system_prompt: agent.system_prompt,
+    instruction: agent.instruction,
+    tools_text: agent.tools.join('\n'),
+    model: agent.model,
+    visibility: agent.visibility,
   }
-  return null
 }
 
-function asString(v: unknown): string {
-  if (typeof v === 'string') return v.trim()
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+function parseTools(text: string): string[] {
+  return text
+    .split(/\r?\n|,/g)
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .filter((row, index, arr) => arr.indexOf(row) === index)
+}
+
+function formValidation(form: AgentForm): string {
+  if (!form.name.trim()) return 'name을 입력하세요.'
   return ''
 }
 
-function parsePayload(payloadJson?: string | null): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(payloadJson || '{}')
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>
-    }
-  } catch {
-    // ignore malformed payload_json
-  }
-  return {}
-}
-
-function parseBasePromptFromText(text: string): string {
-  const marker = 'Base Prompt:'
-  const idx = text.indexOf(marker)
-  if (idx < 0) return ''
-  return text.slice(idx + marker.length).trim()
-}
-
-function normalizeForm(input: AgentForm): AgentForm {
-  return {
-    agent_id: input.agent_id.trim(),
-    title: input.title.trim(),
-    provider: input.provider.trim(),
-    model: input.model.trim(),
-    base_prompt: input.base_prompt.trim(),
-  }
-}
-
-function validateForm(input: AgentForm): string {
-  if (!input.agent_id.trim()) return 'agent_id를 입력하세요.'
-  if (!input.title.trim()) return 'title을 입력하세요.'
-  if (!input.provider.trim()) return 'provider를 입력하세요.'
-  if (!input.model.trim()) return 'model을 입력하세요.'
-  return ''
-}
-
-function buildAgentNodeText(form: AgentForm): string {
-  const lines = [
-    `Agent Profile: ${form.title}`,
-    `Agent ID: ${form.agent_id}`,
-    `Provider: ${form.provider}`,
-    `Model: ${form.model}`,
-  ]
-  if (form.base_prompt) {
-    lines.push('Base Prompt:')
-    lines.push(form.base_prompt)
-  }
-  return lines.join('\n').trim()
-}
-
-function buildAgentPayload(existing: Record<string, unknown>, form: AgentForm): Record<string, unknown> {
-  const next: Record<string, unknown> = {
-    ...existing,
-    name: form.title || form.agent_id,
-    resource_kind: AGENT_RESOURCE_KIND,
-    source: asString(existing.source) || 'manual',
-    tag: asString(existing.tag) || 'RESOURCE',
-    summary: form.base_prompt || null,
-    agent_id: form.agent_id,
-    title: form.title,
-    provider: form.provider,
-    model: form.model,
-    base_prompt: form.base_prompt,
-  }
-  return next
-}
-
-function nodeToAgentProfile(node: GraphNode): AgentProfile | null {
-  if ((node.type || '') !== 'Resource') return null
-  const payload = parsePayload(node.payload_json)
-  if (asString(payload.resource_kind) !== AGENT_RESOURCE_KIND) return null
-
-  const rawText = asString(node.text)
-  const form: AgentForm = {
-    agent_id: asString(payload.agent_id) || asString(payload.name) || node.id.slice(0, 12),
-    title: asString(payload.title) || asString(payload.name) || `agent-${node.id.slice(0, 6)}`,
-    provider: asString(payload.provider),
-    model: asString(payload.model),
-    base_prompt: asString(payload.base_prompt) || asString(payload.summary) || parseBasePromptFromText(rawText),
-  }
-
-  return {
-    nodeId: node.id,
-    createdAt: asString(node.created_at),
-    rawText,
-    payload,
-    form,
-  }
+function scopeLabel(scope: AgentScope): string {
+  if (scope === 'public') return 'Public'
+  if (scope === 'installed') return 'Installed'
+  return 'My Agents'
 }
 
 export default function AgentsPage({ onNavigate }: Props) {
-  const [threads, setThreads] = useState<ThreadSummary[]>([])
-  const [agentsThreadId, setAgentsThreadId] = useState<string | null>(null)
-  const [profiles, setProfiles] = useState<AgentProfile[]>([])
-  const [createForm, setCreateForm] = useState<AgentForm>(() => createEmptyForm())
-  const [editForm, setEditForm] = useState<AgentForm>(() => createEmptyForm())
-  const [editingProfile, setEditingProfile] = useState<AgentProfile | null>(null)
-  const [loadingThreads, setLoadingThreads] = useState(false)
-  const [loadingProfiles, setLoadingProfiles] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [savingEdit, setSavingEdit] = useState(false)
-  const [deletingNodeId, setDeletingNodeId] = useState<string | null>(null)
-  const [publishingNodeId, setPublishingNodeId] = useState<string | null>(null)
+  const [scope, setScope] = useState<AgentScope>('my')
+  const [agents, setAgents] = useState<AgentRecord[]>([])
+  const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
+  const [busyAgentId, setBusyAgentId] = useState<string | null>(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [createForm, setCreateForm] = useState<AgentForm>(() => emptyForm('private'))
+  const [creating, setCreating] = useState(false)
+  const [editingAgent, setEditingAgent] = useState<AgentRecord | null>(null)
+  const [editForm, setEditForm] = useState<AgentForm>(() => emptyForm('private'))
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [bootstrappingDefaults, setBootstrappingDefaults] = useState(false)
 
   const linkedThreadId = useMemo(() => {
     const params = new URLSearchParams(window.location.search)
     const fromLink = (params.get('thread') || '').trim()
     return fromLink || null
   }, [])
+  const [conversationThreadId, setConversationThreadId] = useState<string>(linkedThreadId || '')
 
-  const agentsThread = useMemo(
-    () => threads.find((thread) => thread.id === agentsThreadId) || null,
-    [threads, agentsThreadId],
-  )
-
-  const sortedProfiles = useMemo(() => {
-    return [...profiles].sort((a, b) => {
-      if (a.createdAt === b.createdAt) return a.nodeId < b.nodeId ? -1 : 1
-      return a.createdAt < b.createdAt ? 1 : -1
+  const sortedAgents = useMemo(() => {
+    return [...agents].sort((a, b) => {
+      if (a.updated_at === b.updated_at) return a.id.localeCompare(b.id)
+      return a.updated_at > b.updated_at ? -1 : 1
     })
-  }, [profiles])
+  }, [agents])
 
-  const countAgentProfilesInThread = useCallback(async (threadId: string): Promise<number> => {
-    try {
-      const out = await api.graph(threadId)
-      const graphNodes = Array.isArray(out?.nodes) ? (out.nodes as GraphNode[]) : []
-      return graphNodes.reduce((count, node) => count + (nodeToAgentProfile(node) ? 1 : 0), 0)
-    } catch {
-      return 0
-    }
-  }, [])
-
-  const pickDefaultAgentsThreadId = useCallback(async (list: ThreadSummary[]): Promise<string | null> => {
-    const candidates = list
-      .map((thread) => {
-        const matchedTitle = asAgentsThreadTitle(thread.title)
-        if (!matchedTitle) return null
-        return { thread, matchedTitle }
-      })
-      .filter((item): item is { thread: ThreadSummary; matchedTitle: AgentsThreadTitle } => item !== null)
-
-    if (candidates.length === 0) return null
-
-    const scored = await Promise.all(
-      candidates.map(async ({ thread, matchedTitle }) => ({
-        thread,
-        matchedTitle,
-        profileCount: await countAgentProfilesInThread(thread.id),
-      })),
-    )
-
-    scored.sort((a, b) => {
-      if (a.profileCount !== b.profileCount) return b.profileCount - a.profileCount
-      const aPriority = AGENTS_THREAD_TITLES.indexOf(a.matchedTitle)
-      const bPriority = AGENTS_THREAD_TITLES.indexOf(b.matchedTitle)
-      if (aPriority !== bPriority) return aPriority - bPriority
-      return a.thread.id.localeCompare(b.thread.id)
-    })
-
-    return scored[0]?.thread.id || null
-  }, [countAgentProfilesInThread])
-
-  const reloadProfiles = useCallback(async (threadId: string) => {
-    setLoadingProfiles(true)
+  const reloadAgents = useCallback(async (nextScope: AgentScope = scope) => {
+    setLoading(true)
     setError('')
     try {
-      const out = await api.graph(threadId)
-      const graphNodes = Array.isArray(out?.nodes) ? (out.nodes as GraphNode[]) : []
-      const mapped = graphNodes
-        .map((node) => nodeToAgentProfile(node))
-        .filter((item): item is AgentProfile => Boolean(item))
-      setProfiles(mapped)
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
-      setProfiles([])
+      const out = await api.agents(nextScope, false)
+      const rows = Array.isArray(out?.items) ? out.items : []
+      const mapped = rows
+        .map((row) => normalizeAgent(row))
+        .filter((row): row is AgentRecord => Boolean(row))
+      setAgents(mapped)
+    } catch (e) {
+      setAgents([])
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoadingProfiles(false)
+      setLoading(false)
     }
-  }, [])
-
-  const reloadThreads = useCallback(async (preferredThreadId?: string | null) => {
-    setLoadingThreads(true)
-    setError('')
-    try {
-      const out = await api.threads()
-      const list = Array.isArray(out) ? (out as ThreadSummary[]) : []
-      setThreads(list)
-      let nextThreadId: string | null = null
-      if (preferredThreadId && list.some((thread) => thread.id === preferredThreadId)) {
-        nextThreadId = preferredThreadId
-      } else if (agentsThreadId && list.some((thread) => thread.id === agentsThreadId)) {
-        nextThreadId = agentsThreadId
-      } else if (linkedThreadId && list.some((thread) => thread.id === linkedThreadId)) {
-        nextThreadId = linkedThreadId
-      } else {
-        nextThreadId = await pickDefaultAgentsThreadId(list)
-      }
-      setAgentsThreadId(nextThreadId)
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
-      setThreads([])
-      setAgentsThreadId(null)
-    } finally {
-      setLoadingThreads(false)
-    }
-  }, [agentsThreadId, linkedThreadId, pickDefaultAgentsThreadId])
+  }, [scope])
 
   useEffect(() => {
-    void reloadThreads()
-  }, [reloadThreads])
+    void reloadAgents(scope)
+  }, [scope, reloadAgents])
 
-  useEffect(() => {
-    if (!agentsThreadId) {
-      setProfiles([])
-      return
-    }
-    void reloadProfiles(agentsThreadId)
-  }, [agentsThreadId, reloadProfiles])
-
-  async function handleCreateAgentsThread() {
-    setStatus('')
-    setError('')
-    try {
-      const created = await api.createThread(PREFERRED_AGENTS_THREAD_TITLE)
-      const nextId = asString((created as { id?: string }).id)
-      await reloadThreads(nextId || null)
-      setStatus(`${PREFERRED_AGENTS_THREAD_TITLE} catalog를 생성했습니다.`)
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
-    }
-  }
-
-  async function handleCreateProfile() {
-    const threadId = agentsThreadId
-    if (!threadId) {
-      setError('agents catalog를 먼저 선택하세요.')
-      return
-    }
-
-    const cleanForm = normalizeForm(createForm)
-    const validationError = validateForm(cleanForm)
+  async function handleCreate() {
+    const validationError = formValidation(createForm)
     if (validationError) {
       setError(validationError)
       return
     }
-
     setCreating(true)
     setError('')
     setStatus('')
     try {
-      const createText = buildAgentNodeText(cleanForm)
-      const createPayload = buildAgentPayload({}, cleanForm)
-      const out = await api.createResource(threadId, {
-        name: cleanForm.title || cleanForm.agent_id,
-        summary: cleanForm.base_prompt || null,
-        resource_kind: AGENT_RESOURCE_KIND,
-        source: 'manual',
-        auto_activate: false,
-        text_mode: 'plain',
-        raw_text: createText,
-        payload_json: createPayload,
+      await api.createAgent({
+        name: createForm.name.trim(),
+        description: createForm.description.trim(),
+        system_prompt: createForm.system_prompt,
+        instruction: createForm.instruction,
+        tools: parseTools(createForm.tools_text),
+        model: createForm.model.trim(),
+        visibility: createForm.visibility,
       })
-      const node = (out as { node?: GraphNode })?.node
-      if (!node?.id) {
-        throw new Error('resource 생성 응답에 node.id가 없습니다.')
-      }
-      setCreateForm(createEmptyForm())
-      await reloadProfiles(threadId)
-      setStatus(`Agent profile 생성 완료 (${node.id.slice(0, 8)})`)
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
+      setShowCreateModal(false)
+      setCreateForm(emptyForm('private'))
+      setScope('my')
+      await reloadAgents('my')
+      setStatus('새 agent를 생성했습니다.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setCreating(false)
     }
   }
 
-  function openEditModal(profile: AgentProfile) {
-    setEditingProfile(profile)
-    setEditForm({ ...profile.form })
+  function openEdit(agent: AgentRecord) {
+    setEditingAgent(agent)
+    setEditForm(toForm(agent))
     setError('')
     setStatus('')
   }
 
   async function handleSaveEdit() {
-    if (!editingProfile) return
-    const cleanForm = normalizeForm(editForm)
-    const validationError = validateForm(cleanForm)
+    if (!editingAgent) return
+    const validationError = formValidation(editForm)
     if (validationError) {
       setError(validationError)
       return
     }
-
     setSavingEdit(true)
     setError('')
     try {
-      const payload = buildAgentPayload(editingProfile.payload, cleanForm)
-      await api.patchNode(editingProfile.nodeId, {
-        text: buildAgentNodeText(cleanForm),
-        payload_json: JSON.stringify(payload),
+      await api.patchAgent(editingAgent.id, {
+        name: editForm.name.trim(),
+        description: editForm.description.trim(),
+        system_prompt: editForm.system_prompt,
+        instruction: editForm.instruction,
+        tools: parseTools(editForm.tools_text),
+        model: editForm.model.trim(),
+        visibility: editForm.visibility,
       })
-      if (agentsThreadId) {
-        await reloadProfiles(agentsThreadId)
-      }
-      setEditingProfile(null)
-      setStatus(`Agent profile 수정 완료 (${editingProfile.nodeId.slice(0, 8)})`)
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
+      setEditingAgent(null)
+      await reloadAgents(scope)
+      setStatus(`agent 수정 완료: ${editingAgent.name}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setSavingEdit(false)
     }
   }
 
-  async function handleDeleteProfile(profile: AgentProfile) {
-    const ok = window.confirm(`agent "${profile.form.title}"를 삭제할까요?`)
-    if (!ok) return
-    setDeletingNodeId(profile.nodeId)
+  async function handlePublishToggle(agent: AgentRecord) {
+    setBusyAgentId(agent.id)
     setError('')
     setStatus('')
     try {
-      await api.deleteNodeById(profile.nodeId)
-      if (agentsThreadId) {
-        await reloadProfiles(agentsThreadId)
+      if (agent.visibility === 'public') {
+        await api.unpublishAgent(agent.id)
+        setStatus(`unpublish 완료: ${agent.name}`)
+      } else {
+        await api.publishAgent(agent.id)
+        setStatus(`publish 완료: ${agent.name}`)
       }
-      setStatus(`Agent profile 삭제 완료 (${profile.nodeId.slice(0, 8)})`)
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
+      await reloadAgents(scope)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setDeletingNodeId(null)
+      setBusyAgentId(null)
     }
   }
 
-  async function handlePublishProfile(profile: AgentProfile) {
-    setPublishingNodeId(profile.nodeId)
+  async function handleFork(agent: AgentRecord) {
+    setBusyAgentId(agent.id)
     setError('')
     setStatus('')
     try {
-      const out = await api.createPublishRequest(profile.nodeId)
-      const requestId = asString((out as { request?: { id?: string } })?.request?.id)
-      if (requestId) {
-        setStatus(`Publish request 생성 완료 (${requestId}). admin 승인 후 Library에 반영됩니다.`)
-      } else {
-        setStatus('Publish request를 생성했습니다. admin 승인 후 Library에 반영됩니다.')
-      }
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e)
-      setError(message)
+      const out = await api.forkAgent(agent.id, { visibility: 'private' })
+      const created = normalizeAgent(out?.agent)
+      setScope('my')
+      await reloadAgents('my')
+      setStatus(created ? `fork 완료: ${created.name}` : `fork 완료: ${agent.name}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setPublishingNodeId(null)
+      setBusyAgentId(null)
+    }
+  }
+
+  async function handleArchive(agent: AgentRecord, archived: boolean) {
+    setBusyAgentId(agent.id)
+    setError('')
+    setStatus('')
+    try {
+      await api.archiveAgent(agent.id, archived)
+      await reloadAgents(scope)
+      setStatus(`${archived ? 'archive' : 'unarchive'} 완료: ${agent.name}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusyAgentId(null)
+    }
+  }
+
+  async function handleAddToConversation(agent: AgentRecord) {
+    const targetThreadId = conversationThreadId.trim()
+    if (!targetThreadId) {
+      setError('conversation thread_id를 입력하세요.')
+      return
+    }
+    setBusyAgentId(agent.id)
+    setError('')
+    setStatus('')
+    try {
+      await api.ensureConversation(targetThreadId)
+      await api.addConversationAgent(targetThreadId, {
+        agent_id: agent.id,
+        enabled: true,
+      })
+      setStatus(`대화(${targetThreadId.slice(0, 8)})에 agent를 추가했습니다: ${agent.name}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusyAgentId(null)
+    }
+  }
+
+  async function handleBootstrapDefaults() {
+    setBootstrappingDefaults(true)
+    setError('')
+    setStatus('')
+    try {
+      const threadId = conversationThreadId.trim()
+      const out = await api.bootstrapDefaultAgents({
+        thread_id: threadId || null,
+        add_to_conversation: Boolean(threadId),
+      })
+      const count = Number(out?.installed_count || 0)
+      setScope('my')
+      await reloadAgents('my')
+      setStatus(`기본 agent ${count}개를 My Agents로 설치했습니다.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBootstrappingDefaults(false)
     }
   }
 
@@ -431,221 +354,212 @@ export default function AgentsPage({ onNavigate }: Props) {
     <div className="routePage">
       <div className="routeCard">
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0 }}>Agents Catalog</h2>
+          <h2 style={{ margin: 0 }}>Agent Catalog</h2>
           <div className="row" style={{ marginBottom: 0 }}>
             <button onClick={() => onNavigate('/')}>Back to Workspace</button>
-            <button onClick={() => void reloadThreads()} disabled={loadingThreads}>
-              {loadingThreads ? 'Loading...' : 'Refresh'}
+            <button onClick={() => void reloadAgents(scope)} disabled={loading}>
+              {loading ? 'Loading...' : 'Refresh'}
             </button>
+            <button className="primary" onClick={() => setShowCreateModal(true)}>Create Agent</button>
           </div>
         </div>
 
         <div className="row">
-          <label className="muted">
-            Catalog source:
-            <select
-              style={{ marginLeft: 8, minWidth: 280 }}
-              value={agentsThreadId || ''}
-              onChange={(e) => setAgentsThreadId((e.target.value || '').trim() || null)}
-            >
-              <option value="">(선택 안됨)</option>
-              {threads.map((thread) => (
-                <option key={thread.id} value={thread.id}>
-                  {(thread.title || '(untitled)').trim() || '(untitled)'} ({thread.id.slice(0, 8)})
-                </option>
-              ))}
-            </select>
-          </label>
-          <button onClick={handleCreateAgentsThread}>Create "{PREFERRED_AGENTS_THREAD_TITLE}" Catalog</button>
-          {agentsThread && (
-            <span className="pill">
-              selected catalog: {(agentsThread.title || '(untitled)').trim() || '(untitled)'} ({agentsThread.id})
-            </span>
-          )}
-          {linkedThreadId && <span className="pill">linked thread param 사용 가능</span>}
+          <button className={scope === 'my' ? 'primary' : ''} onClick={() => setScope('my')}>My Agents</button>
+          <button className={scope === 'public' ? 'primary' : ''} onClick={() => setScope('public')}>Public</button>
+          <button className={scope === 'installed' ? 'primary' : ''} onClick={() => setScope('installed')}>Installed</button>
+          <span className="pill">{scopeLabel(scope)} · {sortedAgents.length}</span>
+          <button onClick={() => void handleBootstrapDefaults()} disabled={bootstrappingDefaults}>
+            {bootstrappingDefaults ? 'Installing defaults...' : 'Bootstrap Defaults'}
+          </button>
         </div>
 
-        {!agentsThreadId && (
-          <div className="routeStatus">
-            `title=agents:profiles` 또는 `title=agents`인 catalog를 찾지 못했습니다. 위에서 선택하거나 새로 생성하세요.
-          </div>
-        )}
+        <div className="row">
+          <label className="muted">
+            Current conversation thread_id:
+            <input
+              style={{ marginLeft: 8, minWidth: 280 }}
+              value={conversationThreadId}
+              onChange={(e) => setConversationThreadId(e.target.value)}
+              placeholder="대화 thread_id"
+            />
+          </label>
+          {linkedThreadId && <span className="pill">linked thread: {linkedThreadId.slice(0, 8)}</span>}
+          <span className="muted">Workspace에서 열면 Add to current conversation 버튼으로 바로 추가할 수 있습니다.</span>
+        </div>
+
         {error && <div className="routeStatus routeStatusError">{error}</div>}
         {status && <div className="routeStatus">{status}</div>}
 
-        <div className="agentsLayout">
-          <div className="card agentsFormCard">
-            <h3 style={{ marginTop: 0 }}>Create Agent Profile</h3>
-            <label className="routeLabel">
-              agent_id
-              <input
-                value={createForm.agent_id}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, agent_id: e.target.value }))}
-                placeholder="e.g. planner-main"
-              />
-            </label>
-            <label className="routeLabel">
-              title
-              <input
-                value={createForm.title}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, title: e.target.value }))}
-                placeholder="e.g. Planner Agent"
-              />
-            </label>
-            <label className="routeLabel">
-              provider
-              <input
-                value={createForm.provider}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, provider: e.target.value }))}
-                placeholder="e.g. openai"
-              />
-            </label>
-            <label className="routeLabel">
-              model
-              <input
-                value={createForm.model}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, model: e.target.value }))}
-                placeholder="e.g. gpt-5"
-              />
-            </label>
-            <label className="routeLabel">
-              base_prompt
-              <textarea
-                value={createForm.base_prompt}
-                onChange={(e) => setCreateForm((prev) => ({ ...prev, base_prompt: e.target.value }))}
-                placeholder="Agent 기본 프롬프트"
-                style={{ minHeight: 140 }}
-              />
-            </label>
-            <div className="row">
-              <button
-                className="primary"
-                onClick={() => void handleCreateProfile()}
-                disabled={creating || !agentsThreadId}
-              >
+        <div className="routeTableWrap" style={{ marginTop: 10 }}>
+          <table className="routeTable">
+            <thead>
+              <tr>
+                <th>name</th>
+                <th>visibility</th>
+                <th>model</th>
+                <th>tools</th>
+                <th>description</th>
+                <th>updated_at</th>
+                <th>actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedAgents.map((agent) => (
+                <tr key={agent.id}>
+                  <td>
+                    <div><b>{agent.name}</b></div>
+                    <div className="muted">
+                      {agent.id.slice(0, 8)}
+                      {agent.source_agent_id ? ` · source ${agent.source_agent_id.slice(0, 8)}` : ''}
+                      {agent.is_system_default ? ' · system' : ''}
+                    </div>
+                  </td>
+                  <td>{agent.visibility}</td>
+                  <td>{agent.model || '-'}</td>
+                  <td>{agent.tools.length ? agent.tools.join(', ') : '-'}</td>
+                  <td style={{ maxWidth: 360 }}>
+                    {(agent.description || agent.instruction || '').replace(/\s+/g, ' ').slice(0, 180) || '-'}
+                  </td>
+                  <td>{agent.updated_at || '-'}</td>
+                  <td>
+                    <div className="row agentsActionRow">
+                      <button onClick={() => void handleFork(agent)} disabled={busyAgentId === agent.id}>
+                        {busyAgentId === agent.id ? 'Working...' : 'Fork'}
+                      </button>
+                      <button onClick={() => void handleAddToConversation(agent)} disabled={busyAgentId === agent.id}>
+                        Add to current conversation
+                      </button>
+                      {agent.can_write && (
+                        <>
+                          <button onClick={() => openEdit(agent)}>Edit</button>
+                          <button onClick={() => void handlePublishToggle(agent)} disabled={busyAgentId === agent.id}>
+                            {agent.visibility === 'public' ? 'Unpublish' : 'Publish'}
+                          </button>
+                          <button
+                            className="danger"
+                            onClick={() => void handleArchive(agent, !agent.is_archived)}
+                            disabled={busyAgentId === agent.id}
+                          >
+                            {agent.is_archived ? 'Unarchive' : 'Archive'}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {sortedAgents.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={7}>
+                    <span className="muted">결과가 없습니다.</span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {showCreateModal && (
+        <div className="modalOverlay" onClick={() => setShowCreateModal(false)}>
+          <div className="modalCard agentsEditModal" onClick={(e) => e.stopPropagation()}>
+            <div className="row modalHeader">
+              <h3 style={{ margin: 0 }}>Create Agent</h3>
+              <button onClick={() => setShowCreateModal(false)}>Close</button>
+            </div>
+            <AgentFormFields form={createForm} onChange={setCreateForm} />
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
+              <button onClick={() => setShowCreateModal(false)}>Cancel</button>
+              <button className="primary" onClick={() => void handleCreate()} disabled={creating}>
                 {creating ? 'Creating...' : 'Create'}
               </button>
             </div>
           </div>
-
-          <div className="card">
-            <div className="row" style={{ justifyContent: 'space-between' }}>
-              <h3 style={{ margin: 0 }}>Agent Profiles</h3>
-              <span className="pill">count: {sortedProfiles.length}</span>
-            </div>
-            {loadingProfiles && <div className="muted">Loading...</div>}
-            <div className="routeTableWrap">
-              <table className="routeTable">
-                <thead>
-                  <tr>
-                    <th>agent_id</th>
-                    <th>title</th>
-                    <th>provider</th>
-                    <th>model</th>
-                    <th>base_prompt</th>
-                    <th>created_at</th>
-                    <th>actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sortedProfiles.map((profile) => (
-                    <tr key={profile.nodeId}>
-                      <td>{profile.form.agent_id}</td>
-                      <td>{profile.form.title}</td>
-                      <td>{profile.form.provider || '-'}</td>
-                      <td>{profile.form.model || '-'}</td>
-                      <td style={{ maxWidth: 360 }}>
-                        {(profile.form.base_prompt || profile.rawText || '').replace(/\s+/g, ' ').slice(0, 140) || '-'}
-                      </td>
-                      <td>{profile.createdAt || '-'}</td>
-                      <td>
-                        <div className="row agentsActionRow">
-                          <button onClick={() => openEditModal(profile)}>Edit</button>
-                          <button
-                            onClick={() => void handlePublishProfile(profile)}
-                            disabled={publishingNodeId === profile.nodeId}
-                          >
-                            {publishingNodeId === profile.nodeId ? 'Publishing...' : 'Publish'}
-                          </button>
-                          <button
-                            className="danger"
-                            onClick={() => void handleDeleteProfile(profile)}
-                            disabled={deletingNodeId === profile.nodeId}
-                          >
-                            {deletingNodeId === profile.nodeId ? 'Deleting...' : 'Delete'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {sortedProfiles.length === 0 && !loadingProfiles && (
-                    <tr>
-                      <td colSpan={7}>
-                        <span className="muted">등록된 `agent_profile` 리소스가 없습니다.</span>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
-      </div>
+      )}
 
-      {editingProfile && (
-        <div className="modalOverlay" onClick={() => setEditingProfile(null)}>
+      {editingAgent && (
+        <div className="modalOverlay" onClick={() => setEditingAgent(null)}>
           <div className="modalCard agentsEditModal" onClick={(e) => e.stopPropagation()}>
             <div className="row modalHeader">
-              <h3 style={{ margin: 0 }}>Edit Agent Profile</h3>
-              <button onClick={() => setEditingProfile(null)}>Close</button>
+              <h3 style={{ margin: 0 }}>Edit Agent</h3>
+              <button onClick={() => setEditingAgent(null)}>Close</button>
             </div>
-
-            <label className="routeLabel">
-              agent_id
-              <input
-                value={editForm.agent_id}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, agent_id: e.target.value }))}
-              />
-            </label>
-            <label className="routeLabel">
-              title
-              <input
-                value={editForm.title}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, title: e.target.value }))}
-              />
-            </label>
-            <label className="routeLabel">
-              provider
-              <input
-                value={editForm.provider}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, provider: e.target.value }))}
-              />
-            </label>
-            <label className="routeLabel">
-              model
-              <input
-                value={editForm.model}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, model: e.target.value }))}
-              />
-            </label>
-            <label className="routeLabel">
-              base_prompt
-              <textarea
-                value={editForm.base_prompt}
-                onChange={(e) => setEditForm((prev) => ({ ...prev, base_prompt: e.target.value }))}
-                style={{ minHeight: 180 }}
-              />
-            </label>
-
-            <div className="row">
+            <AgentFormFields form={editForm} onChange={setEditForm} />
+            <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
+              <button onClick={() => setEditingAgent(null)}>Cancel</button>
               <button className="primary" onClick={() => void handleSaveEdit()} disabled={savingEdit}>
                 {savingEdit ? 'Saving...' : 'Save'}
               </button>
-              <button onClick={() => setEditingProfile(null)}>Cancel</button>
             </div>
           </div>
         </div>
       )}
     </div>
+  )
+}
+
+function AgentFormFields({
+  form,
+  onChange,
+}: {
+  form: AgentForm
+  onChange: React.Dispatch<React.SetStateAction<AgentForm>>
+}) {
+  return (
+    <>
+      <label className="routeLabel">
+        name
+        <input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} />
+      </label>
+      <label className="routeLabel">
+        description
+        <textarea
+          value={form.description}
+          onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
+          style={{ minHeight: 72 }}
+        />
+      </label>
+      <label className="routeLabel">
+        system_prompt
+        <textarea
+          value={form.system_prompt}
+          onChange={(e) => onChange((prev) => ({ ...prev, system_prompt: e.target.value }))}
+          style={{ minHeight: 120 }}
+        />
+      </label>
+      <label className="routeLabel">
+        instruction
+        <textarea
+          value={form.instruction}
+          onChange={(e) => onChange((prev) => ({ ...prev, instruction: e.target.value }))}
+          style={{ minHeight: 100 }}
+        />
+      </label>
+      <label className="routeLabel">
+        model
+        <input value={form.model} onChange={(e) => onChange((prev) => ({ ...prev, model: e.target.value }))} />
+      </label>
+      <label className="routeLabel">
+        tools (newline or comma separated)
+        <textarea
+          value={form.tools_text}
+          onChange={(e) => onChange((prev) => ({ ...prev, tools_text: e.target.value }))}
+          style={{ minHeight: 70 }}
+        />
+      </label>
+      <label className="routeLabel">
+        visibility
+        <select
+          value={form.visibility}
+          onChange={(e) => onChange((prev) => ({ ...prev, visibility: normalizeVisibility(e.target.value) }))}
+        >
+          <option value="private">private</option>
+          <option value="unlisted">unlisted</option>
+          <option value="public">public</option>
+        </select>
+      </label>
+    </>
   )
 }

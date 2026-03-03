@@ -233,6 +233,139 @@ export const api = {
       body: JSON.stringify({ source_node_id: sourceNodeId }),
     })),
 
+  agents: (scope: 'my' | 'public' | 'installed' = 'my', includeArchived = false) =>
+    j<any>(apiFetch(`/api/agents?scope=${encodeURIComponent(scope)}&include_archived=${includeArchived ? 'true' : 'false'}`)),
+  createAgent: (
+    body: {
+      name: string
+      description?: string
+      system_prompt?: string
+      instruction?: string
+      tools?: string[]
+      model?: string
+      visibility?: 'private' | 'unlisted' | 'public'
+    },
+  ) => j<any>(
+    apiFetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
+  getAgent: (agentId: string) => j<any>(apiFetch(`/api/agents/${agentId}`)),
+  patchAgent: (
+    agentId: string,
+    body: {
+      name?: string
+      description?: string
+      system_prompt?: string
+      instruction?: string
+      tools?: string[]
+      model?: string
+      visibility?: 'private' | 'unlisted' | 'public'
+    },
+  ) => j<any>(
+    apiFetch(`/api/agents/${agentId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  ),
+  forkAgent: (
+    agentId: string,
+    body?: {
+      name?: string
+      description?: string
+      system_prompt?: string
+      instruction?: string
+      tools?: string[]
+      model?: string
+      visibility?: 'private' | 'unlisted' | 'public'
+    },
+  ) => j<any>(
+    apiFetch(`/api/agents/${agentId}/fork`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }),
+  ),
+  publishAgent: (agentId: string) =>
+    j<any>(apiFetch(`/api/agents/${agentId}/publish`, { method: 'POST' })),
+  unpublishAgent: (agentId: string) =>
+    j<any>(apiFetch(`/api/agents/${agentId}/unpublish`, { method: 'POST' })),
+  archiveAgent: (agentId: string, archived = true) =>
+    j<any>(
+      apiFetch(`/api/agents/${agentId}/archive`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ archived }),
+      }),
+    ),
+  defaultAgents: () => j<any>(apiFetch('/api/agents/defaults')),
+  bootstrapDefaultAgents: (body?: { thread_id?: string | null; add_to_conversation?: boolean }) =>
+    j<any>(
+      apiFetch('/api/agents/bootstrap_defaults', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          thread_id: body?.thread_id || null,
+          add_to_conversation: Boolean(body?.add_to_conversation),
+        }),
+      }),
+    ),
+  ensureConversation: (threadId: string) =>
+    j<any>(
+      apiFetch('/api/conversations/ensure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thread_id: threadId }),
+      }),
+    ),
+  conversationAgents: (threadId: string) =>
+    j<any>(apiFetch(`/api/conversations/${threadId}/agents`)),
+  addConversationAgent: (
+    threadId: string,
+    body: {
+      agent_id: string
+      enabled?: boolean
+      order_index?: number
+      overrides_json?: Record<string, unknown> | null
+    },
+  ) =>
+    j<any>(
+      apiFetch(`/api/conversations/${threadId}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    ),
+  patchConversationAgent: (
+    threadId: string,
+    agentId: string,
+    body: {
+      enabled?: boolean
+      order_index?: number
+      overrides_json?: Record<string, unknown> | null
+    },
+  ) =>
+    j<any>(
+      apiFetch(`/api/conversations/${threadId}/agents/${agentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    ),
+  removeConversationAgent: (threadId: string, agentId: string) =>
+    j<any>(apiFetch(`/api/conversations/${threadId}/agents/${agentId}`, { method: 'DELETE' })),
+  reorderConversationAgents: (threadId: string, agentIds: string[]) =>
+    j<any>(
+      apiFetch(`/api/conversations/${threadId}/agents/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_ids: agentIds }),
+      }),
+    ),
+
   threads: () => j<any[]>(apiFetch('/api/threads')),
   createThread: (
     title?: string,

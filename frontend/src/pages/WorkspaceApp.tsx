@@ -10,6 +10,7 @@ import NodeDetailModal from '../components/NodeDetailModal'
 import ContextInspector from '../components/ContextInspector'
 import JobSettingsPanel from '../components/JobSettingsPanel'
 import ExecutionPanel from '../components/ExecutionPanel'
+import ConversationAgentsPanel from '../components/ConversationAgentsPanel'
 import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPriority'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
@@ -32,7 +33,7 @@ type ResizeSession = {
   wrapWidth: number
 }
 type MobileSection = 'left' | 'center' | 'right'
-type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings'
+type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings' | 'conversation_agents'
 type AuthGateState = 'checking' | 'ready' | 'blocked' | 'error'
 type WorkspaceMainTab = 'execution' | 'graph'
 
@@ -56,7 +57,7 @@ function readStoredRightPanelTab(): RightPanelTab {
   if (typeof window === 'undefined') return 'inspector'
   try {
     const raw = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
-    if (raw === 'inspector' || raw === 'prompt' || raw === 'run' || raw === 'job_settings') return raw
+    if (raw === 'inspector' || raw === 'prompt' || raw === 'run' || raw === 'job_settings' || raw === 'conversation_agents') return raw
   } catch {
     // ignore storage failures
   }
@@ -1190,12 +1191,14 @@ export default function WorkspaceApp() {
             <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
             <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
             <button className={rightPanelTab === 'job_settings' ? 'primary' : ''} onClick={() => setRightPanelTab('job_settings')}>Job Settings</button>
+            <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Conversation Agents</button>
           </div>
           <div className="muted">
             {rightPanelTab === 'inspector' && 'Compiled context, version diff, recovery planner'}
             {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budget, resource notes'}
             {rightPanelTab === 'run' && 'Run query with current Active Context'}
             {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current job thread'}
+            {rightPanelTab === 'conversation_agents' && 'Manage conversation membership (enabled/order/overrides)'}
           </div>
         </div>
 
@@ -1248,6 +1251,10 @@ export default function WorkspaceApp() {
               await reloadAll(threadId || undefined, ctxId || undefined)
             }}
           />
+        )}
+
+        {rightPanelTab === 'conversation_agents' && (
+          <ConversationAgentsPanel threadId={threadId} />
         )}
       </div>
       )}

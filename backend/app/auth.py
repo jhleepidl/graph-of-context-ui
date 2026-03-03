@@ -28,6 +28,8 @@ UI_TOKEN_SIG_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 class Principal:
     role: Role
     service_id: str | None = None
+    user_id: str | None = None
+    telegram_user_id: str | None = None
 
 
 _current_principal: contextvars.ContextVar[Principal | None] = contextvars.ContextVar(
@@ -90,6 +92,19 @@ def require_service_key_principal() -> Principal:
     return principal
 
 
+def get_current_user_id(*, required: bool = True) -> str | None:
+    principal = get_current_principal()
+    if principal.role == "admin":
+        # Keep admin behavior permissive for internal maintenance APIs.
+        return principal.user_id or "admin"
+    user_id = (principal.user_id or "").strip()
+    if user_id:
+        return user_id
+    if required:
+        raise HTTPException(401, "telegram user identity required")
+    return None
+
+
 def _parse_key_parts(raw_key: str) -> tuple[str, str]:
     parts = raw_key.split(".", 2)
     if len(parts) != 3 or parts[0] != SERVICE_KEY_PREFIX or not parts[1] or not parts[2]:
@@ -138,32 +153,43 @@ def verify_service_key(raw_key: str) -> Service:
         return service
 
 
-def _ui_token_payload(service_id: str, exp: int) -> str:
+def _ui_token_payload(service_id: str, exp: int, user_id: str | None = None) -> str:
+    clean_user_id = (user_id or "").strip()
+    if clean_user_id:
+        return f"{UI_TOKEN_PREFIX}.{service_id}.{clean_user_id}.{exp}"
     return f"{UI_TOKEN_PREFIX}.{service_id}.{exp}"
 
 
-def mint_ui_bearer_token(service_id: str, ttl_sec: int | None = None) -> tuple[str, int]:
+def mint_ui_bearer_token(service_id: str, ttl_sec: int | None = None, user_id: str | None = None) -> tuple[str, int]:
     secret = _required_env("GOC_UI_TOKEN_SECRET")
     default_ttl = int(get_env("GOC_UI_TOKEN_TTL_DEFAULT_SEC", "21600") or "21600")
     ttl = int(ttl_sec if ttl_sec is not None else default_ttl)
     ttl = max(60, min(ttl, 7 * 24 * 3600))
     exp = int(time.time()) + ttl
-    payload = _ui_token_payload(service_id, exp)
+    clean_user_id = (user_id or "").strip() or None
+    payload = _ui_token_payload(service_id, exp, clean_user_id)
     sig = hmac.new(
         secret.encode("utf-8"),
         payload.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
-    return f"{payload}.{sig}", exp
+    if clean_user_id:
+        return f"{UI_TOKEN_PREFIX}.{service_id}.{clean_user_id}.{exp}.{sig}", exp
+    return f"{UI_TOKEN_PREFIX}.{service_id}.{exp}.{sig}", exp
 
 
-def verify_ui_bearer_token(raw_token: str) -> str:
+def verify_ui_bearer_token(raw_token: str) -> tuple[str, str | None]:
     token = (raw_token or "").strip()
     parts = token.split(".")
-    if len(parts) != 4 or parts[0] != UI_TOKEN_PREFIX:
+    if len(parts) not in {4, 5} or parts[0] != UI_TOKEN_PREFIX:
         raise HTTPException(401, "invalid bearer token format")
 
-    _, service_id, exp_raw, sig_hex = parts
+    if len(parts) == 4:
+        _, service_id, exp_raw, sig_hex = parts
+        user_id = None
+    else:
+        _, service_id, user_id, exp_raw, sig_hex = parts
+        user_id = (user_id or "").strip() or None
     if not service_id:
         raise HTTPException(401, "missing service_id in token")
     if not UI_TOKEN_SIG_RE.fullmatch(sig_hex):
@@ -180,7 +206,7 @@ def verify_ui_bearer_token(raw_token: str) -> str:
     secret = _required_env("GOC_UI_TOKEN_SECRET")
     expected = hmac.new(
         secret.encode("utf-8"),
-        _ui_token_payload(service_id, exp).encode("utf-8"),
+        _ui_token_payload(service_id, exp, user_id).encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(expected, sig_hex.lower()):
@@ -191,7 +217,7 @@ def verify_ui_bearer_token(raw_token: str) -> str:
         if not service or service.status != "active":
             raise HTTPException(401, "service is not active")
 
-    return service_id
+    return service_id, user_id
 
 
 def resolve_principal(admin_header: str | None, authorization: str | None) -> Principal:
@@ -219,7 +245,7 @@ def resolve_principal(admin_header: str | None, authorization: str | None) -> Pr
         return Principal(role="service", service_id=service.id)
 
     if scheme_l == "bearer":
-        service_id = verify_ui_bearer_token(raw)
-        return Principal(role="ui", service_id=service_id)
+        service_id, user_id = verify_ui_bearer_token(raw)
+        return Principal(role="ui", service_id=service_id, user_id=user_id)
 
     raise HTTPException(401, "unsupported Authorization scheme")
