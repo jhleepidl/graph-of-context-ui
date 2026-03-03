@@ -153,6 +153,10 @@ class NodePatchRequest(BaseModel):
     payload_json: Optional[str | dict[str, Any]] = None
 
 
+class NodePinRequest(BaseModel):
+    level: Optional[Literal["required", "preferred"]] = None
+
+
 class ServiceRequestCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -211,7 +215,7 @@ class RebuildActivePolicy(BaseModel):
     recent_assistant_messages: int = 6
     recent_steps: int = 10
     recent_artifacts: int = 5
-    exclude_resource_kinds: List[str] = []
+    exclude_resource_kinds: List[str] = Field(default_factory=lambda: ["job_config", "tracking_append"])
     include_pinned: bool = True
 
 

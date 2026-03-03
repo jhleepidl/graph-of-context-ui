@@ -80,8 +80,10 @@ def _node_resource_kind(payload: dict[str, Any]) -> str:
     return str(payload.get("resource_kind") or "").strip().lower()
 
 
-def _is_excluded_by_resource_kind(payload: dict[str, Any], exclude_resource_kinds: set[str]) -> bool:
+def _is_excluded_by_resource_kind(node: Node, payload: dict[str, Any], exclude_resource_kinds: set[str]) -> bool:
     if not exclude_resource_kinds:
+        return False
+    if _node_type(node) != "Resource":
         return False
     kind = _node_resource_kind(payload)
     return bool(kind and kind in exclude_resource_kinds)
@@ -96,7 +98,7 @@ def _should_exclude_for_compiled(
     ntype = _node_type(node).lower()
     if exclude_types and ntype in exclude_types:
         return True
-    if _is_excluded_by_resource_kind(payload, exclude_resource_kinds):
+    if _is_excluded_by_resource_kind(node, payload, exclude_resource_kinds):
         return True
     return False
 
@@ -129,24 +131,15 @@ def _estimate_tokens(text: str) -> tuple[int, str]:
 
 
 def _is_pinned_payload(payload: dict[str, Any]) -> bool:
+    if str(payload.get("pin_level") or "").strip().lower() == "required":
+        return True
     if payload.get("pinned") is True or payload.get("is_pinned") is True or payload.get("pin") is True:
         return True
-
-    raw_rule = str(
-        payload.get("manual_priority_rule")
-        or payload.get("priority_rule")
-        or payload.get("pin_rule")
-        or ""
-    ).strip().lower()
-    if raw_rule in {"pin", "pinned", "always"}:
-        return True
-
-    tags = payload.get("tags")
-    if isinstance(tags, list):
-        for tag in tags:
-            if isinstance(tag, str) and tag.strip().lower() in {"pin", "pinned"}:
-                return True
     return False
+
+
+def _is_required_pin(payload: dict[str, Any]) -> bool:
+    return str(payload.get("pin_level") or "").strip().lower() == "required"
 
 
 def _pick_recent_ids(
@@ -164,7 +157,7 @@ def _pick_recent_ids(
         if len(out) >= limit:
             break
         payload = payload_by_id.get(node.id) or {}
-        if _is_excluded_by_resource_kind(payload, exclude_resource_kinds):
+        if _is_excluded_by_resource_kind(node, payload, exclude_resource_kinds):
             continue
         if not predicate(node, payload):
             continue
@@ -179,6 +172,22 @@ def _node_type_breakdown(nodes: list[Node], include_set: set[str]) -> dict[str, 
             continue
         ntype = _node_type(node)
         out[ntype] = out.get(ntype, 0) + 1
+    return dict(sorted(out.items(), key=lambda item: item[0].lower()))
+
+
+def _resource_kind_breakdown(nodes: list[Node], include_set: set[str], payload_by_id: dict[str, dict[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for node in nodes:
+        if node.id not in include_set:
+            continue
+        ntype = _node_type(node)
+        if ntype == "Resource":
+            kind = _node_resource_kind(payload_by_id.get(node.id) or {}) or "unknown"
+        elif ntype == "Artifact":
+            kind = "artifact"
+        else:
+            continue
+        out[kind] = out.get(kind, 0) + 1
     return dict(sorted(out.items(), key=lambda item: item[0].lower()))
 
 
@@ -360,6 +369,7 @@ def get_compiled_context(
 
         filtered_active_ids: list[str] = []
         filtered_nodes: list[Node] = []
+        filtered_payload_by_id: dict[str, dict[str, Any]] = {}
         for node_id in active_ids:
             node = s.get(Node, node_id)
             if not node or node.thread_id != cs.thread_id:
@@ -369,11 +379,13 @@ def get_compiled_context(
                 continue
             filtered_active_ids.append(node_id)
             filtered_nodes.append(node)
+            filtered_payload_by_id[node.id] = payload
 
         # Strategy for freshness: no compiled_text cache.
         # Every call rebuilds from current DB state so node/edge/active edits are reflected immediately.
         compiled = compile_active_context_explain(s, cs.thread_id, filtered_active_ids)
-        compiled_text = str(compiled.get("compiled_text") or "")
+        original_compiled_text = str(compiled.get("compiled_text") or "")
+        compiled_text = original_compiled_text
         if max_chars is not None:
             compiled_text = compiled_text[:max_chars]
         resp = {
@@ -388,10 +400,21 @@ def get_compiled_context(
             resp["explain"] = compiled["explain"]
         if include_meta:
             token_estimate, token_method = _estimate_tokens(compiled_text)
+            original_token_estimate, original_token_method = _estimate_tokens(original_compiled_text)
             resp["token_estimate"] = token_estimate
             resp["token_estimate_method"] = token_method
+            resp["original_token_estimate"] = original_token_estimate
+            resp["original_token_estimate_method"] = original_token_method
+            resp["compiled_chars"] = len(compiled_text)
+            resp["original_compiled_chars"] = len(original_compiled_text)
+            resp["active_node_ids_count"] = len(filtered_active_ids)
             resp["node_count"] = len(filtered_active_ids)
             resp["node_type_breakdown"] = _node_type_breakdown(filtered_nodes, set(filtered_active_ids))
+            resp["node_resource_kind_breakdown"] = _resource_kind_breakdown(
+                filtered_nodes,
+                set(filtered_active_ids),
+                filtered_payload_by_id,
+            )
         return resp
 
 
@@ -498,13 +521,17 @@ def rebuild_active_nodes(context_set_id: str, body: RebuildActiveRequest):
         )
 
         pinned_ids: list[str] = []
-        if policy.include_pinned:
-            for node in nodes_desc:
-                payload = payload_by_id.get(node.id) or {}
-                if _is_excluded_by_resource_kind(payload, exclude_kind_set):
-                    continue
-                if _is_pinned_payload(payload):
-                    pinned_ids.append(node.id)
+        pinned_required_ids: list[str] = []
+        pinned_flag_ids: list[str] = []
+        for node in nodes_desc:
+            payload = payload_by_id.get(node.id) or {}
+            if not _is_pinned_payload(payload):
+                continue
+            pinned_ids.append(node.id)
+            if _is_required_pin(payload):
+                pinned_required_ids.append(node.id)
+            else:
+                pinned_flag_ids.append(node.id)
 
         selected_set = set(user_message_ids) | set(assistant_message_ids) | set(recent_step_ids) | set(recent_artifact_ids) | set(pinned_ids)
         next_active_ids = [node.id for node in nodes if node.id in selected_set]
@@ -524,13 +551,19 @@ def rebuild_active_nodes(context_set_id: str, body: RebuildActiveRequest):
                 "recent_steps": len(recent_step_ids),
                 "recent_artifacts": len(recent_artifact_ids),
                 "pinned": len(pinned_ids),
+                "pinned_required": len(pinned_required_ids),
+                "pinned_flagged": len(pinned_flag_ids),
             },
             "active_before_count": len(before_active_ids),
             "active_after_count": len(next_active_ids),
             "added_count": len(added_ids),
             "removed_count": len(removed_ids),
             "excluded_resource_kinds": sorted(exclude_kind_set),
-            "node_type_breakdown": _node_type_breakdown(nodes, next_set),
+            "exclude_applies_to_node_type": "Resource",
+            "include_pinned_requested": bool(policy.include_pinned),
+            "include_pinned_enforced": True,
+            "by_type": _node_type_breakdown(nodes, next_set),
+            "by_resource_kind": _resource_kind_breakdown(nodes, next_set, payload_by_id),
         }
 
         snapshot_context_set(
@@ -548,8 +581,11 @@ def rebuild_active_nodes(context_set_id: str, body: RebuildActiveRequest):
             "active_node_ids": next_active_ids,
             "breakdown": {
                 **breakdown,
+                "node_type_breakdown": breakdown["by_type"],
                 "added_ids": added_ids,
                 "removed_ids": removed_ids,
+                "pinned_ids": [nid for nid in next_active_ids if nid in set(pinned_ids)],
+                "pinned_required_ids": [nid for nid in next_active_ids if nid in set(pinned_required_ids)],
             },
         }
 

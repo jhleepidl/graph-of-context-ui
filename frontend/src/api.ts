@@ -375,6 +375,14 @@ export const api = {
       body: JSON.stringify(body),
     }),
   ),
+  pinNode: (nodeId: string, level: 'required' | 'preferred' | null) =>
+    j<any>(
+      apiFetch(`/api/nodes/${nodeId}/pin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level }),
+      }),
+    ),
   splitNode: (
     nodeId: string,
     body: {

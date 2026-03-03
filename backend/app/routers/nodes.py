@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import ContextSet, Edge, Node, NodeEmbedding
-from app.schemas import NodePatchRequest, SplitNodeRequest, SplitNodeResponse
+from app.schemas import NodePatchRequest, NodePinRequest, SplitNodeRequest, SplitNodeResponse
 from app.services.embedding import ensure_node_embedding, rebuild_thread_index
 from app.services.context_versions import snapshot_context_set
 from app.services.graph import add_edge, jdump, jload, replace_ids_in_order
@@ -458,6 +458,37 @@ def patch_node(node_id: str, body: NodePatchRequest):
         out = node.model_dump()
         out["warning"] = warning
         return out
+
+
+@router.post("/nodes/{node_id}/pin")
+def pin_node(node_id: str, body: NodePinRequest):
+    with Session(engine) as s:
+        node = require_node_write_access(s, node_id)
+        payload = jload(node.payload_json or "{}", {})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        level = body.level
+        if level is None:
+            payload.pop("pin_level", None)
+            payload.pop("pinned", None)
+            payload.pop("is_pinned", None)
+            payload.pop("pin", None)
+        else:
+            payload["pin_level"] = level
+            payload["pinned"] = True
+
+        node.payload_json = jdump(payload)
+        s.add(node)
+        s.commit()
+        s.refresh(node)
+        return {
+            "ok": True,
+            "node_id": node.id,
+            "pin_level": payload.get("pin_level"),
+            "pinned": bool(payload.get("pinned")),
+            "node": node.model_dump(),
+        }
 
 
 @router.delete("/nodes/{node_id}")
