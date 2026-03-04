@@ -168,5 +168,15 @@ def _rotate_service_key(service_id: str):
 @router.post("/service/mint_ui_token")
 def mint_ui_token(body: MintUiTokenRequest):
     principal = require_service_key_principal()
-    token, exp = mint_ui_bearer_token(principal.service_id or "", body.ttl_sec)
-    return {"ok": True, "token": token, "exp": exp, "service_id": principal.service_id}
+    token, exp = mint_ui_bearer_token(
+        principal.service_id or "",
+        body.ttl_sec,
+        user_id=principal.user_id,
+    )
+    return {
+        "ok": True,
+        "token": token,
+        "exp": exp,
+        "service_id": principal.service_id,
+        "user_id": principal.user_id,
+    }
