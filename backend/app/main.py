@@ -27,6 +27,7 @@ from app.routers.service_auth import router as service_auth_router
 from app.routers.publish_requests import router as publish_requests_router
 from app.routers.telegram_auth import router as telegram_auth_router
 from app.routers.agents import router as agents_router
+from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
 
@@ -69,6 +70,24 @@ async def auth_middleware(request: Request, call_next):
         )
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+    if principal.role == "service":
+        acting_telegram_user_id = (
+            request.headers.get("X-Acting-Telegram-User-Id")
+            or request.headers.get("X-Acting-Telegram-User")
+            or ""
+        ).strip()
+        if acting_telegram_user_id:
+            try:
+                acting_user = upsert_user_by_telegram_id(acting_telegram_user_id)
+            except HTTPException as exc:
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+            principal = Principal(
+                role=principal.role,
+                service_id=principal.service_id,
+                user_id=acting_user.id,
+                telegram_user_id=acting_user.telegram_user_id,
+            )
 
     token = set_current_principal(principal)
     try:

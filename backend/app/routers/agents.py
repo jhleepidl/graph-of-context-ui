@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlmodel import Session, select
 
 from app.auth import get_current_principal, get_current_user_id
+from app.config import get_env
 from app.db import engine
 from app.models import Agent, AgentRevision, Conversation, ConversationAgent, Thread, utcnow
 from app.schemas import (
@@ -27,6 +28,19 @@ router = APIRouter(prefix="/api", tags=["agents"])
 
 AGENT_VISIBILITIES = {"private", "unlisted", "public"}
 AGENT_LIST_SCOPES = {"my", "public", "installed"}
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = (get_env(key, "true" if default else "false") or "").strip().lower()
+    return raw in {"1", "true", "yes", "y", "on"}
+
+
+def _enforce_conversation_owner_check() -> bool:
+    principal = get_current_principal()
+    if principal.role == "service":
+        # Service requests often proxy multiple allowed telegram users in a group conversation.
+        return False
+    return _env_bool("GOC_ENFORCE_CONVERSATION_OWNER", False)
 
 
 def _jdump(value: Any) -> str:
@@ -180,7 +194,7 @@ def _ensure_conversation(
         .limit(1)
     ).first()
     if conversation:
-        if not is_admin and conversation.owner_user_id != owner_user_id:
+        if _enforce_conversation_owner_check() and not is_admin and conversation.owner_user_id != owner_user_id:
             raise HTTPException(403, "conversation owner mismatch")
         return thread, conversation
 
@@ -211,7 +225,7 @@ def _require_conversation(
     ).first()
     if not conversation:
         raise HTTPException(404, "conversation not found")
-    if not is_admin and conversation.owner_user_id != owner_user_id:
+    if _enforce_conversation_owner_check() and not is_admin and conversation.owner_user_id != owner_user_id:
         raise HTTPException(403, "conversation owner mismatch")
     return thread, conversation
 

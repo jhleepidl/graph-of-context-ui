@@ -9,12 +9,13 @@ from urllib.parse import parse_qsl
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.auth import mint_ui_bearer_token
 from app.config import get_env
 from app.db import engine
-from app.models import Service, User, utcnow
+from app.models import Service
+from app.services.users import upsert_user_from_telegram_payload
 
 router = APIRouter(prefix="/api/auth/telegram", tags=["telegram_auth"])
 
@@ -123,48 +124,6 @@ def _ensure_active_service(service_id: str) -> None:
             raise HTTPException(500, f"configured service is not active: {service_id}")
 
 
-def _upsert_user(telegram_user: dict[str, Any]) -> User:
-    telegram_user_id = str(telegram_user.get("id") or "").strip()
-    if not telegram_user_id:
-        raise HTTPException(401, "telegram user id is missing")
-    now = utcnow()
-
-    with Session(engine) as session:
-        current = session.exec(
-            select(User)
-            .where(User.telegram_user_id == telegram_user_id)
-            .limit(1)
-        ).first()
-        if not current:
-            current = User(
-                telegram_user_id=telegram_user_id,
-                username=str(telegram_user.get("username") or "").strip() or None,
-                first_name=str(telegram_user.get("first_name") or "").strip() or None,
-                last_name=str(telegram_user.get("last_name") or "").strip() or None,
-                language_code=str(telegram_user.get("language_code") or "").strip() or None,
-                is_bot=bool(telegram_user.get("is_bot") is True),
-                created_at=now,
-                updated_at=now,
-                last_login_at=now,
-            )
-            session.add(current)
-            session.commit()
-            session.refresh(current)
-            return current
-
-        current.username = str(telegram_user.get("username") or "").strip() or current.username
-        current.first_name = str(telegram_user.get("first_name") or "").strip() or current.first_name
-        current.last_name = str(telegram_user.get("last_name") or "").strip() or current.last_name
-        current.language_code = str(telegram_user.get("language_code") or "").strip() or current.language_code
-        current.is_bot = bool(telegram_user.get("is_bot") is True)
-        current.updated_at = now
-        current.last_login_at = now
-        session.add(current)
-        session.commit()
-        session.refresh(current)
-        return current
-
-
 @router.post("/webapp")
 def login_with_webapp(body: TelegramWebAppLoginRequest):
     init_data = (body.init_data or "").strip()
@@ -190,7 +149,7 @@ def login_with_webapp(body: TelegramWebAppLoginRequest):
 
     service_id = _optional_env("GOC_TELEGRAM_DEFAULT_SERVICE_ID", "default") or "default"
     _ensure_active_service(service_id)
-    user = _upsert_user(telegram_user)
+    user = upsert_user_from_telegram_payload(telegram_user)
     token, exp = mint_ui_bearer_token(service_id, body.ttl_sec, user_id=user.id)
 
     return {
