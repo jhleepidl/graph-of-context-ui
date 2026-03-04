@@ -18,7 +18,7 @@ DEFAULT_SYSTEM_AGENTS: list[dict[str, Any]] = [
         "system_prompt": "Select the best specialist agent(s) and produce an execution plan.",
         "instruction": "Prefer minimal, deterministic plans and explicit handoff notes.",
         "tools": [],
-        "model": "gpt-5",
+        "model": "chatgpt:gpt-5",
     },
     {
         "system_key": "planner",
@@ -27,7 +27,7 @@ DEFAULT_SYSTEM_AGENTS: list[dict[str, Any]] = [
         "system_prompt": "Turn goals into actionable steps with constraints and checkpoints.",
         "instruction": "Keep plans short, testable, and reversible.",
         "tools": [],
-        "model": "gpt-5",
+        "model": "chatgpt:gpt-5",
     },
     {
         "system_key": "researcher",
@@ -36,7 +36,7 @@ DEFAULT_SYSTEM_AGENTS: list[dict[str, Any]] = [
         "system_prompt": "Gather evidence, compare alternatives, and cite assumptions clearly.",
         "instruction": "Avoid unsupported claims and include confidence notes.",
         "tools": ["search"],
-        "model": "gpt-5",
+        "model": "gemini:gemini",
     },
     {
         "system_key": "coder",
@@ -45,7 +45,7 @@ DEFAULT_SYSTEM_AGENTS: list[dict[str, Any]] = [
         "system_prompt": "Write safe, maintainable code and verify behavior.",
         "instruction": "Prefer small diffs, tests, and explicit failure handling.",
         "tools": ["code", "shell"],
-        "model": "gpt-5",
+        "model": "codex:codex",
     },
 ]
 
