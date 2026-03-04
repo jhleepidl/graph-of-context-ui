@@ -18,7 +18,7 @@ DEFAULT_SYSTEM_AGENTS: list[dict[str, Any]] = [
         "system_prompt": "Select the best specialist agent(s) and produce an execution plan.",
         "instruction": "Prefer minimal, deterministic plans and explicit handoff notes.",
         "tools": [],
-        "model": "chatgpt:gpt-5",
+        "model": "gemini:gemini-2.0-flash",
     },
     {
         "system_key": "planner",
