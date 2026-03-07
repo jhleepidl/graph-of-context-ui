@@ -8,7 +8,7 @@ type Props = {
 
 type AgentVisibility = 'private' | 'unlisted' | 'public'
 type AgentScope = 'my' | 'public' | 'installed'
-type ThreadMembershipState = 'enabled' | 'disabled' | 'missing'
+type ThreadMembershipState = 'represented' | 'disabled' | 'missing'
 
 type AgentRecord = {
   id: string
@@ -50,6 +50,7 @@ type ThreadSummary = {
 type ConversationMembership = {
   agent_id: string
   enabled: boolean
+  lineage_key: string
 }
 
 function asString(value: unknown): string {
@@ -127,9 +128,11 @@ function normalizeConversationMemberships(raw: any): ConversationMembership[] {
     .map((row: any) => {
       const agentId = asString(row?.agent_id || row?.agent?.id)
       if (!agentId) return null
+      const sourceAgentId = asString(row?.agent?.source_agent_id) || null
       return {
         agent_id: agentId,
         enabled: asBool(row?.enabled),
+        lineage_key: sourceAgentId || agentId,
       }
     })
     .filter((row: ConversationMembership | null): row is ConversationMembership => Boolean(row))
@@ -184,9 +187,14 @@ function scopeLabel(scope: AgentScope): string {
 }
 
 function membershipStateLabel(state: ThreadMembershipState): string {
-  if (state === 'enabled') return 'In thread'
+  if (state === 'represented') return 'Already represented'
   if (state === 'disabled') return 'Disabled in thread'
   return 'Not in thread'
+}
+
+function lineageKeyForAgent(agent: Pick<AgentRecord, 'id' | 'source_agent_id'>): string {
+  const sourceAgentId = asString(agent.source_agent_id)
+  return sourceAgentId || agent.id
 }
 
 function readLinkedThreadId(): string | null {
@@ -218,7 +226,7 @@ export default function AgentsPage({ onNavigate }: Props) {
   const [selectedThreadId, setSelectedThreadId] = useState<string>('')
   const [threadSelectionInitialized, setThreadSelectionInitialized] = useState(false)
   const [membershipLoading, setMembershipLoading] = useState(false)
-  const [membershipByAgentId, setMembershipByAgentId] = useState<Record<string, { enabled: boolean }>>({})
+  const [membershipByLineageKey, setMembershipByLineageKey] = useState<Record<string, { enabled: boolean }>>({})
 
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
@@ -283,10 +291,10 @@ export default function AgentsPage({ onNavigate }: Props) {
   const reloadMembership = useCallback(async (threadId: string | null) => {
     const cleanThreadId = (threadId || '').trim()
     if (!cleanThreadId) {
-      setMembershipByAgentId({})
+      setMembershipByLineageKey({})
       return
     }
-    setMembershipByAgentId({})
+    setMembershipByLineageKey({})
     setMembershipLoading(true)
     setError('')
     try {
@@ -295,11 +303,16 @@ export default function AgentsPage({ onNavigate }: Props) {
       const memberships = normalizeConversationMemberships(out)
       const next: Record<string, { enabled: boolean }> = {}
       for (const membership of memberships) {
-        next[membership.agent_id] = { enabled: membership.enabled }
+        const key = membership.lineage_key || membership.agent_id
+        if (!next[key]) {
+          next[key] = { enabled: membership.enabled }
+          continue
+        }
+        next[key].enabled = next[key].enabled || membership.enabled
       }
-      setMembershipByAgentId(next)
+      setMembershipByLineageKey(next)
     } catch (e) {
-      setMembershipByAgentId({})
+      setMembershipByLineageKey({})
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setMembershipLoading(false)
@@ -316,7 +329,11 @@ export default function AgentsPage({ onNavigate }: Props) {
 
   useEffect(() => {
     function handlePopState() {
-      setLinkedThreadId(readLinkedThreadId())
+      const nextLinkedThreadId = readLinkedThreadId()
+      setLinkedThreadId(nextLinkedThreadId)
+      if (!nextLinkedThreadId) {
+        setSelectedThreadId('')
+      }
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -336,13 +353,27 @@ export default function AgentsPage({ onNavigate }: Props) {
   }, [linkedThreadId])
 
   useEffect(() => {
+    if (!threadSelectionInitialized) return
+    const selected = selectedThreadId.trim()
+    const currentUrlThread = readLinkedThreadId() || ''
+    if (selected === currentUrlThread) return
+    if (selected) {
+      onNavigate(`/agents?thread=${encodeURIComponent(selected)}`)
+      setLinkedThreadId(selected)
+      return
+    }
+    onNavigate('/agents')
+    setLinkedThreadId(null)
+  }, [selectedThreadId, threadSelectionInitialized, onNavigate])
+
+  useEffect(() => {
     void reloadMembership(selectedThreadId || null)
   }, [selectedThreadId, reloadMembership])
 
-  function getMembershipState(agentId: string): ThreadMembershipState {
-    const membership = membershipByAgentId[agentId]
+  function getMembershipState(agent: AgentRecord): ThreadMembershipState {
+    const membership = membershipByLineageKey[lineageKeyForAgent(agent)]
     if (!membership) return 'missing'
-    return membership.enabled ? 'enabled' : 'disabled'
+    return membership.enabled ? 'represented' : 'disabled'
   }
 
   async function handleCreate() {
@@ -470,26 +501,29 @@ export default function AgentsPage({ onNavigate }: Props) {
       setError('먼저 대상 thread를 선택하세요.')
       return
     }
-    const membershipState = getMembershipState(agent.id)
+    const membershipState = getMembershipState(agent)
     const targetThreadLabel = selectedThread?.title || targetThreadId.slice(0, 8)
+    if (membershipState === 'represented') {
+      setError('')
+      setStatus(`${targetThreadLabel} thread에는 이미 같은 계열(agent lineage)의 멤버가 있습니다.`)
+      return
+    }
+    if (membershipState === 'disabled') {
+      setError('')
+      setStatus(`${targetThreadLabel} thread에는 같은 계열의 비활성 멤버가 있습니다. Thread Team에서 활성화하세요.`)
+      return
+    }
 
     setBusyAgentId(agent.id)
     setError('')
     setStatus('')
     try {
       await api.ensureConversation(targetThreadId)
-      if (membershipState === 'missing') {
-        await api.addConversationAgent(targetThreadId, {
-          agent_id: agent.id,
-          enabled: true,
-        })
-        setStatus(`${targetThreadLabel} thread에 agent를 추가했습니다: ${agent.name}`)
-      } else if (membershipState === 'disabled') {
-        await api.patchConversationAgent(targetThreadId, agent.id, { enabled: true })
-        setStatus(`${targetThreadLabel} thread에서 agent를 활성화했습니다: ${agent.name}`)
-      } else {
-        setStatus(`이미 ${targetThreadLabel} thread에 포함된 agent입니다: ${agent.name}`)
-      }
+      await api.addConversationAgent(targetThreadId, {
+        agent_id: agent.id,
+        enabled: true,
+      })
+      setStatus(`${targetThreadLabel} thread에 agent를 추가했습니다: ${agent.name}`)
       await reloadMembership(targetThreadId)
       setThreadTeamRefreshKey((v) => v + 1)
     } catch (e) {
@@ -538,7 +572,7 @@ export default function AgentsPage({ onNavigate }: Props) {
 
   function handleClearTargetThread() {
     setSelectedThreadId('')
-    setMembershipByAgentId({})
+    setMembershipByLineageKey({})
     setLinkedThreadId(null)
     onNavigate('/agents')
   }
@@ -618,16 +652,16 @@ export default function AgentsPage({ onNavigate }: Props) {
               </thead>
               <tbody>
                 {sortedAgents.map((agent) => {
-                  const threadState = getMembershipState(agent.id)
+                  const threadState = getMembershipState(agent)
                   const isBusy = busyAgentId === agent.id
                   const addLabel = isBusy
                     ? 'Working...'
-                    : threadState === 'enabled'
-                      ? 'Already added'
+                    : threadState === 'represented'
+                      ? 'Already represented'
                       : threadState === 'disabled'
-                        ? 'Enable'
+                        ? 'Disabled in thread'
                         : 'Add to thread'
-                  const addDisabled = isBusy || threadState === 'enabled'
+                  const addDisabled = isBusy || threadState !== 'missing'
 
                   return (
                     <tr key={agent.id}>

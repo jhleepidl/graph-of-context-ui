@@ -95,6 +95,11 @@ function normalizeConversation(raw: any): ConversationState | null {
   }
 }
 
+function lineageKeyForAgent(agent: Pick<AgentItem, 'id' | 'source_agent_id'>): string {
+  const sourceAgentId = asString(agent.source_agent_id)
+  return sourceAgentId || asString(agent.id)
+}
+
 export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Props) {
   const [conversation, setConversation] = useState<ConversationState | null>(null)
   const [availableAgents, setAvailableAgents] = useState<AgentItem[]>([])
@@ -105,10 +110,16 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const [busyId, setBusyId] = useState<string | null>(null)
   const [overridesDraft, setOverridesDraft] = useState<Record<string, string>>({})
 
-  const memberIdSet = useMemo(() => new Set((conversation?.agents || []).map((row) => row.agent_id)), [conversation])
+  const memberLineageKeySet = useMemo(() => {
+    const out = new Set<string>()
+    for (const row of conversation?.agents || []) {
+      out.add(lineageKeyForAgent(row.agent))
+    }
+    return out
+  }, [conversation])
   const candidateAgents = useMemo(
-    () => availableAgents.filter((agent) => !memberIdSet.has(agent.id)),
-    [availableAgents, memberIdSet],
+    () => availableAgents.filter((agent) => !memberLineageKeySet.has(lineageKeyForAgent(agent))),
+    [availableAgents, memberLineageKeySet],
   )
 
   const refresh = useCallback(async () => {

@@ -179,6 +179,11 @@ def _get_agent_or_404(session: Session, agent_id: str) -> Agent:
     return row
 
 
+def _agent_lineage_key(agent: Agent) -> str:
+    source_agent_id = str(agent.source_agent_id or "").strip()
+    return source_agent_id or str(agent.id)
+
+
 def _ensure_conversation(
     session: Session,
     *,
@@ -830,12 +835,23 @@ def add_conversation_agent(thread_id: str, body: ConversationAgentCreateRequest)
         if not _can_read_agent(agent, user_id=current_user_id, service_id=service_id, is_admin=is_admin):
             raise HTTPException(404, "agent not found")
 
-        existing = session.exec(
-            select(ConversationAgent)
-            .where(ConversationAgent.conversation_id == conversation.id)
-            .where(ConversationAgent.agent_id == agent_id)
-            .limit(1)
-        ).first()
+        memberships = _conversation_memberships(session, conversation.id)
+        existing = next((row for row in memberships if row.agent_id == agent_id), None)
+        if not existing:
+            target_lineage_key = _agent_lineage_key(agent)
+            member_agent_ids = [row.agent_id for row in memberships]
+            member_agents = session.exec(
+                select(Agent).where(Agent.id.in_(member_agent_ids))
+            ).all() if member_agent_ids else []
+            member_agents_by_id = {row.id: row for row in member_agents}
+            for membership in memberships:
+                member_agent = member_agents_by_id.get(membership.agent_id)
+                if not member_agent:
+                    continue
+                if _agent_lineage_key(member_agent) == target_lineage_key:
+                    existing = membership
+                    break
+
         now = utcnow()
         if existing:
             existing.enabled = bool(body.enabled)
@@ -846,13 +862,7 @@ def add_conversation_agent(thread_id: str, body: ConversationAgentCreateRequest)
             existing.updated_at = now
             session.add(existing)
         else:
-            max_order = session.exec(
-                select(ConversationAgent)
-                .where(ConversationAgent.conversation_id == conversation.id)
-                .order_by(ConversationAgent.order_index.desc())
-                .limit(1)
-            ).first()
-            next_order = int(max_order.order_index if max_order else -1) + 1
+            next_order = int(max((row.order_index for row in memberships), default=-1)) + 1
             row = ConversationAgent(
                 conversation_id=conversation.id,
                 agent_id=agent_id,
