@@ -13,10 +13,24 @@ import {
   setStoredBearerToken,
 } from './api'
 
-function normalizePath(pathname: string): string {
+function normalizePathname(pathname: string): string {
   if (!pathname) return '/'
   if (pathname === '/') return '/'
   return pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
+}
+
+function parseRouteTarget(target: string): { pathname: string; search: string } {
+  if (typeof window === 'undefined') {
+    return {
+      pathname: normalizePathname(target || '/'),
+      search: '',
+    }
+  }
+  const resolved = new URL(target || '/', window.location.origin)
+  return {
+    pathname: normalizePathname(resolved.pathname),
+    search: resolved.search || '',
+  }
 }
 
 function captureTokenFromHash(): void {
@@ -36,14 +50,16 @@ function captureTokenFromHash(): void {
 }
 
 export default function App() {
-  const [path, setPath] = useState<string>(() => normalizePath(window.location.pathname))
+  const [pathname, setPathname] = useState<string>(() => normalizePathname(window.location.pathname))
+  const [search, setSearch] = useState<string>(() => window.location.search || '')
   const [hasAdminKey, setHasAdminKey] = useState<boolean>(() => !!getStoredAdminKey())
 
   useEffect(() => {
     captureTokenFromHash()
 
     function handlePopState() {
-      setPath(normalizePath(window.location.pathname))
+      setPathname(normalizePathname(window.location.pathname))
+      setSearch(window.location.search || '')
       setHasAdminKey(!!getStoredAdminKey())
     }
 
@@ -52,21 +68,22 @@ export default function App() {
   }, [])
 
   const route = useMemo(() => {
-    if (path === '/admin/login') return 'admin_login'
-    if (path === '/guest/request-service') return 'guest_request_service'
-    if (path === '/admin/service-requests') return 'admin_service_requests'
-    if (path === '/admin/publish-requests') return 'admin_publish_requests'
-    if (path === '/agents') return 'agents'
-    if (path === '/tools') return 'tools'
-    if (path === '/library') return 'library'
+    if (pathname === '/admin/login') return 'admin_login'
+    if (pathname === '/guest/request-service') return 'guest_request_service'
+    if (pathname === '/admin/service-requests') return 'admin_service_requests'
+    if (pathname === '/admin/publish-requests') return 'admin_publish_requests'
+    if (pathname === '/agents') return 'agents'
+    if (pathname === '/tools') return 'tools'
+    if (pathname === '/library') return 'library'
     return 'workspace'
-  }, [path])
+  }, [pathname])
 
   function navigate(nextPath: string) {
-    const normalized = normalizePath(nextPath)
-    if (normalized === path) return
-    window.history.pushState(null, '', normalized)
-    setPath(normalized)
+    const next = parseRouteTarget(nextPath)
+    if (next.pathname === pathname && next.search === search) return
+    window.history.pushState(null, '', `${next.pathname}${next.search}`)
+    setPathname(next.pathname)
+    setSearch(next.search)
     setHasAdminKey(!!getStoredAdminKey())
   }
 

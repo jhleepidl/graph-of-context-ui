@@ -183,7 +183,7 @@ export default function ConversationAgentsPanel({ threadId }: Props) {
     try {
       const out = await api.addConversationAgent(threadId, { agent_id: agentId, enabled: true })
       applyConversationResponse(out?.conversation)
-      setStatus('agent를 conversation에 추가했습니다.')
+      setStatus('agent를 thread 팀에 추가했습니다.')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -285,11 +285,11 @@ export default function ConversationAgentsPanel({ threadId }: Props) {
   return (
     <div className="card">
       <div className="row" style={{ justifyContent: 'space-between' }}>
-        <b>Conversation Agents</b>
+        <b>Thread Team</b>
         <button onClick={() => void refresh()} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
       </div>
       <div className="muted" style={{ marginBottom: 8 }}>
-        enabled된 agent 목록이 현재 conversation의 router 대상입니다.
+        enabled된 agent만 현재 thread의 router 대상입니다.
       </div>
       {error && <div className="routeStatus routeStatusError">{error}</div>}
       {status && <div className="routeStatus">{status}</div>}
@@ -364,7 +364,7 @@ export default function ConversationAgentsPanel({ threadId }: Props) {
             {(conversation?.agents.length || 0) === 0 && !loading && (
               <tr>
                 <td colSpan={4}>
-                  <span className="muted">아직 conversation에 추가된 agent가 없습니다.</span>
+                  <span className="muted">아직 thread 팀에 추가된 agent가 없습니다.</span>
                 </td>
               </tr>
             )}

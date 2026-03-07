@@ -1015,6 +1015,17 @@ export default function WorkspaceApp() {
               <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0,6)})</option>
             ))}
           </select>
+          <button
+            onClick={() => {
+              if (!threadId) return
+              const target = `/agents?thread=${encodeURIComponent(threadId)}`
+              window.history.pushState(null, '', target)
+              window.dispatchEvent(new Event('popstate'))
+            }}
+            disabled={!threadId}
+          >
+            Open in Agents
+          </button>
         </div>
 
         <div className="row">
@@ -1191,14 +1202,14 @@ export default function WorkspaceApp() {
             <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
             <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
             <button className={rightPanelTab === 'job_settings' ? 'primary' : ''} onClick={() => setRightPanelTab('job_settings')}>Job Settings</button>
-            <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Conversation Agents</button>
+            <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Thread Team</button>
           </div>
           <div className="muted">
             {rightPanelTab === 'inspector' && 'Compiled context, version diff, recovery planner'}
             {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budget, resource notes'}
             {rightPanelTab === 'run' && 'Run query with current Active Context'}
             {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current job thread'}
-            {rightPanelTab === 'conversation_agents' && 'Manage conversation membership (enabled/order/overrides)'}
+            {rightPanelTab === 'conversation_agents' && 'Manage thread team (enabled/order/overrides)'}
           </div>
         </div>
 

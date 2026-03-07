@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import ConversationAgentsPanel from '../components/ConversationAgentsPanel'
 
 type Props = {
   onNavigate: (path: string) => void
@@ -7,6 +8,7 @@ type Props = {
 
 type AgentVisibility = 'private' | 'unlisted' | 'public'
 type AgentScope = 'my' | 'public' | 'installed'
+type ThreadMembershipState = 'enabled' | 'disabled' | 'missing'
 
 type AgentRecord = {
   id: string
@@ -36,6 +38,18 @@ type AgentForm = {
   tools_text: string
   model: string
   visibility: AgentVisibility
+}
+
+type ThreadSummary = {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+type ConversationMembership = {
+  agent_id: string
+  enabled: boolean
 }
 
 function asString(value: unknown): string {
@@ -93,6 +107,39 @@ function normalizeAgent(raw: any): AgentRecord | null {
   }
 }
 
+function normalizeThread(raw: any): ThreadSummary | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = asString(raw.id)
+  if (!id) return null
+  return {
+    id,
+    title: asString(raw.title) || `Untitled ${id.slice(0, 8)}`,
+    created_at: asString(raw.created_at),
+    updated_at: asString(raw.updated_at),
+  }
+}
+
+function normalizeConversationMemberships(raw: any): ConversationMembership[] {
+  const root = raw && typeof raw === 'object' ? raw : {}
+  const conversation = root.conversation && typeof root.conversation === 'object' ? root.conversation : root
+  const rows = Array.isArray((conversation as any)?.agents) ? (conversation as any).agents : []
+  return rows
+    .map((row: any) => {
+      const agentId = asString(row?.agent_id || row?.agent?.id)
+      if (!agentId) return null
+      return {
+        agent_id: agentId,
+        enabled: asBool(row?.enabled),
+      }
+    })
+    .filter((row: ConversationMembership | null): row is ConversationMembership => Boolean(row))
+}
+
+function timestampMs(value: string): number {
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 function emptyForm(defaultVisibility: AgentVisibility = 'private'): AgentForm {
   return {
     name: '',
@@ -136,6 +183,19 @@ function scopeLabel(scope: AgentScope): string {
   return 'My Agents'
 }
 
+function membershipStateLabel(state: ThreadMembershipState): string {
+  if (state === 'enabled') return 'In thread'
+  if (state === 'disabled') return 'Disabled in thread'
+  return 'Not in thread'
+}
+
+function readLinkedThreadId(): string | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  const fromLink = (params.get('thread') || '').trim()
+  return fromLink || null
+}
+
 export default function AgentsPage({ onNavigate }: Props) {
   const [scope, setScope] = useState<AgentScope>('my')
   const [agents, setAgents] = useState<AgentRecord[]>([])
@@ -151,12 +211,13 @@ export default function AgentsPage({ onNavigate }: Props) {
   const [savingEdit, setSavingEdit] = useState(false)
   const [bootstrappingDefaults, setBootstrappingDefaults] = useState(false)
 
-  const linkedThreadId = useMemo(() => {
-    const params = new URLSearchParams(window.location.search)
-    const fromLink = (params.get('thread') || '').trim()
-    return fromLink || null
-  }, [])
-  const [conversationThreadId, setConversationThreadId] = useState<string>(linkedThreadId || '')
+  const [linkedThreadId, setLinkedThreadId] = useState<string | null>(() => readLinkedThreadId())
+  const [threads, setThreads] = useState<ThreadSummary[]>([])
+  const [threadsLoading, setThreadsLoading] = useState(true)
+  const [selectedThreadId, setSelectedThreadId] = useState<string>('')
+  const [threadSelectionInitialized, setThreadSelectionInitialized] = useState(false)
+  const [membershipLoading, setMembershipLoading] = useState(false)
+  const [membershipByAgentId, setMembershipByAgentId] = useState<Record<string, { enabled: boolean }>>({})
 
   const sortedAgents = useMemo(() => {
     return [...agents].sort((a, b) => {
@@ -164,6 +225,17 @@ export default function AgentsPage({ onNavigate }: Props) {
       return a.updated_at > b.updated_at ? -1 : 1
     })
   }, [agents])
+
+  const selectedThread = useMemo(
+    () => threads.find((thread) => thread.id === selectedThreadId) || null,
+    [threads, selectedThreadId],
+  )
+
+  const selectedThreadLabel = useMemo(() => {
+    if (selectedThread) return `${selectedThread.title} (${selectedThread.id.slice(0, 8)})`
+    if (selectedThreadId) return selectedThreadId.slice(0, 8)
+    return ''
+  }, [selectedThread, selectedThreadId])
 
   const reloadAgents = useCallback(async (nextScope: AgentScope = scope) => {
     setLoading(true)
@@ -183,9 +255,94 @@ export default function AgentsPage({ onNavigate }: Props) {
     }
   }, [scope])
 
+  const reloadThreads = useCallback(async () => {
+    setThreadsLoading(true)
+    setError('')
+    try {
+      const out = await api.threads()
+      const rows = Array.isArray(out) ? out : []
+      const mapped = rows
+        .map((row) => normalizeThread(row))
+        .filter((row): row is ThreadSummary => Boolean(row))
+        .sort((a, b) => {
+          const aScore = timestampMs(a.updated_at) || timestampMs(a.created_at)
+          const bScore = timestampMs(b.updated_at) || timestampMs(b.created_at)
+          if (aScore !== bScore) return bScore - aScore
+          return a.id.localeCompare(b.id)
+        })
+      setThreads(mapped)
+    } catch (e) {
+      setThreads([])
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setThreadsLoading(false)
+    }
+  }, [])
+
+  const reloadMembership = useCallback(async (threadId: string | null) => {
+    const cleanThreadId = (threadId || '').trim()
+    if (!cleanThreadId) {
+      setMembershipByAgentId({})
+      return
+    }
+    setMembershipByAgentId({})
+    setMembershipLoading(true)
+    setError('')
+    try {
+      await api.ensureConversation(cleanThreadId)
+      const out = await api.conversationAgents(cleanThreadId)
+      const memberships = normalizeConversationMemberships(out)
+      const next: Record<string, { enabled: boolean }> = {}
+      for (const membership of memberships) {
+        next[membership.agent_id] = { enabled: membership.enabled }
+      }
+      setMembershipByAgentId(next)
+    } catch (e) {
+      setMembershipByAgentId({})
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMembershipLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void reloadAgents(scope)
   }, [scope, reloadAgents])
+
+  useEffect(() => {
+    void reloadThreads()
+  }, [reloadThreads])
+
+  useEffect(() => {
+    function handlePopState() {
+      setLinkedThreadId(readLinkedThreadId())
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
+    if (threadSelectionInitialized) return
+    if (threadsLoading) return
+    const nextSelected = linkedThreadId || threads[0]?.id || ''
+    setSelectedThreadId(nextSelected)
+    setThreadSelectionInitialized(true)
+  }, [linkedThreadId, threadSelectionInitialized, threads, threadsLoading])
+
+  useEffect(() => {
+    if (!linkedThreadId) return
+    setSelectedThreadId(linkedThreadId)
+  }, [linkedThreadId])
+
+  useEffect(() => {
+    void reloadMembership(selectedThreadId || null)
+  }, [selectedThreadId, reloadMembership])
+
+  function getMembershipState(agentId: string): ThreadMembershipState {
+    const membership = membershipByAgentId[agentId]
+    if (!membership) return 'missing'
+    return membership.enabled ? 'enabled' : 'disabled'
+  }
 
   async function handleCreate() {
     const validationError = formValidation(createForm)
@@ -307,21 +464,32 @@ export default function AgentsPage({ onNavigate }: Props) {
   }
 
   async function handleAddToConversation(agent: AgentRecord) {
-    const targetThreadId = conversationThreadId.trim()
+    const targetThreadId = selectedThreadId.trim()
     if (!targetThreadId) {
-      setError('conversation thread_id를 입력하세요.')
+      setError('먼저 대상 thread를 선택하세요.')
       return
     }
+    const membershipState = getMembershipState(agent.id)
+    const targetThreadLabel = selectedThread?.title || targetThreadId.slice(0, 8)
+
     setBusyAgentId(agent.id)
     setError('')
     setStatus('')
     try {
       await api.ensureConversation(targetThreadId)
-      await api.addConversationAgent(targetThreadId, {
-        agent_id: agent.id,
-        enabled: true,
-      })
-      setStatus(`대화(${targetThreadId.slice(0, 8)})에 agent를 추가했습니다: ${agent.name}`)
+      if (membershipState === 'missing') {
+        await api.addConversationAgent(targetThreadId, {
+          agent_id: agent.id,
+          enabled: true,
+        })
+        setStatus(`${targetThreadLabel} thread에 agent를 추가했습니다: ${agent.name}`)
+      } else if (membershipState === 'disabled') {
+        await api.patchConversationAgent(targetThreadId, agent.id, { enabled: true })
+        setStatus(`${targetThreadLabel} thread에서 agent를 활성화했습니다: ${agent.name}`)
+      } else {
+        setStatus(`이미 ${targetThreadLabel} thread에 포함된 agent입니다: ${agent.name}`)
+      }
+      await reloadMembership(targetThreadId)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -334,7 +502,7 @@ export default function AgentsPage({ onNavigate }: Props) {
     setError('')
     setStatus('')
     try {
-      const threadId = conversationThreadId.trim()
+      const threadId = selectedThreadId.trim()
       const out = await api.bootstrapDefaultAgents({
         thread_id: threadId || null,
         add_to_conversation: Boolean(threadId),
@@ -342,7 +510,13 @@ export default function AgentsPage({ onNavigate }: Props) {
       const count = Number(out?.installed_count || 0)
       setScope('my')
       await reloadAgents('my')
-      setStatus(`기본 agent ${count}개를 My Agents로 설치했습니다.`)
+      if (threadId) {
+        const threadName = selectedThread?.title || threadId.slice(0, 8)
+        await reloadMembership(threadId)
+        setStatus(`기본 agent ${count}개를 설치했고, ${threadName} thread 팀에도 반영했습니다.`)
+      } else {
+        setStatus(`기본 agent ${count}개를 My Agents로 설치했습니다.`)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -350,114 +524,184 @@ export default function AgentsPage({ onNavigate }: Props) {
     }
   }
 
+  function handleOpenWorkspace() {
+    const targetThreadId = selectedThreadId.trim()
+    if (!targetThreadId) {
+      onNavigate('/')
+      return
+    }
+    onNavigate(`/?thread=${encodeURIComponent(targetThreadId)}`)
+  }
+
+  function handleClearTargetThread() {
+    setSelectedThreadId('')
+    setMembershipByAgentId({})
+    setLinkedThreadId(null)
+    onNavigate('/agents')
+  }
+
+  const selectedThreadNotListed = Boolean(selectedThreadId && !selectedThread)
+
   return (
     <div className="routePage">
-      <div className="routeCard">
-        <div className="row" style={{ justifyContent: 'space-between' }}>
-          <h2 style={{ margin: 0 }}>Agent Catalog</h2>
-          <div className="row" style={{ marginBottom: 0 }}>
-            <button onClick={() => onNavigate('/')}>Back to Workspace</button>
-            <button onClick={() => void reloadAgents(scope)} disabled={loading}>
-              {loading ? 'Loading...' : 'Refresh'}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-start' }}>
+        <div className="routeCard" style={{ flex: '1 1 760px', minWidth: 0 }}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h2 style={{ margin: 0 }}>Agent Catalog</h2>
+            <div className="row" style={{ marginBottom: 0 }}>
+              <button onClick={() => onNavigate('/')}>Back to Workspace</button>
+              <button onClick={() => void reloadAgents(scope)} disabled={loading}>
+                {loading ? 'Loading...' : 'Refresh'}
+              </button>
+              <button className="primary" onClick={() => setShowCreateModal(true)}>Create Agent</button>
+            </div>
+          </div>
+
+          <div className="row">
+            <button className={scope === 'my' ? 'primary' : ''} onClick={() => setScope('my')}>My Agents</button>
+            <button className={scope === 'public' ? 'primary' : ''} onClick={() => setScope('public')}>Public</button>
+            <button className={scope === 'installed' ? 'primary' : ''} onClick={() => setScope('installed')}>Installed</button>
+            <span className="pill">{scopeLabel(scope)} · {sortedAgents.length}</span>
+            <button onClick={() => void handleBootstrapDefaults()} disabled={bootstrappingDefaults}>
+              {bootstrappingDefaults ? 'Installing defaults...' : 'Bootstrap Defaults'}
             </button>
-            <button className="primary" onClick={() => setShowCreateModal(true)}>Create Agent</button>
+          </div>
+
+          <div className="row" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+            <label className="routeLabel" style={{ marginBottom: 0 }}>
+              Target Thread
+              <select
+                value={selectedThreadId}
+                onChange={(e) => setSelectedThreadId(e.target.value)}
+                style={{ minWidth: 340 }}
+              >
+                <option value="">(thread 선택)</option>
+                {threads.map((thread) => (
+                  <option key={thread.id} value={thread.id}>
+                    {thread.title} ({thread.id.slice(0, 8)})
+                  </option>
+                ))}
+                {selectedThreadNotListed && (
+                  <option value={selectedThreadId}>
+                    Unknown ({selectedThreadId.slice(0, 8)})
+                  </option>
+                )}
+              </select>
+            </label>
+            {linkedThreadId && <span className="pill">linked from workspace</span>}
+            {threadsLoading && <span className="pill">Loading threads...</span>}
+            {membershipLoading && selectedThreadId && <span className="pill">Checking thread membership...</span>}
+            <button onClick={handleOpenWorkspace} disabled={!selectedThreadId}>Open in Workspace</button>
+            <button onClick={handleClearTargetThread} disabled={!selectedThreadId && !linkedThreadId}>Clear</button>
+            {selectedThreadLabel && <span className="muted">현재 대상: {selectedThreadLabel}</span>}
+          </div>
+
+          {error && <div className="routeStatus routeStatusError">{error}</div>}
+          {status && <div className="routeStatus">{status}</div>}
+
+          <div className="routeTableWrap" style={{ marginTop: 10 }}>
+            <table className="routeTable">
+              <thead>
+                <tr>
+                  <th>name</th>
+                  <th>visibility</th>
+                  <th>model</th>
+                  <th>tools</th>
+                  <th>description</th>
+                  <th>thread</th>
+                  <th>updated_at</th>
+                  <th>actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedAgents.map((agent) => {
+                  const threadState = getMembershipState(agent.id)
+                  const isBusy = busyAgentId === agent.id
+                  const addLabel = isBusy
+                    ? 'Working...'
+                    : threadState === 'enabled'
+                      ? 'Already added'
+                      : threadState === 'disabled'
+                        ? 'Enable'
+                        : 'Add to thread'
+                  const addDisabled = isBusy || threadState === 'enabled'
+
+                  return (
+                    <tr key={agent.id}>
+                      <td>
+                        <div><b>{agent.name}</b></div>
+                        <div className="muted">
+                          {agent.id.slice(0, 8)}
+                          {agent.source_agent_id ? ` · source ${agent.source_agent_id.slice(0, 8)}` : ''}
+                          {agent.is_system_default ? ' · system' : ''}
+                        </div>
+                      </td>
+                      <td>{agent.visibility}</td>
+                      <td>{agent.model || '-'}</td>
+                      <td>{agent.tools.length ? agent.tools.join(', ') : '-'}</td>
+                      <td style={{ maxWidth: 320 }}>
+                        {(agent.description || agent.instruction || '').replace(/\s+/g, ' ').slice(0, 180) || '-'}
+                      </td>
+                      <td>
+                        <span className="pill">{membershipStateLabel(threadState)}</span>
+                      </td>
+                      <td>{agent.updated_at || '-'}</td>
+                      <td>
+                        <div className="row agentsActionRow">
+                          <button onClick={() => void handleFork(agent)} disabled={isBusy}>
+                            {isBusy ? 'Working...' : 'Fork'}
+                          </button>
+                          <button onClick={() => void handleAddToConversation(agent)} disabled={addDisabled}>
+                            {addLabel}
+                          </button>
+                          {agent.can_write && (
+                            <>
+                              <button onClick={() => openEdit(agent)}>Edit</button>
+                              <button onClick={() => void handlePublishToggle(agent)} disabled={isBusy}>
+                                {agent.visibility === 'public' ? 'Unpublish' : 'Publish'}
+                              </button>
+                              <button
+                                className="danger"
+                                onClick={() => void handleArchive(agent, !agent.is_archived)}
+                                disabled={isBusy}
+                              >
+                                {agent.is_archived ? 'Unarchive' : 'Archive'}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+                {sortedAgents.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan={8}>
+                      <span className="muted">결과가 없습니다.</span>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
 
-        <div className="row">
-          <button className={scope === 'my' ? 'primary' : ''} onClick={() => setScope('my')}>My Agents</button>
-          <button className={scope === 'public' ? 'primary' : ''} onClick={() => setScope('public')}>Public</button>
-          <button className={scope === 'installed' ? 'primary' : ''} onClick={() => setScope('installed')}>Installed</button>
-          <span className="pill">{scopeLabel(scope)} · {sortedAgents.length}</span>
-          <button onClick={() => void handleBootstrapDefaults()} disabled={bootstrappingDefaults}>
-            {bootstrappingDefaults ? 'Installing defaults...' : 'Bootstrap Defaults'}
-          </button>
-        </div>
-
-        <div className="row">
-          <label className="muted">
-            Current conversation thread_id:
-            <input
-              style={{ marginLeft: 8, minWidth: 280 }}
-              value={conversationThreadId}
-              onChange={(e) => setConversationThreadId(e.target.value)}
-              placeholder="대화 thread_id"
-            />
-          </label>
-          {linkedThreadId && <span className="pill">linked thread: {linkedThreadId.slice(0, 8)}</span>}
-          <span className="muted">Workspace에서 열면 Add to current conversation 버튼으로 바로 추가할 수 있습니다.</span>
-        </div>
-
-        {error && <div className="routeStatus routeStatusError">{error}</div>}
-        {status && <div className="routeStatus">{status}</div>}
-
-        <div className="routeTableWrap" style={{ marginTop: 10 }}>
-          <table className="routeTable">
-            <thead>
-              <tr>
-                <th>name</th>
-                <th>visibility</th>
-                <th>model</th>
-                <th>tools</th>
-                <th>description</th>
-                <th>updated_at</th>
-                <th>actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedAgents.map((agent) => (
-                <tr key={agent.id}>
-                  <td>
-                    <div><b>{agent.name}</b></div>
-                    <div className="muted">
-                      {agent.id.slice(0, 8)}
-                      {agent.source_agent_id ? ` · source ${agent.source_agent_id.slice(0, 8)}` : ''}
-                      {agent.is_system_default ? ' · system' : ''}
-                    </div>
-                  </td>
-                  <td>{agent.visibility}</td>
-                  <td>{agent.model || '-'}</td>
-                  <td>{agent.tools.length ? agent.tools.join(', ') : '-'}</td>
-                  <td style={{ maxWidth: 360 }}>
-                    {(agent.description || agent.instruction || '').replace(/\s+/g, ' ').slice(0, 180) || '-'}
-                  </td>
-                  <td>{agent.updated_at || '-'}</td>
-                  <td>
-                    <div className="row agentsActionRow">
-                      <button onClick={() => void handleFork(agent)} disabled={busyAgentId === agent.id}>
-                        {busyAgentId === agent.id ? 'Working...' : 'Fork'}
-                      </button>
-                      <button onClick={() => void handleAddToConversation(agent)} disabled={busyAgentId === agent.id}>
-                        Add to current conversation
-                      </button>
-                      {agent.can_write && (
-                        <>
-                          <button onClick={() => openEdit(agent)}>Edit</button>
-                          <button onClick={() => void handlePublishToggle(agent)} disabled={busyAgentId === agent.id}>
-                            {agent.visibility === 'public' ? 'Unpublish' : 'Publish'}
-                          </button>
-                          <button
-                            className="danger"
-                            onClick={() => void handleArchive(agent, !agent.is_archived)}
-                            disabled={busyAgentId === agent.id}
-                          >
-                            {agent.is_archived ? 'Unarchive' : 'Archive'}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {sortedAgents.length === 0 && !loading && (
-                <tr>
-                  <td colSpan={7}>
-                    <span className="muted">결과가 없습니다.</span>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div style={{ flex: '1 1 420px', minWidth: 320 }}>
+          {selectedThreadId ? (
+            <ConversationAgentsPanel threadId={selectedThreadId || null} />
+          ) : (
+            <div className="card">
+              <div className="row" style={{ justifyContent: 'space-between' }}>
+                <b>Thread Team</b>
+              </div>
+              <div className="muted" style={{ marginBottom: 6 }}>
+                thread를 선택하면 이 대화의 agent 팀을 편집할 수 있습니다.
+              </div>
+              <div className="muted">
+                enabled된 agent만 현재 thread의 router 대상입니다.
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
