@@ -267,6 +267,7 @@ class AgentBootstrapDefaultsRequest(BaseModel):
 
 class ConversationEnsureRequest(BaseModel):
     thread_id: str
+    bootstrap_defaults: bool = True
 
 
 class ConversationAgentCreateRequest(BaseModel):

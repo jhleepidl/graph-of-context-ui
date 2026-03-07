@@ -210,6 +210,7 @@ export default function AgentsPage({ onNavigate }: Props) {
   const [editForm, setEditForm] = useState<AgentForm>(() => emptyForm('private'))
   const [savingEdit, setSavingEdit] = useState(false)
   const [bootstrappingDefaults, setBootstrappingDefaults] = useState(false)
+  const [threadTeamRefreshKey, setThreadTeamRefreshKey] = useState(0)
 
   const [linkedThreadId, setLinkedThreadId] = useState<string | null>(() => readLinkedThreadId())
   const [threads, setThreads] = useState<ThreadSummary[]>([])
@@ -490,6 +491,7 @@ export default function AgentsPage({ onNavigate }: Props) {
         setStatus(`이미 ${targetThreadLabel} thread에 포함된 agent입니다: ${agent.name}`)
       }
       await reloadMembership(targetThreadId)
+      setThreadTeamRefreshKey((v) => v + 1)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -517,6 +519,7 @@ export default function AgentsPage({ onNavigate }: Props) {
       } else {
         setStatus(`기본 agent ${count}개를 My Agents로 설치했습니다.`)
       }
+      setThreadTeamRefreshKey((v) => v + 1)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -688,7 +691,10 @@ export default function AgentsPage({ onNavigate }: Props) {
 
         <div style={{ flex: '1 1 420px', minWidth: 320 }}>
           {selectedThreadId ? (
-            <ConversationAgentsPanel threadId={selectedThreadId || null} />
+            <ConversationAgentsPanel
+              threadId={selectedThreadId || null}
+              refreshKey={threadTeamRefreshKey}
+            />
           ) : (
             <div className="card">
               <div className="row" style={{ justifyContent: 'space-between' }}>

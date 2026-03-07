@@ -273,6 +273,97 @@ def _conversation_payload(
     }
 
 
+def _install_default_private_agents(
+    session: Session,
+    *,
+    owner_user_id: str,
+    actor_user_id: str | None,
+    service_id: str,
+) -> list[Agent]:
+    installed_items: list[Agent] = []
+    defaults = ensure_default_agents(session)
+    for default_agent in defaults:
+        existing = session.exec(
+            select(Agent)
+            .where(Agent.owner_user_id == owner_user_id)
+            .where(Agent.source_agent_id == default_agent.id)
+            .where(Agent.is_archived == False)  # noqa: E712
+            .order_by(Agent.updated_at.desc(), Agent.id.desc())
+            .limit(1)
+        ).first()
+        if existing:
+            installed_items.append(existing)
+            continue
+
+        now = utcnow()
+        created = Agent(
+            owner_user_id=owner_user_id,
+            service_id=service_id,
+            name=default_agent.name,
+            description=default_agent.description,
+            system_prompt=default_agent.system_prompt,
+            instruction=default_agent.instruction,
+            tools_json=default_agent.tools_json,
+            model=default_agent.model,
+            visibility="private",
+            source_agent_id=default_agent.id,
+            system_key=None,
+            is_system_default=False,
+            is_archived=False,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(created)
+        session.flush()
+        _append_agent_revision(
+            session,
+            created,
+            actor_user_id=actor_user_id,
+            reason=f"bootstrap_default:{default_agent.id}",
+        )
+        installed_items.append(created)
+    return installed_items
+
+
+def _add_missing_conversation_memberships(
+    session: Session,
+    *,
+    conversation: Conversation,
+    agents: list[Agent],
+    only_if_empty: bool,
+) -> bool:
+    existing_members = {
+        row.agent_id: row
+        for row in _conversation_memberships(session, conversation.id)
+    }
+    if only_if_empty and existing_members:
+        return False
+
+    now = utcnow()
+    next_order = len(existing_members)
+    changed = False
+    for item in agents:
+        if item.id in existing_members:
+            continue
+        membership = ConversationAgent(
+            conversation_id=conversation.id,
+            agent_id=item.id,
+            enabled=True,
+            order_index=next_order,
+            overrides_json=_jdump({}),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(membership)
+        next_order += 1
+        changed = True
+
+    if changed:
+        conversation.updated_at = now
+        session.add(conversation)
+    return changed
+
+
 @router.get("/agents")
 def list_agents(
     scope: str = Query(default="my"),
@@ -576,50 +667,13 @@ def bootstrap_default_agents(body: AgentBootstrapDefaultsRequest):
     if not current_user_id and not is_admin:
         raise HTTPException(401, "telegram user identity required")
 
-    installed_items: list[Agent] = []
     with Session(engine) as session:
-        defaults = ensure_default_agents(session)
-
-        for default_agent in defaults:
-            existing = session.exec(
-                select(Agent)
-                .where(Agent.owner_user_id == (current_user_id or "admin"))
-                .where(Agent.source_agent_id == default_agent.id)
-                .where(Agent.is_archived == False)  # noqa: E712
-                .order_by(Agent.updated_at.desc(), Agent.id.desc())
-                .limit(1)
-            ).first()
-            if existing:
-                installed_items.append(existing)
-                continue
-
-            now = utcnow()
-            created = Agent(
-                owner_user_id=current_user_id or "admin",
-                service_id=service_id,
-                name=default_agent.name,
-                description=default_agent.description,
-                system_prompt=default_agent.system_prompt,
-                instruction=default_agent.instruction,
-                tools_json=default_agent.tools_json,
-                model=default_agent.model,
-                visibility="private",
-                source_agent_id=default_agent.id,
-                system_key=None,
-                is_system_default=False,
-                is_archived=False,
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(created)
-            session.flush()
-            _append_agent_revision(
-                session,
-                created,
-                actor_user_id=current_user_id,
-                reason=f"bootstrap_default:{default_agent.id}",
-            )
-            installed_items.append(created)
+        installed_items = _install_default_private_agents(
+            session,
+            owner_user_id=current_user_id or "admin",
+            actor_user_id=current_user_id,
+            service_id=service_id,
+        )
 
         conversation: Conversation | None = None
         if body.add_to_conversation and thread_id:
@@ -630,27 +684,12 @@ def bootstrap_default_agents(body: AgentBootstrapDefaultsRequest):
                 service_id=service_id,
                 is_admin=is_admin,
             )
-            existing_members = {
-                row.agent_id: row
-                for row in _conversation_memberships(session, conversation.id)
-            }
-            next_order = len(existing_members)
-            for installed in installed_items:
-                if installed.id in existing_members:
-                    continue
-                membership = ConversationAgent(
-                    conversation_id=conversation.id,
-                    agent_id=installed.id,
-                    enabled=True,
-                    order_index=next_order,
-                    overrides_json=_jdump({}),
-                    created_at=utcnow(),
-                    updated_at=utcnow(),
-                )
-                session.add(membership)
-                next_order += 1
-            conversation.updated_at = utcnow()
-            session.add(conversation)
+            _add_missing_conversation_memberships(
+                session,
+                conversation=conversation,
+                agents=installed_items,
+                only_if_empty=False,
+            )
 
         session.commit()
         if conversation:
@@ -699,6 +738,19 @@ def ensure_conversation(body: ConversationEnsureRequest):
             service_id=service_id,
             is_admin=is_admin,
         )
+        if body.bootstrap_defaults:
+            installed_items = _install_default_private_agents(
+                session,
+                owner_user_id=current_user_id or "admin",
+                actor_user_id=current_user_id,
+                service_id=service_id,
+            )
+            _add_missing_conversation_memberships(
+                session,
+                conversation=conversation,
+                agents=installed_items,
+                only_if_empty=True,
+            )
         conversation.updated_at = utcnow()
         session.add(conversation)
         session.commit()

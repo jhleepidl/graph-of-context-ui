@@ -3,6 +3,7 @@ import { api } from '../api'
 
 type Props = {
   threadId: string | null
+  refreshKey?: number
 }
 
 type AgentItem = {
@@ -94,7 +95,7 @@ function normalizeConversation(raw: any): ConversationState | null {
   }
 }
 
-export default function ConversationAgentsPanel({ threadId }: Props) {
+export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Props) {
   const [conversation, setConversation] = useState<ConversationState | null>(null)
   const [availableAgents, setAvailableAgents] = useState<AgentItem[]>([])
   const [selectedAgentId, setSelectedAgentId] = useState('')
@@ -157,7 +158,7 @@ export default function ConversationAgentsPanel({ threadId }: Props) {
 
   useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [threadId, refreshKey, refresh])
 
   function applyConversationResponse(raw: any) {
     const next = normalizeConversation(raw)
