@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from app.auth import get_current_principal, get_current_user_id
 from app.config import get_env
 from app.db import engine
-from app.models import Agent, AgentRevision, Conversation, ConversationAgent, Thread, utcnow
+from app.models import Agent, AgentRevision, Conversation, ConversationAgent, Thread, User, utcnow
 from app.schemas import (
     AgentArchiveRequest,
     AgentBootstrapDefaultsRequest,
@@ -103,13 +103,59 @@ def _can_write_agent(agent: Agent, *, user_id: str | None, is_admin: bool) -> bo
     return _is_owner(agent, user_id, is_admin=is_admin)
 
 
-def _agent_payload(agent: Agent, *, current_user_id: str | None, is_admin: bool) -> dict[str, Any]:
+def _owner_display_name(owner_user: User | None) -> str | None:
+    if not owner_user:
+        return None
+    first_name = str(owner_user.first_name or "").strip()
+    last_name = str(owner_user.last_name or "").strip()
+    full_name = " ".join(part for part in [first_name, last_name] if part).strip()
+    if full_name:
+        return full_name
+    username = str(owner_user.username or "").strip()
+    if username:
+        return username
+    return None
+
+
+def _owner_users_by_id(session: Session, agents: list[Agent], *, is_admin: bool) -> dict[str, User]:
+    if not is_admin:
+        return {}
+    owner_ids = {
+        str(row.owner_user_id or "").strip()
+        for row in agents
+        if str(row.owner_user_id or "").strip()
+    }
+    if not owner_ids:
+        return {}
+    rows = session.exec(select(User).where(User.id.in_(sorted(owner_ids)))).all()
+    return {str(row.id): row for row in rows}
+
+
+def _agent_payload(
+    agent: Agent,
+    *,
+    current_user_id: str | None,
+    is_admin: bool,
+    owner_user: User | None = None,
+) -> dict[str, Any]:
     tools = _jload(agent.tools_json, [])
     if not isinstance(tools, list):
         tools = []
+    owner_user_id = str(agent.owner_user_id or "").strip() or None
+    exposed_owner_user_id = owner_user_id if is_admin else None
+    owner_block: dict[str, Any] | None = None
+    if is_admin:
+        telegram_user_id = str(owner_user.telegram_user_id or "").strip() if owner_user else ""
+        username = str(owner_user.username or "").strip() if owner_user else ""
+        owner_block = {
+            "user_id": owner_user_id,
+            "telegram_user_id": telegram_user_id or None,
+            "username": username or None,
+            "display_name": _owner_display_name(owner_user),
+        }
     return {
         "id": agent.id,
-        "owner_user_id": agent.owner_user_id,
+        "owner_user_id": exposed_owner_user_id,
         "service_id": agent.service_id,
         "name": agent.name,
         "description": agent.description,
@@ -125,7 +171,43 @@ def _agent_payload(agent: Agent, *, current_user_id: str | None, is_admin: bool)
         "created_at": agent.created_at,
         "updated_at": agent.updated_at,
         "can_write": _can_write_agent(agent, user_id=current_user_id, is_admin=is_admin),
+        "owner": owner_block,
     }
+
+
+def _serialize_agents(
+    session: Session,
+    agents: list[Agent],
+    *,
+    current_user_id: str | None,
+    is_admin: bool,
+) -> list[dict[str, Any]]:
+    owners_by_id = _owner_users_by_id(session, agents, is_admin=is_admin)
+    return [
+        _agent_payload(
+            row,
+            current_user_id=current_user_id,
+            is_admin=is_admin,
+            owner_user=owners_by_id.get(str(row.owner_user_id or "").strip()),
+        )
+        for row in agents
+    ]
+
+
+def _serialize_agent(
+    session: Session,
+    agent: Agent,
+    *,
+    current_user_id: str | None,
+    is_admin: bool,
+) -> dict[str, Any]:
+    owners_by_id = _owner_users_by_id(session, [agent], is_admin=is_admin)
+    return _agent_payload(
+        agent,
+        current_user_id=current_user_id,
+        is_admin=is_admin,
+        owner_user=owners_by_id.get(str(agent.owner_user_id or "").strip()),
+    )
 
 
 def _append_agent_revision(
@@ -397,8 +479,8 @@ def list_agents(
             query = query.where(Agent.owner_user_id == current_user_id)
 
         rows = session.exec(query).all()
-        out = [
-            _agent_payload(row, current_user_id=current_user_id, is_admin=is_admin)
+        visible_rows = [
+            row
             for row in rows
             if _can_read_agent(
                 row,
@@ -407,6 +489,12 @@ def list_agents(
                 is_admin=is_admin,
             )
         ]
+        out = _serialize_agents(
+            session,
+            visible_rows,
+            current_user_id=current_user_id,
+            is_admin=is_admin,
+        )
         return {"ok": True, "items": out}
 
 
@@ -449,7 +537,15 @@ def create_agent(body: AgentCreateRequest):
         )
         session.commit()
         session.refresh(created)
-        return {"ok": True, "agent": _agent_payload(created, current_user_id=owner_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                created,
+                current_user_id=owner_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.get("/agents/{agent_id}")
@@ -462,7 +558,15 @@ def get_agent(agent_id: str):
         row = _get_agent_or_404(session, agent_id)
         if not _can_read_agent(row, user_id=current_user_id, service_id=service_id, is_admin=is_admin):
             raise HTTPException(404, "agent not found")
-        return {"ok": True, "agent": _agent_payload(row, current_user_id=current_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                row,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.patch("/agents/{agent_id}")
@@ -525,7 +629,15 @@ def patch_agent(agent_id: str, body: AgentPatchRequest):
             )
             session.commit()
             session.refresh(row)
-        return {"ok": True, "agent": _agent_payload(row, current_user_id=current_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                row,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.post("/agents/{agent_id}/fork")
@@ -568,7 +680,15 @@ def fork_agent(agent_id: str, body: AgentForkRequest):
         )
         session.commit()
         session.refresh(created)
-        return {"ok": True, "agent": _agent_payload(created, current_user_id=current_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                created,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.post("/agents/{agent_id}/publish")
@@ -591,7 +711,15 @@ def publish_agent(agent_id: str):
         )
         session.commit()
         session.refresh(row)
-        return {"ok": True, "agent": _agent_payload(row, current_user_id=current_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                row,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.post("/agents/{agent_id}/unpublish")
@@ -614,7 +742,15 @@ def unpublish_agent(agent_id: str):
         )
         session.commit()
         session.refresh(row)
-        return {"ok": True, "agent": _agent_payload(row, current_user_id=current_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                row,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.post("/agents/{agent_id}/archive")
@@ -638,7 +774,15 @@ def archive_agent(agent_id: str, body: AgentArchiveRequest):
         )
         session.commit()
         session.refresh(row)
-        return {"ok": True, "agent": _agent_payload(row, current_user_id=current_user_id, is_admin=is_admin)}
+        return {
+            "ok": True,
+            "agent": _serialize_agent(
+                session,
+                row,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
+        }
 
 
 @router.get("/agents/defaults")
@@ -657,7 +801,12 @@ def list_default_agents():
         ).all()
         return {
             "ok": True,
-            "items": [_agent_payload(row, current_user_id=current_user_id, is_admin=is_admin) for row in rows],
+            "items": _serialize_agents(
+                session,
+                rows,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
         }
 
 
@@ -704,7 +853,12 @@ def bootstrap_default_agents(body: AgentBootstrapDefaultsRequest):
 
         response: dict[str, Any] = {
             "ok": True,
-            "installed": [_agent_payload(item, current_user_id=current_user_id, is_admin=is_admin) for item in installed_items],
+            "installed": _serialize_agents(
+                session,
+                installed_items,
+                current_user_id=current_user_id,
+                is_admin=is_admin,
+            ),
             "installed_count": len(installed_items),
         }
         if conversation:

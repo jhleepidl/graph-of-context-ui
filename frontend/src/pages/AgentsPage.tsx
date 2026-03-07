@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { api } from '../api'
+import { api, getStoredAdminKey } from '../api'
 import ConversationAgentsPanel from '../components/ConversationAgentsPanel'
 
 type Props = {
@@ -13,6 +13,7 @@ type ThreadMembershipState = 'represented' | 'disabled' | 'missing'
 type AgentRecord = {
   id: string
   owner_user_id: string
+  owner: AgentOwnerSummary | null
   service_id: string
   name: string
   description: string
@@ -38,6 +39,13 @@ type AgentForm = {
   tools_text: string
   model: string
   visibility: AgentVisibility
+}
+
+type AgentOwnerSummary = {
+  user_id: string
+  telegram_user_id: string
+  username: string
+  display_name: string
 }
 
 type ThreadSummary = {
@@ -87,9 +95,19 @@ function normalizeAgent(raw: any): AgentRecord | null {
   if (!raw || typeof raw !== 'object') return null
   const id = asString(raw.id)
   if (!id) return null
+  let owner: AgentOwnerSummary | null = null
+  if (raw.owner && typeof raw.owner === 'object') {
+    owner = {
+      user_id: asString((raw.owner as any).user_id),
+      telegram_user_id: asString((raw.owner as any).telegram_user_id),
+      username: asString((raw.owner as any).username),
+      display_name: asString((raw.owner as any).display_name),
+    }
+  }
   return {
     id,
     owner_user_id: asString(raw.owner_user_id),
+    owner,
     service_id: asString(raw.service_id),
     name: asString(raw.name) || `agent-${id.slice(0, 8)}`,
     description: asString(raw.description),
@@ -197,6 +215,25 @@ function lineageKeyForAgent(agent: Pick<AgentRecord, 'id' | 'source_agent_id'>):
   return sourceAgentId || agent.id
 }
 
+function creatorPrimary(agent: AgentRecord): string {
+  const username = asString(agent.owner?.username)
+  if (username) return `@${username}`
+  const displayName = asString(agent.owner?.display_name)
+  if (displayName) return displayName
+  const userId = asString(agent.owner?.user_id) || asString(agent.owner_user_id)
+  if (userId) return `user:${userId.slice(0, 8)}`
+  return '-'
+}
+
+function creatorMeta(agent: AgentRecord): string {
+  const ownerUserId = asString(agent.owner?.user_id) || asString(agent.owner_user_id)
+  const telegramUserId = asString(agent.owner?.telegram_user_id)
+  const out: string[] = []
+  if (ownerUserId) out.push(`uid:${ownerUserId.slice(0, 8)}`)
+  if (telegramUserId) out.push(`tg:${telegramUserId.slice(0, 10)}`)
+  return out.join(' · ')
+}
+
 function readLinkedThreadId(): string | null {
   if (typeof window === 'undefined') return null
   const params = new URLSearchParams(window.location.search)
@@ -205,6 +242,7 @@ function readLinkedThreadId(): string | null {
 }
 
 export default function AgentsPage({ onNavigate }: Props) {
+  const isAdminViewer = Boolean(getStoredAdminKey())
   const [scope, setScope] = useState<AgentScope>('my')
   const [agents, setAgents] = useState<AgentRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -645,6 +683,7 @@ export default function AgentsPage({ onNavigate }: Props) {
                   <th>model</th>
                   <th>tools</th>
                   <th>description</th>
+                  {isAdminViewer && <th>creator</th>}
                   <th>thread</th>
                   <th>updated_at</th>
                   <th>actions</th>
@@ -679,6 +718,12 @@ export default function AgentsPage({ onNavigate }: Props) {
                       <td style={{ maxWidth: 320 }}>
                         {(agent.description || agent.instruction || '').replace(/\s+/g, ' ').slice(0, 180) || '-'}
                       </td>
+                      {isAdminViewer && (
+                        <td>
+                          <div title={creatorMeta(agent) || undefined}>{creatorPrimary(agent)}</div>
+                          {creatorMeta(agent) && <div className="muted">{creatorMeta(agent)}</div>}
+                        </td>
+                      )}
                       <td>
                         <span className="pill">{membershipStateLabel(threadState)}</span>
                       </td>
@@ -713,7 +758,7 @@ export default function AgentsPage({ onNavigate }: Props) {
                 })}
                 {sortedAgents.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={isAdminViewer ? 9 : 8}>
                       <span className="muted">결과가 없습니다.</span>
                     </td>
                   </tr>
@@ -770,6 +815,11 @@ export default function AgentsPage({ onNavigate }: Props) {
               <h3 style={{ margin: 0 }}>Edit Agent</h3>
               <button onClick={() => setEditingAgent(null)}>Close</button>
             </div>
+            {isAdminViewer && (
+              <div className="muted" style={{ marginBottom: 8 }}>
+                Creator: {creatorPrimary(editingAgent)}{creatorMeta(editingAgent) ? ` · ${creatorMeta(editingAgent)}` : ''}
+              </div>
+            )}
             <AgentFormFields form={editForm} onChange={setEditForm} />
             <div className="row" style={{ justifyContent: 'flex-end', marginTop: 10 }}>
               <button onClick={() => setEditingAgent(null)}>Cancel</button>
