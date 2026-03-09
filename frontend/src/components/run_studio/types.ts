@@ -130,6 +130,7 @@ export type RunStudioAgentTeam = {
   snapshot_node_id?: string | null
   snapshot_node_type?: string | null
   snapshot_source_key?: string | null
+  snapshot_source_path?: string | null
   items?: Array<{
     membership_id?: string
     agent_id: string
@@ -150,6 +151,7 @@ export type RunStudioAgentTeam = {
     visibility?: string | null
     source?: string | null
     source_key?: string | null
+    source_path?: string | null
     snapshot_node_id?: string | null
     snapshot_node_type?: string | null
   }>
@@ -181,6 +183,8 @@ export type RunStudioContextDecisions = {
     type?: string | null
     text?: string | null
     reason?: string | null
+    pin_level?: string | null
+    pinned?: boolean
     child_ids?: string[]
   }>
   missing?: Array<{
@@ -189,6 +193,8 @@ export type RunStudioContextDecisions = {
     type?: string | null
     text?: string | null
     reason?: string | null
+    pin_level?: string | null
+    pinned?: boolean
   }>
   conflicting?: Array<{
     edge_id?: string
@@ -221,6 +227,8 @@ export type RunStudioEvidence = {
     uncertainty?: string[]
     conflict_node_ids?: string[]
     related_node_ids?: string[]
+    pinned?: boolean
+    pin_level?: string | null
     score?: number
   }>
   counts?: Record<string, number>

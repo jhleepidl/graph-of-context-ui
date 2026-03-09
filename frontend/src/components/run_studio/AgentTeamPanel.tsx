@@ -43,6 +43,10 @@ export default function AgentTeamPanel({ team }: Props) {
                 {item.ephemeral && <span className="pill">ephemeral</span>}
               </div>
               <div className="muted">agent_id: {item.agent_id}</div>
+              {item.source_key && <div className="muted">source_key: {item.source_key}</div>}
+              {item.source_path && item.source_path !== item.source_key && (
+                <div className="muted">source_path: {item.source_path}</div>
+              )}
               {item.runtime_instance_id && <div className="muted">runtime_instance: {item.runtime_instance_id}</div>}
               {item.role_label && <div className="muted">role: {item.role_label}</div>}
               {(item.template_id || item.provider || item.model) && (

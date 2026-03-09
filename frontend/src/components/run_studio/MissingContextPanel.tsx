@@ -37,10 +37,18 @@ export default function MissingContextPanel({
               <article key={`${item.id || 'missing'}:${index}`} className="runStudioListItem">
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'MissingReference'}</span>
-                  {(item.target_node_id || item.id) && <button className="tiny" onClick={() => onIncludeNode?.(item.target_node_id || item.id || '')}>Include</button>}
-                  {(item.target_node_id || item.id) && <button className="tiny" onClick={() => onPinNode?.(item.target_node_id || item.id || '', 'preferred')}>Pin</button>}
-                  {(item.target_node_id || item.id) && <button className="tiny" onClick={() => onFocusNode?.(item.target_node_id || item.id || '')}>Focus in graph</button>}
-                  {(item.target_node_id || item.id) && <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id || '')}>Open detail</button>}
+                  {(item.target_node_id || item.id) && onIncludeNode && (
+                    <button className="tiny" onClick={() => onIncludeNode(item.target_node_id || item.id || '')}>Include</button>
+                  )}
+                  {!item.pinned && (item.target_node_id || item.id) && onPinNode && (
+                    <button className="tiny" onClick={() => onPinNode(item.target_node_id || item.id || '', 'preferred')}>Pin</button>
+                  )}
+                  {(item.target_node_id || item.id) && onFocusNode && (
+                    <button className="tiny" onClick={() => onFocusNode(item.target_node_id || item.id || '')}>Focus</button>
+                  )}
+                  {(item.target_node_id || item.id) && onOpenNode && (
+                    <button className="tiny" onClick={() => onOpenNode(item.target_node_id || item.id || '')}>Detail</button>
+                  )}
                 </div>
                 <div>{item.text || item.id || '(unresolved reference)'}</div>
                 {item.reason && <div className="muted">{item.reason}</div>}
@@ -57,15 +65,13 @@ export default function MissingContextPanel({
               <article key={`${item.edge_id || item.from_id || 'conflict'}:${index}`} className="runStudioListItem">
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'conflict'}</span>
-                  {item.related_node_ids && item.related_node_ids.length > 0 && (
+                  {item.related_node_ids && item.related_node_ids.length > 0 && onFocusConflict && (
                     <>
-                      <button className="tiny" onClick={() => onFocusConflict?.(item.related_node_ids || [])}>
-                        Focus pair
-                      </button>
-                      <button className="tiny" onClick={() => onOpenConflict?.(item.related_node_ids || [])}>
-                        Compare pair
-                      </button>
+                      <button className="tiny" onClick={() => onFocusConflict(item.related_node_ids || [])}>Focus</button>
                     </>
+                  )}
+                  {item.related_node_ids && item.related_node_ids.length > 0 && onOpenConflict && (
+                    <button className="tiny" onClick={() => onOpenConflict(item.related_node_ids || [])}>Compare</button>
                   )}
                 </div>
                 <div>{item.from_text || item.from_id || '-'}</div>

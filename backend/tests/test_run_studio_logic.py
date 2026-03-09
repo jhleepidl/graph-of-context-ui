@@ -97,6 +97,26 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertEqual(snapshot["source_key"], "runtime_agents")
         self.assertEqual(snapshot["members"][0]["runtime_instance_id"], "exec-1")
 
+    def test_runtime_team_snapshot_accepts_camel_case_runtime_team_snapshot(self) -> None:
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+        nodes = [
+            make_node(
+                "run-camel",
+                "Run",
+                payload={
+                    "runtimeTeamSnapshot": {
+                        "runtime_agents": [{"runtime_instance_id": "rt-camel-1", "role_label": "Executor"}]
+                    }
+                },
+                created_at=base,
+            ),
+        ]
+        snapshot = _extract_runtime_team_snapshot(nodes)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual(snapshot["source_key"], "runtime_team_snapshot.runtime_agents")
+        self.assertEqual(snapshot["members"][0]["runtime_instance_id"], "rt-camel-1")
+
     def test_runtime_team_snapshot_ignores_plain_team_plan_metadata(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
         nodes = [
@@ -177,6 +197,7 @@ class RunStudioLogicTests(unittest.TestCase):
             summary = _agent_team_summary(session, thread_id="thread-conv", nodes=[])
             self.assertEqual(len(summary["items"]), 1)
             self.assertEqual(summary["items"][0]["source"], "conversation_membership")
+            self.assertEqual(summary["items"][0]["source_key"], "conversation_agents")
             self.assertTrue(bool(summary["items"][0]["ephemeral"]))
 
     def test_agent_team_falls_back_to_inferred_step_agents(self) -> None:
@@ -196,6 +217,7 @@ class RunStudioLogicTests(unittest.TestCase):
             self.assertEqual(summary["items"][0]["source"], "inferred_from_steps")
             self.assertEqual(summary["items"][0]["agent_id"], "runtime-worker")
             self.assertEqual(summary["items"][0]["runtime_status"], "running")
+            self.assertEqual(summary["items"][0]["source_key"], "step_payload.agent_id")
 
     def test_agent_team_preserves_runtime_ephemeral_flag(self) -> None:
         engine = create_engine("sqlite://")
@@ -223,8 +245,72 @@ class RunStudioLogicTests(unittest.TestCase):
             summary = _agent_team_summary(session, thread_id="thread-runtime", nodes=nodes)
             self.assertEqual(len(summary["items"]), 1)
             self.assertEqual(summary["items"][0]["source"], "runtime_snapshot")
+            self.assertEqual(summary["items"][0]["source_key"], "runtime_team_snapshot.runtime_agents")
             self.assertTrue(bool(summary["items"][0]["ephemeral"]))
             self.assertEqual(summary["items"][0]["runtime_status"], "running")
+
+    def test_agent_team_runtime_snapshot_precedes_conversation_membership(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            conversation = Conversation(thread_id="thread-priority", owner_user_id="u1", service_id="svc")
+            session.add(conversation)
+            agent = Agent(owner_user_id="u1", service_id="svc", name="StaticAgent")
+            session.add(agent)
+            session.commit()
+            session.add(
+                ConversationAgent(
+                    conversation_id=conversation.id,
+                    agent_id=agent.id,
+                    enabled=True,
+                    order_index=0,
+                    overrides_json="{}",
+                )
+            )
+            session.commit()
+
+            nodes = [
+                make_node(
+                    "run-priority",
+                    "Run",
+                    payload={
+                        "runtime_team_snapshot": {
+                            "runtime_agents": [{"runtime_instance_id": "rt-priority-1", "role_label": "LiveAgent"}]
+                        }
+                    },
+                    created_at=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+                ),
+            ]
+            summary = _agent_team_summary(session, thread_id="thread-priority", nodes=nodes)
+            self.assertEqual(len(summary["items"]), 1)
+            self.assertEqual(summary["items"][0]["source"], "runtime_snapshot")
+            self.assertEqual(summary["items"][0]["source_key"], "runtime_team_snapshot.runtime_agents")
+
+    def test_agent_team_runtime_source_key_normalizes_nested_source_path(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            nodes = [
+                make_node(
+                    "run-nested-source",
+                    "Run",
+                    payload={
+                        "runtime": {
+                            "runtimeTeamSnapshot": {
+                                "runtime_agents": [{"runtime_instance_id": "rt-nested-1", "role_label": "Nested"}]
+                            }
+                        }
+                    },
+                    created_at=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+                ),
+            ]
+            summary = _agent_team_summary(session, thread_id="thread-nested-source", nodes=nodes)
+            self.assertEqual(len(summary["items"]), 1)
+            item = summary["items"][0]
+            self.assertEqual(item["source"], "runtime_snapshot")
+            self.assertEqual(item["source_key"], "runtime_team_snapshot.runtime_agents")
+            self.assertEqual(item["source_path"], "runtime.runtime_team_snapshot.runtime_agents")
+            self.assertEqual(summary.get("snapshot_source_key"), "runtime_team_snapshot.runtime_agents")
 
     def test_evidence_ranking_prioritizes_supported_selected_claims(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)

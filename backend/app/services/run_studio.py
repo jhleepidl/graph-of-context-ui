@@ -186,7 +186,9 @@ def _is_runtime_snapshot_shape(value: Any) -> bool:
         key in value
         for key in (
             "runtime_team_snapshot",
+            "runtimeTeamSnapshot",
             "runtime_agents",
+            "runtimeAgents",
             "snapshot_id",
             "snapshot_at",
             "snapshot_version",
@@ -237,14 +239,19 @@ def _runtime_member_candidates_from_container(
     out: list[tuple[str, list[dict[str, Any]]]] = []
 
     runtime_snapshot = container.get("runtime_team_snapshot")
+    if runtime_snapshot is None:
+        runtime_snapshot = container.get("runtimeTeamSnapshot")
     if isinstance(runtime_snapshot, str):
         parsed = _jload(runtime_snapshot, None)
         if parsed is not None:
             runtime_snapshot = parsed
 
     if isinstance(runtime_snapshot, dict):
+        snapshot_runtime_agents_value = runtime_snapshot.get("runtime_agents")
+        if snapshot_runtime_agents_value is None:
+            snapshot_runtime_agents_value = runtime_snapshot.get("runtimeAgents")
         canonical_runtime_agents = _extract_runtime_members(
-            runtime_snapshot.get("runtime_agents"),
+            snapshot_runtime_agents_value,
             allow_string_ids=True,
             allow_keyed_map=True,
         )
@@ -269,8 +276,11 @@ def _runtime_member_candidates_from_container(
         if members:
             out.append((f"{source_prefix}runtime_team_snapshot", members))
 
+    top_runtime_agents_value = container.get("runtime_agents")
+    if top_runtime_agents_value is None:
+        top_runtime_agents_value = container.get("runtimeAgents")
     top_runtime_agents = _extract_runtime_members(
-        container.get("runtime_agents"),
+        top_runtime_agents_value,
         allow_string_ids=True,
         allow_keyed_map=True,
     )
@@ -310,6 +320,27 @@ def _runtime_source_priority(source_key: str) -> int:
     if clean.endswith("runtime_team_snapshot"):
         return 20
     return 10
+
+
+def _normalize_runtime_source_key(source_key: Any) -> str:
+    clean = str(source_key or "").strip()
+    if not clean:
+        return "runtime_snapshot"
+    if clean.endswith("runtime_team_snapshot.runtime_agents"):
+        return "runtime_team_snapshot.runtime_agents"
+    if clean.endswith("runtime_agents"):
+        return "runtime_agents"
+    if "team_plan." in clean:
+        return f"team_plan.{clean.split('team_plan.', 1)[1]}"
+    if "runtime_team_snapshot." in clean:
+        return f"runtime_team_snapshot.{clean.split('runtime_team_snapshot.', 1)[1]}"
+    if clean.endswith("runtime_team_snapshot"):
+        return "runtime_team_snapshot"
+    if clean.endswith(".members"):
+        return "members"
+    if clean.endswith(".agents"):
+        return "agents"
+    return clean
 
 
 def _extract_runtime_team_snapshot(nodes: list[Node]) -> dict[str, Any] | None:
@@ -373,6 +404,45 @@ def _step_activity_index(nodes: list[Node]) -> dict[str, dict[str, int]]:
             row = out.setdefault(key, {})
             row[status] = row.get(status, 0) + 1
     return out
+
+
+def _step_activity_source_index(nodes: list[Node]) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
+    field_names = (
+        "agent_id",
+        "agent",
+        "assignee",
+        "runtime_instance_id",
+        "instance_id",
+        "executor_id",
+        "template_id",
+    )
+    for step in sorted([node for node in nodes if node.type == "Step"], key=_created_sort_key):
+        payload = _node_payload(step)
+        for field_name in field_names:
+            key = str(payload.get(field_name) or "").strip()
+            if not key:
+                continue
+            row = out.setdefault(key, {})
+            row[field_name] = row.get(field_name, 0) + 1
+    return out
+
+
+def _preferred_step_source_key(field_counts: dict[str, int] | None) -> str:
+    if not field_counts:
+        return "step_payload.agent_id"
+    for field_name in (
+        "agent_id",
+        "agent",
+        "assignee",
+        "runtime_instance_id",
+        "instance_id",
+        "executor_id",
+        "template_id",
+    ):
+        if int(field_counts.get(field_name, 0)) > 0:
+            return f"step_payload.{field_name}"
+    return "step_payload.agent_id"
 
 
 def _runtime_status_from_counts(status_counts: dict[str, int]) -> str:
@@ -571,9 +641,12 @@ def _agent_team_summary(
         .limit(1)
     ).first()
     step_activity_by_agent = _step_activity_index(nodes)
+    step_activity_sources_by_agent = _step_activity_source_index(nodes)
 
     runtime_snapshot = _extract_runtime_team_snapshot(nodes)
     if runtime_snapshot:
+        runtime_source_path = str(runtime_snapshot.get("source_key") or "")
+        runtime_source_key = _normalize_runtime_source_key(runtime_source_path)
         runtime_items: list[dict[str, Any]] = []
         for raw_member in runtime_snapshot.get("members", []):
             if not isinstance(raw_member, dict):
@@ -611,7 +684,8 @@ def _agent_team_summary(
                     ) else _runtime_status_from_counts(status_counts),
                     "status_counts": status_counts,
                     "source": "runtime_snapshot",
-                    "source_key": str(runtime_snapshot.get("source_key") or ""),
+                    "source_key": runtime_source_key,
+                    "source_path": runtime_source_path or None,
                     "snapshot_node_id": runtime_snapshot.get("node_id"),
                     "snapshot_node_type": runtime_snapshot.get("node_type"),
                     "enabled": bool(raw_member.get("enabled", True)),
@@ -625,7 +699,8 @@ def _agent_team_summary(
             "conversation_id": conversation.id if conversation else None,
             "snapshot_node_id": runtime_snapshot.get("node_id"),
             "snapshot_node_type": runtime_snapshot.get("node_type"),
-            "snapshot_source_key": runtime_snapshot.get("source_key"),
+            "snapshot_source_key": runtime_source_key,
+            "snapshot_source_path": runtime_source_path or None,
             "items": runtime_items,
             "active_count": sum(1 for item in runtime_items if item["runtime_status"] in {"running", "queued"}),
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -653,10 +728,15 @@ def _agent_team_summary(
                     "capability_tags": [],
                     "ephemeral": False,
                     "source": "inferred_from_steps",
+                    "source_key": _preferred_step_source_key(step_activity_sources_by_agent.get(agent_id)),
                 }
             )
         return {
             "conversation_id": None,
+            "snapshot_node_id": None,
+            "snapshot_node_type": None,
+            "snapshot_source_key": None,
+            "snapshot_source_path": None,
             "items": inferred_items,
             "active_count": sum(1 for item in inferred_items if item["runtime_status"] in {"running", "queued"}),
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -723,11 +803,16 @@ def _agent_team_summary(
                 "model": agent.model if agent else "",
                 "visibility": agent.visibility if agent else "",
                 "source": "conversation_membership",
+                "source_key": "conversation_agents",
             }
         )
 
     return {
         "conversation_id": conversation.id,
+        "snapshot_node_id": None,
+        "snapshot_node_type": None,
+        "snapshot_source_key": None,
+        "snapshot_source_path": None,
         "items": items,
         "active_count": sum(1 for item in items if item["runtime_status"] in {"running", "queued"}),
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -855,6 +940,8 @@ def _evidence_summary(
         selected_in_context = node.id in active_set
         claim_type = node.type
         normalized_text = _short_text(claim_text, 300)
+        pin_level = str(payload.get("pin_level") or "").strip().lower() or None
+        is_pinned = pin_level in {"required", "preferred"} or bool(payload.get("pinned") or payload.get("is_pinned"))
         recency_bonus = ((idx + 1) / total_candidates) * 2.0
         score = 0.0
         if selected_in_context:
@@ -897,6 +984,8 @@ def _evidence_summary(
                 "uncertainty": uncertainty_notes[:6],
                 "conflict_node_ids": sorted(set(conflict_node_ids))[:8],
                 "related_node_ids": related_ids[:16],
+                "pin_level": pin_level,
+                "pinned": is_pinned,
                 "score": round(score, 3),
             }
         )

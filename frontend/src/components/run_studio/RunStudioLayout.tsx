@@ -23,12 +23,12 @@ type Props = {
   onOpenGraph: () => void
   onOpenRawTrace: () => void
   onOpenAdvanced: () => void
-  onFocusNode: (nodeId: string) => void
-  onOpenNode: (nodeId: string) => void
-  onFocusTrace: (nodeIds: string[]) => void
-  onOpenTrace: (nodeIds: string[]) => void
-  onAddToActive: (nodeId: string) => void
-  onPinNode: (nodeId: string, level: 'required' | 'preferred') => void
+  onFocusNode?: (nodeId: string) => void
+  onOpenNode?: (nodeId: string) => void
+  onFocusTrace?: (nodeIds: string[]) => void
+  onOpenTrace?: (nodeIds: string[]) => void
+  onAddToActive?: (nodeId: string) => void
+  onPinNode?: (nodeId: string, level: 'required' | 'preferred') => void
 }
 
 export default function RunStudioLayout({
@@ -85,7 +85,6 @@ export default function RunStudioLayout({
           decisions={decisions}
           onFocusNode={onFocusNode}
           onOpenNode={onOpenNode}
-          onAddToActive={onAddToActive}
           onPinNode={onPinNode}
         />
         <EvidencePanel

@@ -153,12 +153,10 @@ def build_context_decisions(
         node = nodes_by_id.get(parent_id)
         if not node:
             continue
+        summary = _node_summary(node)
         excluded_items.append(
             {
-                "id": parent_id,
-                "target_node_id": parent_id,
-                "type": node.type,
-                "text": _short_text(node.text or ""),
+                **summary,
                 "reason": "Excluded from compiled context because child parts are active",
                 "child_ids": sorted(parent_to_children.get(parent_id, set())),
             }
@@ -175,12 +173,10 @@ def build_context_decisions(
             explicit_missing = payload.get("missing") is True or status in {"missing", "todo", "needed", "required"}
             text_like_gap = "?" in str(node.text or "") or "missing" in str(node.text or "").lower()
             if explicit_missing or text_like_gap:
+                summary = _node_summary(node)
                 missing_items.append(
                     {
-                        "id": node.id,
-                        "target_node_id": node.id,
-                        "type": node_type,
-                        "text": _short_text(node.text or ""),
+                        **summary,
                         "reason": str(payload.get("why") or payload.get("reason") or "Context candidate is not selected"),
                     }
                 )
@@ -195,12 +191,10 @@ def build_context_decisions(
             for ref in refs:
                 linked = nodes_by_id.get(ref)
                 if linked:
+                    summary = _node_summary(linked)
                     missing_items.append(
                         {
-                            "id": linked.id,
-                            "target_node_id": linked.id,
-                            "type": linked.type,
-                            "text": _short_text(linked.text or ""),
+                            **summary,
                             "reason": f"Mentioned as missing by step {step.id[:8]}",
                         }
                     )
@@ -212,6 +206,8 @@ def build_context_decisions(
                             "type": "MissingReference",
                             "text": _short_text(ref),
                             "reason": f"Unresolved missing context reference in step {step.id[:8]}",
+                            "pin_level": None,
+                            "pinned": False,
                         }
                     )
 

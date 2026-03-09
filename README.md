@@ -21,9 +21,11 @@ This repo now ships with a **Run Studio-first** workspace while keeping the gene
 
 All existing APIs remain available.
 
-## Run Studio second-pass behavior
-- Agent Team prefers runtime team snapshots (`runtime_team_snapshot`, `runtime_agents`, `team_plan`) from run/step payloads when present, and falls back to conversation membership/inferred steps when missing.
-- Runtime extraction is now stricter: plain `team_plan` metadata dictionaries are ignored unless they contain explicit member-like collections, preventing garbage members from keys like `mode`, `reason`, `budget`, `execution_order`.
+## Run Studio behavior (hardened)
+- Canonical runtime snapshot field is `runtime_team_snapshot` (with compatibility tolerance for `runtimeTeamSnapshot`).
+- Agent Team extraction order is explicit: `runtime_team_snapshot.runtime_agents` -> `runtime_agents` -> recognized member collections in known snapshot shapes -> conversation membership -> inferred step agents.
+- Runtime extraction is strict: plain `team_plan` metadata dictionaries are ignored unless they carry explicit member-like collections, preventing garbage members from keys like `mode`, `reason`, `budget`, `execution_order`.
+- Agent Team `source`/`source_key` labels are normalized and predictable (`runtime_snapshot`, `conversation_membership`, `inferred_from_steps`; keys like `runtime_team_snapshot.runtime_agents`, `runtime_agents`, `team_plan.agents`, `conversation_agents`, `step_payload.agent_id`).
 - Context projection separates:
   - `core_items` (Decision/Assumption/Plan/MemoryItem/Observation/ContextSummary)
   - `supporting_items` (Artifact/Resource/ContextCandidate)

@@ -87,9 +87,11 @@ Notes:
 - The underlying graph schema (`Node`/`Edge`) is unchanged.
 - Projections expose conversation/execution/memory-context logical views for frontend consumption.
 - Agent Team projection now uses stricter runtime extraction rules:
-  - canonical precedence favors `runtime_team_snapshot.runtime_agents` and explicit runtime member collections
+  - canonical runtime snapshot field is `runtime_team_snapshot` (camelCase `runtimeTeamSnapshot` tolerated for compatibility)
+  - canonical precedence favors `runtime_team_snapshot.runtime_agents`, then `runtime_agents`, then recognized snapshot member collections
   - plain plan metadata dicts are ignored (no fake members from `mode/reason/budget/execution_order`)
   - fallback remains `conversation_membership` then `inferred_from_steps`
+  - `source` / `source_key` labels are normalized for predictable consumers
 - Memory/context projection includes explicit buckets: `core_items`, `supporting_items`, `execution_items` (while preserving compatibility fields like `recent_items`).
 - Evidence projection now returns ranked claims with `score` and `related_node_ids` for UI drill-down.
 
