@@ -3,9 +3,11 @@ import { type RunStudioContextDecisions } from './types'
 
 type Props = {
   decisions: RunStudioContextDecisions | null
+  onOpenNode?: (nodeId: string) => void
+  onOpenConflict?: (nodeIds: string[]) => void
 }
 
-export default function MissingContextPanel({ decisions }: Props) {
+export default function MissingContextPanel({ decisions, onOpenNode, onOpenConflict }: Props) {
   const missing = decisions?.missing || []
   const conflicting = decisions?.conflicting || []
 
@@ -23,6 +25,11 @@ export default function MissingContextPanel({ decisions }: Props) {
               <article key={`${item.id || 'missing'}:${index}`} className="runStudioListItem">
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'MissingReference'}</span>
+                  {(item.target_node_id || item.id) && (
+                    <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id || '')}>
+                      Open
+                    </button>
+                  )}
                 </div>
                 <div>{item.text || item.id || '(unresolved reference)'}</div>
                 {item.reason && <div className="muted">{item.reason}</div>}
@@ -39,6 +46,11 @@ export default function MissingContextPanel({ decisions }: Props) {
               <article key={`${item.edge_id || item.from_id || 'conflict'}:${index}`} className="runStudioListItem">
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'conflict'}</span>
+                  {item.related_node_ids && item.related_node_ids.length > 0 && (
+                    <button className="tiny" onClick={() => onOpenConflict?.(item.related_node_ids || [])}>
+                      Open pair
+                    </button>
+                  )}
                 </div>
                 <div>{item.from_text || item.from_id || '-'}</div>
                 <div className="muted">vs</div>

@@ -82,11 +82,34 @@ export type RunStudioSummary = {
     }
     memory_context?: {
       context_node_count?: number
+      core_count?: number
+      supporting_count?: number
+      execution_count?: number
       selected_count?: number
       pinned_count?: number
       conflict_count?: number
       support_count?: number
       reference_count?: number
+      core_items?: Array<{
+        id: string
+        type?: string | null
+        text?: string | null
+        selected?: boolean
+        pinned?: boolean
+      }>
+      supporting_items?: Array<{
+        id: string
+        type?: string | null
+        text?: string | null
+        selected?: boolean
+        pinned?: boolean
+      }>
+      execution_items?: Array<{
+        id: string
+        type?: string | null
+        text?: string | null
+        selected?: boolean
+      }>
       recent_items?: Array<{
         id: string
         type?: string | null
@@ -104,19 +127,31 @@ export type RunStudioSummary = {
 
 export type RunStudioAgentTeam = {
   conversation_id?: string | null
+  snapshot_node_id?: string | null
+  snapshot_node_type?: string | null
+  snapshot_source_key?: string | null
   items?: Array<{
     membership_id?: string
     agent_id: string
+    runtime_instance_id?: string | null
     name?: string | null
+    role_label?: string | null
+    template_id?: string | null
+    provider?: string | null
     enabled?: boolean
     order_index?: number | null
     runtime_status?: string | null
     status_counts?: Record<string, number>
     responsibilities?: string[]
+    capability_tags?: string[]
+    ephemeral?: boolean
     description?: string | null
     model?: string | null
     visibility?: string | null
     source?: string | null
+    source_key?: string | null
+    snapshot_node_id?: string | null
+    snapshot_node_type?: string | null
   }>
   active_count?: number
   updated_at?: string | null
@@ -127,6 +162,7 @@ export type RunStudioContextDecisions = {
   context_set_name?: string | null
   selected?: Array<{
     id: string
+    target_node_id?: string
     type?: string | null
     text?: string | null
     pin_level?: string | null
@@ -134,12 +170,14 @@ export type RunStudioContextDecisions = {
   }>
   pinned?: Array<{
     id: string
+    target_node_id?: string
     type?: string | null
     text?: string | null
     pin_level?: string | null
   }>
   excluded?: Array<{
     id: string
+    target_node_id?: string
     type?: string | null
     text?: string | null
     reason?: string | null
@@ -147,6 +185,7 @@ export type RunStudioContextDecisions = {
   }>
   missing?: Array<{
     id?: string
+    target_node_id?: string
     type?: string | null
     text?: string | null
     reason?: string | null
@@ -159,6 +198,7 @@ export type RunStudioContextDecisions = {
     from_text?: string | null
     to_text?: string | null
     reason?: string | null
+    related_node_ids?: string[]
   }>
   compiled_kept_node_ids?: string[]
   counts?: Record<string, number>
@@ -180,6 +220,8 @@ export type RunStudioEvidence = {
     provenance?: string[]
     uncertainty?: string[]
     conflict_node_ids?: string[]
+    related_node_ids?: string[]
+    score?: number
   }>
   counts?: Record<string, number>
   updated_at?: string | null

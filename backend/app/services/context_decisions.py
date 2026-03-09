@@ -70,6 +70,7 @@ def _node_summary(node: Node) -> dict[str, Any]:
     is_pinned = bool(payload.get("pinned") or payload.get("is_pinned")) or pin_level in {"required", "preferred"}
     return {
         "id": node.id,
+        "target_node_id": node.id,
         "type": node.type,
         "text": _short_text(node.text or ""),
         "created_at": node.created_at,
@@ -155,6 +156,7 @@ def build_context_decisions(
         excluded_items.append(
             {
                 "id": parent_id,
+                "target_node_id": parent_id,
                 "type": node.type,
                 "text": _short_text(node.text or ""),
                 "reason": "Excluded from compiled context because child parts are active",
@@ -176,6 +178,7 @@ def build_context_decisions(
                 missing_items.append(
                     {
                         "id": node.id,
+                        "target_node_id": node.id,
                         "type": node_type,
                         "text": _short_text(node.text or ""),
                         "reason": str(payload.get("why") or payload.get("reason") or "Context candidate is not selected"),
@@ -195,6 +198,7 @@ def build_context_decisions(
                     missing_items.append(
                         {
                             "id": linked.id,
+                            "target_node_id": linked.id,
                             "type": linked.type,
                             "text": _short_text(linked.text or ""),
                             "reason": f"Mentioned as missing by step {step.id[:8]}",
@@ -204,6 +208,7 @@ def build_context_decisions(
                     missing_items.append(
                         {
                             "id": "",
+                            "target_node_id": "",
                             "type": "MissingReference",
                             "text": _short_text(ref),
                             "reason": f"Unresolved missing context reference in step {step.id[:8]}",
@@ -222,6 +227,7 @@ def build_context_decisions(
                 "type": edge.type,
                 "from_id": edge.from_id,
                 "to_id": edge.to_id,
+                "related_node_ids": [edge.from_id, edge.to_id],
                 "from_text": _short_text(src.text or "") if src else "",
                 "to_text": _short_text(dst.text or "") if dst else "",
                 "reason": "Explicit conflict edge in graph",
@@ -240,6 +246,7 @@ def build_context_decisions(
                     "type": "payload_conflict_ref",
                     "from_id": node.id,
                     "to_id": ref,
+                    "related_node_ids": [node.id, ref],
                     "from_text": _short_text(node.text or ""),
                     "to_text": _short_text(other.text or "") if other else _short_text(ref),
                     "reason": f"Node payload marks conflict via '{'conflicts_with' if payload.get('conflicts_with') else 'contradicts'}'",

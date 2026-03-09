@@ -3,9 +3,10 @@ import { type RunStudioContextDecisions } from './types'
 
 type Props = {
   decisions: RunStudioContextDecisions | null
+  onOpenNode?: (nodeId: string) => void
 }
 
-export default function ContextDecisionPanel({ decisions }: Props) {
+export default function ContextDecisionPanel({ decisions, onOpenNode }: Props) {
   const selected = decisions?.selected || []
   const pinned = decisions?.pinned || []
   const excluded = decisions?.excluded || []
@@ -33,6 +34,11 @@ export default function ContextDecisionPanel({ decisions }: Props) {
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'Node'}</span>
                   {item.pinned && <span className="pill">pinned {item.pin_level || ''}</span>}
+                  {item.target_node_id && (
+                    <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id)}>
+                      Open
+                    </button>
+                  )}
                 </div>
                 <div>{item.text || item.id}</div>
               </article>
@@ -48,6 +54,11 @@ export default function ContextDecisionPanel({ decisions }: Props) {
               <article key={item.id} className="runStudioListItem">
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'Node'}</span>
+                  {item.target_node_id && (
+                    <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id)}>
+                      Open
+                    </button>
+                  )}
                 </div>
                 <div>{item.text || item.id}</div>
                 <div className="muted">{item.reason || ''}</div>

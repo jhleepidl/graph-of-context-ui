@@ -20,6 +20,30 @@ CONTEXT_NODE_TYPES = {
     "Artifact",
     "Message",
     "Step",
+    "Run",
+    "ToolCall",
+    "ToolResult",
+}
+CORE_CONTEXT_NODE_TYPES = {
+    "Decision",
+    "Assumption",
+    "Plan",
+    "MemoryItem",
+    "Observation",
+    "ContextSummary",
+}
+SUPPORTING_CONTEXT_NODE_TYPES = {
+    "Artifact",
+    "Resource",
+    "ContextCandidate",
+}
+EXECUTION_CONTEXT_NODE_TYPES = {
+    "Step",
+    "Message",
+    "Fold",
+    "Run",
+    "ToolCall",
+    "ToolResult",
 }
 
 
@@ -212,24 +236,36 @@ def memory_context_projection(
     context_nodes = [n for n in nodes_list if str(getattr(n, "type", "")) in CONTEXT_NODE_TYPES]
     context_nodes.sort(key=_created_sort_key)
 
-    items: list[dict[str, Any]] = []
+    core_items: list[dict[str, Any]] = []
+    supporting_items: list[dict[str, Any]] = []
+    execution_items: list[dict[str, Any]] = []
     for node in context_nodes:
         nid = str(node.id)
         payload = payload_by_id.get(nid, {})
         pin_level = str(payload.get("pin_level") or "").strip().lower()
         is_pinned = pin_level in {"required", "preferred"} or bool(payload.get("pinned") or payload.get("is_pinned"))
         text = str(getattr(node, "text", "") or "").strip()
-        items.append(
-            {
-                "id": nid,
-                "type": str(getattr(node, "type", "") or "Unknown"),
-                "text": text,
-                "created_at": getattr(node, "created_at", None),
-                "selected": nid in active_set,
-                "pinned": is_pinned,
-                "pin_level": pin_level or None,
-            }
-        )
+        item_type = str(getattr(node, "type", "") or "Unknown")
+        item = {
+            "id": nid,
+            "type": item_type,
+            "text": text,
+            "created_at": getattr(node, "created_at", None),
+            "selected": nid in active_set,
+            "pinned": is_pinned,
+            "pin_level": pin_level or None,
+            "category": "core" if item_type in CORE_CONTEXT_NODE_TYPES else (
+                "supporting" if item_type in SUPPORTING_CONTEXT_NODE_TYPES else "execution"
+            ),
+        }
+        if item_type in CORE_CONTEXT_NODE_TYPES:
+            core_items.append(item)
+        elif item_type in SUPPORTING_CONTEXT_NODE_TYPES:
+            supporting_items.append(item)
+        else:
+            execution_items.append(item)
+
+    all_items = core_items + supporting_items + execution_items
 
     conflicts: list[dict[str, Any]] = []
     supports: list[dict[str, Any]] = []
@@ -246,13 +282,19 @@ def memory_context_projection(
             references.append({"from_id": src, "to_id": dst, "type": etype})
 
     return {
-        "context_node_count": len(items),
-        "selected_count": sum(1 for item in items if item["selected"]),
-        "pinned_count": sum(1 for item in items if item["pinned"]),
+        "context_node_count": len(all_items),
+        "core_count": len(core_items),
+        "supporting_count": len(supporting_items),
+        "execution_count": len(execution_items),
+        "selected_count": sum(1 for item in all_items if item["selected"]),
+        "pinned_count": sum(1 for item in all_items if item["pinned"]),
         "conflict_count": len(conflicts),
         "support_count": len(supports),
         "reference_count": len(references),
-        "recent_items": items[-30:],
+        "core_items": core_items[-30:],
+        "supporting_items": supporting_items[-30:],
+        "execution_items": execution_items[-30:],
+        "recent_items": (core_items + supporting_items)[-30:],
         "conflicts": conflicts[-20:],
         "supports": supports[-30:],
         "references": references[-40:],

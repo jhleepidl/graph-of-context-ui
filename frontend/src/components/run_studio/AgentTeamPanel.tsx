@@ -31,16 +31,33 @@ export default function AgentTeamPanel({ team }: Props) {
       <div className="runStudioList">
         {items.map((item, index) => {
           const status = String(item.runtime_status || 'idle')
+          const source = String(item.source || 'unknown')
           return (
             <article key={`${item.agent_id}:${index}`} className="runStudioListItem">
               <div className="row" style={{ marginBottom: 6 }}>
-                <b>{item.name || item.agent_id}</b>
+                <b>{item.name || item.role_label || item.agent_id}</b>
                 <span className={`pill runStudioStatus ${runtimeClass(status)}`}>{status}</span>
+                <span className="pill">{source}</span>
                 {!item.enabled && <span className="pill">disabled</span>}
                 {typeof item.order_index === 'number' && <span className="pill">#{item.order_index + 1}</span>}
+                {item.ephemeral && <span className="pill">ephemeral</span>}
               </div>
               <div className="muted">agent_id: {item.agent_id}</div>
+              {item.runtime_instance_id && <div className="muted">runtime_instance: {item.runtime_instance_id}</div>}
+              {item.role_label && <div className="muted">role: {item.role_label}</div>}
+              {(item.template_id || item.provider || item.model) && (
+                <div className="muted">
+                  template: {item.template_id || '-'} | provider: {item.provider || '-'} | model: {item.model || '-'}
+                </div>
+              )}
               {item.description && <div className="muted">{item.description}</div>}
+              {item.capability_tags && item.capability_tags.length > 0 && (
+                <div className="runStudioMetaRow">
+                  {item.capability_tags.slice(0, 5).map((tag) => (
+                    <span key={tag} className="pill">{tag}</span>
+                  ))}
+                </div>
+              )}
               {item.responsibilities && item.responsibilities.length > 0 && (
                 <div className="runStudioMetaRow">
                   {item.responsibilities.slice(0, 4).map((role) => (

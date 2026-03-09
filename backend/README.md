@@ -86,6 +86,9 @@ Notes:
 - Existing routes are preserved.
 - The underlying graph schema (`Node`/`Edge`) is unchanged.
 - Projections expose conversation/execution/memory-context logical views for frontend consumption.
+- Agent Team projection prefers latest runtime snapshot payloads from `Run`/`Step` nodes (`runtime_team_snapshot`, `runtime_agents`, `team_plan`) and falls back to conversation membership only when runtime snapshots are absent.
+- Memory/context projection includes explicit buckets: `core_items`, `supporting_items`, `execution_items` (while preserving compatibility fields like `recent_items`).
+- Evidence projection now returns ranked claims with `score` and `related_node_ids` for UI drill-down.
 
 ## Resource node plain-text + structured payload
 - `POST /api/threads/{thread_id}/resources`는 기존 필드와 함께 아래 옵션을 지원합니다.

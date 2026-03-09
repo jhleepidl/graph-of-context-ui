@@ -23,6 +23,8 @@ type Props = {
   onOpenGraph: () => void
   onOpenRawTrace: () => void
   onOpenAdvanced: () => void
+  onOpenNode: (nodeId: string) => void
+  onOpenTrace: (nodeIds: string[]) => void
 }
 
 export default function RunStudioLayout({
@@ -36,7 +38,11 @@ export default function RunStudioLayout({
   onOpenGraph,
   onOpenRawTrace,
   onOpenAdvanced,
+  onOpenNode,
+  onOpenTrace,
 }: Props) {
+  const memoryProjection = summary?.projections?.memory_context
+
   return (
     <div className="runStudioLayout">
       <div className="card runStudioHeaderCard">
@@ -51,6 +57,13 @@ export default function RunStudioLayout({
             <button onClick={onRefresh} disabled={loading}>{loading ? 'Refreshing...' : 'Refresh'}</button>
           </div>
         </div>
+        {memoryProjection && (
+          <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
+            <span className="pill">core: {memoryProjection.core_count ?? 0}</span>
+            <span className="pill">supporting: {memoryProjection.supporting_count ?? 0}</span>
+            <span className="pill">execution/debug: {memoryProjection.execution_count ?? 0}</span>
+          </div>
+        )}
         {error && <div className="runStudioWarning"><b>Load error:</b> {error}</div>}
       </div>
 
@@ -60,12 +73,12 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <ContextDecisionPanel decisions={decisions} />
-        <EvidencePanel evidence={evidence} />
+        <ContextDecisionPanel decisions={decisions} onOpenNode={onOpenNode} />
+        <EvidencePanel evidence={evidence} onOpenNode={onOpenNode} onOpenTrace={onOpenTrace} />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <MissingContextPanel decisions={decisions} />
+        <MissingContextPanel decisions={decisions} onOpenNode={onOpenNode} onOpenConflict={onOpenTrace} />
         <AdvancedToolsPanel
           onOpenGraph={onOpenGraph}
           onOpenRawTrace={onOpenRawTrace}

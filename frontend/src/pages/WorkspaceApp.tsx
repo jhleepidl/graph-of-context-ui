@@ -13,19 +13,13 @@ import ExecutionPanel from '../components/ExecutionPanel'
 import ConversationAgentsPanel from '../components/ConversationAgentsPanel'
 import RunStudioLayout from '../components/run_studio/RunStudioLayout'
 import ArtifactsPanel from '../components/run_studio/ArtifactsPanel'
-import {
-  type RunStudioAgentTeam,
-  type RunStudioContextDecisions,
-  type RunStudioEvidence,
-  type RunStudioSummary,
-} from '../components/run_studio/types'
+import WorkspaceShell from '../components/workspace/WorkspaceShell'
+import { useRunStudioData } from '../hooks/useRunStudioData'
+import { useWorkspaceTabs } from '../hooks/useWorkspaceTabs'
 import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPriority'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
-const RIGHT_PANEL_TAB_STORAGE_KEY = 'goc:right-panel-tab:v1'
-const MOBILE_SECTION_STORAGE_KEY = 'goc:mobile-section:v1'
 const WORKSPACE_STORAGE_KEY = 'goc:selected-workspace:v1'
-const WORKSPACE_MAIN_TAB_STORAGE_KEY = 'goc:workspace-main-tab:v1'
 const LEFT_PANEL_MIN_WIDTH = 260
 const RIGHT_PANEL_MIN_WIDTH = 300
 const CENTER_PANEL_MIN_WIDTH = 520
@@ -40,10 +34,7 @@ type ResizeSession = {
   startRightWidth: number
   wrapWidth: number
 }
-type MobileSection = 'left' | 'center' | 'right'
-type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings' | 'conversation_agents'
 type AuthGateState = 'checking' | 'ready' | 'blocked' | 'error'
-type WorkspaceMainTab = 'run_studio' | 'graph' | 'raw_trace' | 'artifacts' | 'advanced'
 
 type WorkspaceGroup = {
   key: string
@@ -61,28 +52,6 @@ function detectMobileLayout(): boolean {
   return window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT
 }
 
-function readStoredRightPanelTab(): RightPanelTab {
-  if (typeof window === 'undefined') return 'inspector'
-  try {
-    const raw = window.localStorage.getItem(RIGHT_PANEL_TAB_STORAGE_KEY)
-    if (raw === 'inspector' || raw === 'prompt' || raw === 'run' || raw === 'job_settings' || raw === 'conversation_agents') return raw
-  } catch {
-    // ignore storage failures
-  }
-  return 'inspector'
-}
-
-function readStoredMobileSection(): MobileSection {
-  if (typeof window === 'undefined') return 'center'
-  try {
-    const raw = window.localStorage.getItem(MOBILE_SECTION_STORAGE_KEY)
-    if (raw === 'left' || raw === 'center' || raw === 'right') return raw
-  } catch {
-    // ignore storage failures
-  }
-  return 'center'
-}
-
 function readStoredWorkspaceKey(): string {
   if (typeof window === 'undefined') return ''
   try {
@@ -90,17 +59,6 @@ function readStoredWorkspaceKey(): string {
   } catch {
     return ''
   }
-}
-
-function readStoredWorkspaceMainTab(): WorkspaceMainTab {
-  if (typeof window === 'undefined') return 'run_studio'
-  try {
-    const raw = window.localStorage.getItem(WORKSPACE_MAIN_TAB_STORAGE_KEY)
-    if (raw === 'run_studio' || raw === 'graph' || raw === 'raw_trace' || raw === 'artifacts' || raw === 'advanced') return raw
-  } catch {
-    // ignore storage failures
-  }
-  return 'run_studio'
 }
 
 function parseThreadMetaJson(thread: any): Record<string, any> {
@@ -227,7 +185,25 @@ export default function WorkspaceApp() {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [authGateState, setAuthGateState] = useState<AuthGateState>('checking')
   const [authGateMessage, setAuthGateMessage] = useState<string>('')
-  const [workspaceMainTab, setWorkspaceMainTab] = useState<WorkspaceMainTab>(() => readStoredWorkspaceMainTab())
+  const {
+    workspaceMainTab,
+    setWorkspaceMainTab,
+    rightPanelTab,
+    setRightPanelTab,
+    mobileSection,
+    setMobileSection,
+    workspaceMainTabLabel,
+  } = useWorkspaceTabs()
+  const {
+    summary: runStudioSummary,
+    agentTeam: runStudioAgentTeam,
+    contextDecisions: runStudioContextDecisions,
+    evidence: runStudioEvidence,
+    loading: runStudioLoading,
+    error: runStudioError,
+    refresh: refreshRunStudio,
+    clear: clearRunStudio,
+  } = useRunStudioData()
   const [threads, setThreads] = useState<any[]>([])
   const [workspaceKey, setWorkspaceKey] = useState<string>(() => readStoredWorkspaceKey())
   const [threadId, setThreadId] = useState<string | null>(null)
@@ -244,12 +220,6 @@ export default function WorkspaceApp() {
   const [contextVersions, setContextVersions] = useState<any[]>([])
   const [versionDiff, setVersionDiff] = useState<any | null>(null)
   const [plannerResult, setPlannerResult] = useState<any | null>(null)
-  const [runStudioSummary, setRunStudioSummary] = useState<RunStudioSummary | null>(null)
-  const [runStudioAgentTeam, setRunStudioAgentTeam] = useState<RunStudioAgentTeam | null>(null)
-  const [runStudioContextDecisions, setRunStudioContextDecisions] = useState<RunStudioContextDecisions | null>(null)
-  const [runStudioEvidence, setRunStudioEvidence] = useState<RunStudioEvidence | null>(null)
-  const [runStudioLoading, setRunStudioLoading] = useState(false)
-  const [runStudioError, setRunStudioError] = useState('')
   const switchSeqRef = useRef(0)
   const [panelWidths, setPanelWidths] = useState<{ left: number; right: number }>(() => {
     try {
@@ -267,8 +237,6 @@ export default function WorkspaceApp() {
     }
   })
   const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null)
-  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>(() => readStoredRightPanelTab())
-  const [mobileSection, setMobileSection] = useState<MobileSection>(() => readStoredMobileSection())
   const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() => detectMobileLayout())
   const initialDeepLink = useMemo(() => readDeepLinkSelection(), [])
   const workspaceGroups = useMemo<WorkspaceGroup[]>(() => {
@@ -352,39 +320,6 @@ export default function WorkspaceApp() {
     setContextVersions(versions?.versions || [])
   }
 
-  async function refreshRunStudio(nextThreadId?: string, nextCtxId?: string, options?: { silent?: boolean }) {
-    const tId = nextThreadId || threadId
-    const cId = nextCtxId || ctxId
-    if (!tId) {
-      setRunStudioSummary(null)
-      setRunStudioAgentTeam(null)
-      setRunStudioContextDecisions(null)
-      setRunStudioEvidence(null)
-      setRunStudioError('')
-      return
-    }
-
-    const silent = Boolean(options?.silent)
-    if (!silent) setRunStudioLoading(true)
-    setRunStudioError('')
-    try {
-      const [summary, team, decisions, evidence] = await Promise.all([
-        api.runStudioSummary(tId, cId),
-        api.runStudioAgentTeam(tId),
-        api.runStudioContextDecisions(tId, cId),
-        api.runStudioEvidence(tId, cId),
-      ])
-      setRunStudioSummary(summary)
-      setRunStudioAgentTeam(team)
-      setRunStudioContextDecisions(decisions)
-      setRunStudioEvidence(evidence)
-    } catch (error) {
-      setRunStudioError(toErrorMessage(error))
-    } finally {
-      if (!silent) setRunStudioLoading(false)
-    }
-  }
-
   async function reloadGraph(nextThreadId?: string) {
     const tId = nextThreadId || threadId
     if (!tId) return
@@ -454,11 +389,7 @@ export default function WorkspaceApp() {
     setContextVersions([])
     setVersionDiff(null)
     setPlannerResult(null)
-    setRunStudioSummary(null)
-    setRunStudioAgentTeam(null)
-    setRunStudioContextDecisions(null)
-    setRunStudioEvidence(null)
-    setRunStudioError('')
+    clearRunStudio()
   }
 
   async function switchThread(nextThreadId: string, preferredCtxId?: string | null) {
@@ -561,30 +492,6 @@ export default function WorkspaceApp() {
       // ignore localStorage errors
     }
   }, [panelWidths])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(RIGHT_PANEL_TAB_STORAGE_KEY, rightPanelTab)
-    } catch {
-      // ignore localStorage errors
-    }
-  }, [rightPanelTab])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(MOBILE_SECTION_STORAGE_KEY, mobileSection)
-    } catch {
-      // ignore localStorage errors
-    }
-  }, [mobileSection])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(WORKSPACE_MAIN_TAB_STORAGE_KEY, workspaceMainTab)
-    } catch {
-      // ignore localStorage errors
-    }
-  }, [workspaceMainTab])
 
   useEffect(() => {
     if (workspaceGroups.length === 0) return
@@ -987,15 +894,389 @@ export default function WorkspaceApp() {
     await reloadAll()
   }
 
-  const workspaceMainTabLabel = workspaceMainTab === 'run_studio'
-    ? 'Run Studio'
-    : workspaceMainTab === 'graph'
-      ? 'Graph'
-      : workspaceMainTab === 'raw_trace'
-        ? 'Raw Trace'
-        : workspaceMainTab === 'artifacts'
-          ? 'Artifacts'
-          : 'Advanced'
+  const openNodesInGraph = useCallback((rawIds: string[]) => {
+    const ids = rawIds
+      .map((id) => String(id || '').trim())
+      .filter((id, index, arr) => id && arr.indexOf(id) === index)
+      .filter((id) => nodesById.has(id))
+    if (ids.length === 0) return
+    setWorkspaceMainTab('graph')
+    setSelectedIds(ids)
+    setDetailNodeId(ids[0])
+  }, [nodesById, setWorkspaceMainTab])
+
+  const openNodeInGraph = useCallback((nodeId: string) => {
+    const clean = String(nodeId || '').trim()
+    if (!clean) return
+    openNodesInGraph([clean])
+  }, [openNodesInGraph])
+
+  const leftPanelContent = (
+    <>
+      <div className="row">
+        <select
+          value={workspaceKey}
+          onChange={async (e) => {
+            const nextWorkspaceKey = e.target.value
+            setWorkspaceKey(nextWorkspaceKey)
+            const nextGroup = workspaceGroups.find((group) => group.key === nextWorkspaceKey)
+            if (!nextGroup || nextGroup.threadIds.length === 0) return
+            if (threadId && nextGroup.threadIds.includes(threadId)) return
+            await switchThread(nextGroup.threadIds[0])
+          }}
+          style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}
+        >
+          {workspaceGroups.map((group) => (
+            <option key={group.key} value={group.key}>
+              {group.label} ({group.threadIds.length})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="row">
+        <button onClick={async () => {
+          const t = await api.createThread('New Thread')
+          const ts = await api.threads()
+          setThreads(ts)
+          setWorkspaceKey(buildWorkspaceGroup(t).key)
+          await switchThread(t.id)
+        }}>New Thread</button>
+        <button className="danger" onClick={handleDeleteCurrentThread} disabled={!threadId}>Delete Thread</button>
+
+        <select value={threadId || ''} onChange={async (e) => {
+          await switchThread(e.target.value)
+        }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
+          {visibleThreads.map((t) => (
+            <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0, 6)})</option>
+          ))}
+        </select>
+        <button
+          onClick={() => {
+            if (!threadId) return
+            const target = `/agents?thread=${encodeURIComponent(threadId)}`
+            window.history.pushState(null, '', target)
+            window.dispatchEvent(new Event('popstate'))
+          }}
+          disabled={!threadId}
+        >
+          Open in Agents
+        </button>
+      </div>
+
+      <div className="row">
+        <select value={ctxId || ''} onChange={async (e) => {
+          const nextCtxId = e.target.value
+          setCtxId(nextCtxId)
+          if (threadId && nextCtxId) {
+            await reloadAll(threadId, nextCtxId)
+          }
+        }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
+          {ctxSets.map((c) => (
+            <option key={c.id} value={c.id}>{c.name} ({c.id.slice(0, 6)})</option>
+          ))}
+        </select>
+        <button onClick={async () => {
+          if (!threadId) return
+          const name = prompt('ContextSet name?', 'alt')
+          if (!name) return
+          const created = await api.createCtx(threadId, name)
+          const sets = await api.ctxSets(threadId)
+          setCtxSets(sets)
+          setCtxId(created.id)
+          await reloadAll(threadId, created.id)
+        }}>New ContextSet</button>
+      </div>
+
+      <div className="row">
+        <button onClick={foldSelected}>Fold selected</button>
+        <button onClick={() => reloadAll()}>Reload</button>
+      </div>
+
+      <SearchPanel
+        onSearch={async (q) => {
+          if (!threadId || !q) return []
+          const r = await api.search(threadId, q, 10)
+          return r.results || []
+        }}
+        onActivate={async (nodeId) => {
+          await toggleActive(nodeId, true)
+        }}
+      />
+
+      <Timeline
+        nodes={nodes}
+        activeIds={activeIds}
+        onToggle={toggleActive}
+        onOpenNode={(id) => setDetailNodeId(id)}
+        partCountByParent={partCountByParent}
+      />
+    </>
+  )
+
+  const centerPanelContent = (
+    <>
+      <div className="card">
+        <div className="row" style={{ marginBottom: 0 }}>
+          <button className={workspaceMainTab === 'run_studio' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('run_studio')}>Run Studio</button>
+          <button className={workspaceMainTab === 'graph' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('graph')}>Graph</button>
+          <button className={workspaceMainTab === 'raw_trace' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('raw_trace')}>Raw Trace</button>
+          <button className={workspaceMainTab === 'artifacts' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('artifacts')}>Artifacts</button>
+          <button className={workspaceMainTab === 'advanced' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('advanced')}>Advanced</button>
+          <span className="muted">
+            {workspaceMainTab === 'run_studio' && 'Decision-first operational view for current run'}
+            {workspaceMainTab === 'graph' && 'Graph editing and manual fold/unfold controls'}
+            {workspaceMainTab === 'raw_trace' && 'Detailed execution graph + timeline + node inspector'}
+            {workspaceMainTab === 'artifacts' && 'Artifact/resource inventory and selection state'}
+            {workspaceMainTab === 'advanced' && 'Copy/Paste prompt tools and thread-level power controls'}
+          </span>
+        </div>
+      </div>
+
+      {workspaceMainTab === 'run_studio' && (
+        <RunStudioLayout
+          summary={runStudioSummary}
+          team={runStudioAgentTeam}
+          decisions={runStudioContextDecisions}
+          evidence={runStudioEvidence}
+          loading={runStudioLoading}
+          error={runStudioError}
+          onRefresh={() => {
+            void refreshRunStudio(threadId || undefined, ctxId || undefined)
+          }}
+          onOpenGraph={() => setWorkspaceMainTab('graph')}
+          onOpenRawTrace={() => setWorkspaceMainTab('raw_trace')}
+          onOpenAdvanced={() => setWorkspaceMainTab('advanced')}
+          onOpenNode={openNodeInGraph}
+          onOpenTrace={openNodesInGraph}
+        />
+      )}
+
+      {workspaceMainTab === 'raw_trace' && (
+        <ExecutionPanel
+          threadId={threadId}
+          nodes={nodes}
+          edges={edges}
+          onOpenOldGraph={(nodeId) => {
+            setWorkspaceMainTab('graph')
+            if (nodeId) setSelectedIds([nodeId])
+          }}
+        />
+      )}
+
+      {workspaceMainTab === 'artifacts' && (
+        <ArtifactsPanel nodes={nodes} activeIds={activeIds} />
+      )}
+
+      {workspaceMainTab === 'advanced' && (
+        <div className="runStudioAdvancedGrid">
+          <div>
+            <ActiveContext
+              activeIds={activeIds}
+              nodesById={nodesById}
+              allNodes={nodes}
+              onOpenNode={(id) => setDetailNodeId(id)}
+              partCountByParent={partCountByParent}
+              onAdd={async (id) => {
+                await toggleActive(id, true)
+              }}
+              onReorder={reorderActive}
+              onRemove={async (id) => {
+                await toggleActive(id, false)
+              }}
+              onUnfold={unfoldFold}
+            />
+          </div>
+          <div>
+            <div className="card rightPanelTabs">
+              <div className="row" style={{ marginBottom: 8 }}>
+                <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
+                <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
+                <button className={rightPanelTab === 'job_settings' ? 'primary' : ''} onClick={() => setRightPanelTab('job_settings')}>Job Settings</button>
+                <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Thread Team</button>
+                <button className={rightPanelTab === 'inspector' ? 'primary' : ''} onClick={() => setRightPanelTab('inspector')}>Inspector</button>
+              </div>
+              <div className="muted">
+                {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budgeting, resource notes'}
+                {rightPanelTab === 'run' && 'Run query with current active context'}
+                {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current thread'}
+                {rightPanelTab === 'conversation_agents' && 'Manage conversation agents, enabled/order/overrides'}
+                {rightPanelTab === 'inspector' && 'Compiled context and version/planner diagnostics'}
+              </div>
+            </div>
+
+            {rightPanelTab === 'prompt' && (
+              <CopyToChatGPTPanel
+                activeNodes={activeNodes}
+                allNodes={nodes}
+                edges={edges}
+                threadId={threadId}
+                ctxId={ctxId}
+                onAfterMutation={async () => {
+                  await reloadAll()
+                }}
+                onReplaceActive={replaceActiveContext}
+              />
+            )}
+
+            {rightPanelTab === 'run' && (
+              <RunPanel onRun={async (msg) => {
+                if (!ctxId) return ''
+                const out = await api.run(ctxId, msg)
+                await reloadAll()
+                return out.response_text || ''
+              }} />
+            )}
+
+            {rightPanelTab === 'job_settings' && (
+              <JobSettingsPanel
+                threadId={threadId}
+                threads={threads}
+                onAfterSave={async () => {
+                  await reloadAll(threadId || undefined, ctxId || undefined)
+                }}
+              />
+            )}
+
+            {rightPanelTab === 'conversation_agents' && (
+              <ConversationAgentsPanel threadId={threadId} />
+            )}
+
+            {rightPanelTab === 'inspector' && (
+              <ContextInspector
+                compiledText={compiledInfo?.compiled_text || ''}
+                excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
+                keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
+                versions={contextVersions}
+                versionDiff={versionDiff}
+                plannerResult={plannerResult}
+                nodesById={nodesById}
+                onRefresh={async () => {
+                  await refreshContextInspector()
+                }}
+                onLoadDiff={loadVersionDiff}
+                onPlan={previewPlanner}
+                onApplySeeds={applyPlannerSeeds}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {workspaceMainTab === 'graph' && (
+        <>
+          <div className="card selectionActionBar">
+            <div className="row" style={{ marginBottom: 6 }}>
+              <b>Graph Actions</b>
+              <span className="pill">selected: {selectedIds.length}</span>
+              {selectedFoldIds.length > 0 && <span className="pill pill--fold">folds: {selectedFoldIds.length}</span>}
+            </div>
+            <div className="row" style={{ marginBottom: 0 }}>
+              <button onClick={foldSelected} disabled={selectedIds.length < 2}>Fold selected</button>
+              <button onClick={() => selectedIds.length === 1 && setDetailNodeId(selectedIds[0])} disabled={selectedIds.length !== 1}>Open detail / split</button>
+              <button onClick={unfoldSelectedFolds} disabled={selectedFoldIds.length === 0 || !ctxId}>Unfold selected folds</button>
+              <button onClick={activateSelected} disabled={selectedIds.length === 0 || !ctxId}>Add selected to Active</button>
+              <button onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0}>Clear selection</button>
+            </div>
+          </div>
+          <div className="graphWorkspace">
+            <GraphPanel
+              nodes={nodes}
+              edges={edges}
+              activeNodeIds={activeIds}
+              selectedNodeIds={selectedIds}
+              onSelectionChange={handleSelectionChange}
+              onNodeOpenDetail={(id) => setDetailNodeId(id)}
+              onCreateEdge={handleCreateEdge}
+              onDeleteEdges={handleDeleteEdges}
+              onDeleteNodes={handleDeleteNodes}
+              onFoldSelected={foldNodeIds}
+              onActivateNodes={activateNodeIds}
+              onDeactivateNodes={deactivateNodeIds}
+              onCommitUnfold={unfoldFold}
+              onSaveLayout={saveGraphLayoutPositions}
+              layoutScopeKey={threadId}
+              priorityBucketByNodeId={graphPriorityBucketById}
+            />
+            {detailNodeId && (
+              <NodeDetailModal
+                nodeId={detailNodeId}
+                threadId={threadId}
+                ctxId={ctxId}
+                mode="drawer"
+                onClose={() => setDetailNodeId(null)}
+                onAfterMutation={async () => {
+                  await reloadAll()
+                }}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </>
+  )
+
+  const rightPanelContent = workspaceMainTab === 'graph' ? (
+    <>
+      <ActiveContext
+        activeIds={activeIds}
+        nodesById={nodesById}
+        allNodes={nodes}
+        onOpenNode={(id) => setDetailNodeId(id)}
+        partCountByParent={partCountByParent}
+        onAdd={async (id) => {
+          await toggleActive(id, true)
+        }}
+        onReorder={reorderActive}
+        onRemove={async (id) => {
+          await toggleActive(id, false)
+        }}
+        onUnfold={unfoldFold}
+      />
+
+      <div className="card rightPanelTabs">
+        <div className="row" style={{ marginBottom: 8 }}>
+          <button
+            className={(rightPanelTab !== 'conversation_agents') ? 'primary' : ''}
+            onClick={() => setRightPanelTab('inspector')}
+          >
+            Inspector
+          </button>
+          <button
+            className={rightPanelTab === 'conversation_agents' ? 'primary' : ''}
+            onClick={() => setRightPanelTab('conversation_agents')}
+          >
+            Thread Team
+          </button>
+        </div>
+        <div className="muted">
+          {(rightPanelTab === 'conversation_agents')
+            ? 'Manage thread team (enabled/order/overrides)'
+            : 'Compiled context, version diff, and planner diagnostics'}
+        </div>
+      </div>
+
+      {rightPanelTab === 'conversation_agents' ? (
+        <ConversationAgentsPanel threadId={threadId} />
+      ) : (
+        <ContextInspector
+          compiledText={compiledInfo?.compiled_text || ''}
+          excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
+          keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
+          versions={contextVersions}
+          versionDiff={versionDiff}
+          plannerResult={plannerResult}
+          nodesById={nodesById}
+          onRefresh={async () => {
+            await refreshContextInspector()
+          }}
+          onLoadDiff={loadVersionDiff}
+          onPlan={previewPlanner}
+          onApplySeeds={applyPlannerSeeds}
+        />
+      )}
+    </>
+  ) : null
 
   if (authGateState !== 'ready') {
     const isChecking = authGateState === 'checking'
@@ -1035,409 +1316,22 @@ export default function WorkspaceApp() {
   }
 
   return (
-    <div className="appShell">
-      {isMobileLayout && (
-        <div className="mobileSectionTabs card">
-          <div className="row" style={{ marginBottom: 0 }}>
-            <button className={mobileSection === 'center' ? 'primary' : ''} onClick={() => setMobileSection('center')}>
-              {workspaceMainTabLabel}
-            </button>
-            <button className={mobileSection === 'left' ? 'primary' : ''} onClick={() => setMobileSection('left')}>
-              Threads
-            </button>
-            <button
-              className={mobileSection === 'right' ? 'primary' : ''}
-              onClick={() => setMobileSection('right')}
-              disabled={workspaceMainTab !== 'graph'}
-            >
-              Context
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className={`wrap ${workspaceMainTab !== 'graph' ? 'wrapExecutionMode' : ''}`} ref={wrapRef} style={wrapStyle}>
-        <div className={`col col-left ${showLeftPanel ? '' : 'isMobileHidden'}`}>
-          <div className="row">
-            <select
-              value={workspaceKey}
-              onChange={async (e) => {
-                const nextWorkspaceKey = e.target.value
-                setWorkspaceKey(nextWorkspaceKey)
-                const nextGroup = workspaceGroups.find((group) => group.key === nextWorkspaceKey)
-                if (!nextGroup || nextGroup.threadIds.length === 0) return
-                if (threadId && nextGroup.threadIds.includes(threadId)) return
-                await switchThread(nextGroup.threadIds[0])
-              }}
-              style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}
-            >
-              {workspaceGroups.map((group) => (
-                <option key={group.key} value={group.key}>
-                  {group.label} ({group.threadIds.length})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="row">
-            <button onClick={async () => {
-              const t = await api.createThread('New Thread')
-              const ts = await api.threads()
-              setThreads(ts)
-              setWorkspaceKey(buildWorkspaceGroup(t).key)
-              await switchThread(t.id)
-            }}>New Thread</button>
-            <button className="danger" onClick={handleDeleteCurrentThread} disabled={!threadId}>Delete Thread</button>
-
-            <select value={threadId || ''} onChange={async (e) => {
-              await switchThread(e.target.value)
-            }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
-              {visibleThreads.map((t) => (
-                <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0, 6)})</option>
-              ))}
-            </select>
-            <button
-              onClick={() => {
-                if (!threadId) return
-                const target = `/agents?thread=${encodeURIComponent(threadId)}`
-                window.history.pushState(null, '', target)
-                window.dispatchEvent(new Event('popstate'))
-              }}
-              disabled={!threadId}
-            >
-              Open in Agents
-            </button>
-          </div>
-
-          <div className="row">
-            <select value={ctxId || ''} onChange={async (e) => {
-              const nextCtxId = e.target.value
-              setCtxId(nextCtxId)
-              if (threadId && nextCtxId) {
-                await reloadAll(threadId, nextCtxId)
-              }
-            }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
-              {ctxSets.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} ({c.id.slice(0, 6)})</option>
-              ))}
-            </select>
-            <button onClick={async () => {
-              if (!threadId) return
-              const name = prompt('ContextSet name?', 'alt')
-              if (!name) return
-              const created = await api.createCtx(threadId, name)
-              const sets = await api.ctxSets(threadId)
-              setCtxSets(sets)
-              setCtxId(created.id)
-              await reloadAll(threadId, created.id)
-            }}>New ContextSet</button>
-          </div>
-
-          <div className="row">
-            <button onClick={foldSelected}>Fold selected</button>
-            <button onClick={() => reloadAll()}>Reload</button>
-          </div>
-
-          <SearchPanel
-            onSearch={async (q) => {
-              if (!threadId || !q) return []
-              const r = await api.search(threadId, q, 10)
-              return r.results || []
-            }}
-            onActivate={async (nodeId) => {
-              await toggleActive(nodeId, true)
-            }}
-          />
-
-          <Timeline
-            nodes={nodes}
-            activeIds={activeIds}
-            onToggle={toggleActive}
-            onOpenNode={(id) => setDetailNodeId(id)}
-            partCountByParent={partCountByParent}
-          />
-        </div>
-
-        {!isMobileLayout && (
-          <div
-            className="panelResizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize left panel"
-            onMouseDown={(evt) => startPanelResize('left', evt)}
-          />
-        )}
-
-        <div className={`col col-center ${showCenterPanel ? '' : 'isMobileHidden'}`}>
-          <div className="card">
-            <div className="row" style={{ marginBottom: 0 }}>
-              <button className={workspaceMainTab === 'run_studio' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('run_studio')}>Run Studio</button>
-              <button className={workspaceMainTab === 'graph' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('graph')}>Graph</button>
-              <button className={workspaceMainTab === 'raw_trace' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('raw_trace')}>Raw Trace</button>
-              <button className={workspaceMainTab === 'artifacts' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('artifacts')}>Artifacts</button>
-              <button className={workspaceMainTab === 'advanced' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('advanced')}>Advanced</button>
-              <span className="muted">
-                {workspaceMainTab === 'run_studio' && 'Decision-first operational view for current run'}
-                {workspaceMainTab === 'graph' && 'Graph editing and manual fold/unfold controls'}
-                {workspaceMainTab === 'raw_trace' && 'Detailed execution graph + timeline + node inspector'}
-                {workspaceMainTab === 'artifacts' && 'Artifact/resource inventory and selection state'}
-                {workspaceMainTab === 'advanced' && 'Copy/Paste prompt tools and thread-level power controls'}
-              </span>
-            </div>
-          </div>
-
-          {workspaceMainTab === 'run_studio' && (
-            <RunStudioLayout
-              summary={runStudioSummary}
-              team={runStudioAgentTeam}
-              decisions={runStudioContextDecisions}
-              evidence={runStudioEvidence}
-              loading={runStudioLoading}
-              error={runStudioError}
-              onRefresh={() => {
-                void refreshRunStudio(threadId || undefined, ctxId || undefined)
-              }}
-              onOpenGraph={() => setWorkspaceMainTab('graph')}
-              onOpenRawTrace={() => setWorkspaceMainTab('raw_trace')}
-              onOpenAdvanced={() => setWorkspaceMainTab('advanced')}
-            />
-          )}
-
-          {workspaceMainTab === 'raw_trace' && (
-            <ExecutionPanel
-              threadId={threadId}
-              nodes={nodes}
-              edges={edges}
-              onOpenOldGraph={(nodeId) => {
-                setWorkspaceMainTab('graph')
-                if (nodeId) setSelectedIds([nodeId])
-              }}
-            />
-          )}
-
-          {workspaceMainTab === 'artifacts' && (
-            <ArtifactsPanel nodes={nodes} activeIds={activeIds} />
-          )}
-
-          {workspaceMainTab === 'advanced' && (
-            <div className="runStudioAdvancedGrid">
-              <div>
-                <ActiveContext
-                  activeIds={activeIds}
-                  nodesById={nodesById}
-                  allNodes={nodes}
-                  onOpenNode={(id) => setDetailNodeId(id)}
-                  partCountByParent={partCountByParent}
-                  onAdd={async (id) => {
-                    await toggleActive(id, true)
-                  }}
-                  onReorder={reorderActive}
-                  onRemove={async (id) => {
-                    await toggleActive(id, false)
-                  }}
-                  onUnfold={unfoldFold}
-                />
-              </div>
-              <div>
-                <div className="card rightPanelTabs">
-                  <div className="row" style={{ marginBottom: 8 }}>
-                    <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
-                    <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
-                    <button className={rightPanelTab === 'job_settings' ? 'primary' : ''} onClick={() => setRightPanelTab('job_settings')}>Job Settings</button>
-                    <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Thread Team</button>
-                    <button className={rightPanelTab === 'inspector' ? 'primary' : ''} onClick={() => setRightPanelTab('inspector')}>Inspector</button>
-                  </div>
-                  <div className="muted">
-                    {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budgeting, resource notes'}
-                    {rightPanelTab === 'run' && 'Run query with current active context'}
-                    {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current thread'}
-                    {rightPanelTab === 'conversation_agents' && 'Manage conversation agents, enabled/order/overrides'}
-                    {rightPanelTab === 'inspector' && 'Compiled context and version/planner diagnostics'}
-                  </div>
-                </div>
-
-                {rightPanelTab === 'prompt' && (
-                  <CopyToChatGPTPanel
-                    activeNodes={activeNodes}
-                    allNodes={nodes}
-                    edges={edges}
-                    threadId={threadId}
-                    ctxId={ctxId}
-                    onAfterMutation={async () => {
-                      await reloadAll()
-                    }}
-                    onReplaceActive={replaceActiveContext}
-                  />
-                )}
-
-                {rightPanelTab === 'run' && (
-                  <RunPanel onRun={async (msg) => {
-                    if (!ctxId) return ''
-                    const out = await api.run(ctxId, msg)
-                    await reloadAll()
-                    return out.response_text || ''
-                  }} />
-                )}
-
-                {rightPanelTab === 'job_settings' && (
-                  <JobSettingsPanel
-                    threadId={threadId}
-                    threads={threads}
-                    onAfterSave={async () => {
-                      await reloadAll(threadId || undefined, ctxId || undefined)
-                    }}
-                  />
-                )}
-
-                {rightPanelTab === 'conversation_agents' && (
-                  <ConversationAgentsPanel threadId={threadId} />
-                )}
-
-                {rightPanelTab === 'inspector' && (
-                  <ContextInspector
-                    compiledText={compiledInfo?.compiled_text || ''}
-                    excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
-                    keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
-                    versions={contextVersions}
-                    versionDiff={versionDiff}
-                    plannerResult={plannerResult}
-                    nodesById={nodesById}
-                    onRefresh={async () => {
-                      await refreshContextInspector()
-                    }}
-                    onLoadDiff={loadVersionDiff}
-                    onPlan={previewPlanner}
-                    onApplySeeds={applyPlannerSeeds}
-                  />
-                )}
-              </div>
-            </div>
-          )}
-
-          {workspaceMainTab === 'graph' && (
-            <>
-              <div className="card selectionActionBar">
-                <div className="row" style={{ marginBottom: 6 }}>
-                  <b>Graph Actions</b>
-                  <span className="pill">selected: {selectedIds.length}</span>
-                  {selectedFoldIds.length > 0 && <span className="pill pill--fold">folds: {selectedFoldIds.length}</span>}
-                </div>
-                <div className="row" style={{ marginBottom: 0 }}>
-                  <button onClick={foldSelected} disabled={selectedIds.length < 2}>Fold selected</button>
-                  <button onClick={() => selectedIds.length === 1 && setDetailNodeId(selectedIds[0])} disabled={selectedIds.length !== 1}>Open detail / split</button>
-                  <button onClick={unfoldSelectedFolds} disabled={selectedFoldIds.length === 0 || !ctxId}>Unfold selected folds</button>
-                  <button onClick={activateSelected} disabled={selectedIds.length === 0 || !ctxId}>Add selected to Active</button>
-                  <button onClick={() => setSelectedIds([])} disabled={selectedIds.length === 0}>Clear selection</button>
-                </div>
-              </div>
-              <div className="graphWorkspace">
-                <GraphPanel
-                  nodes={nodes}
-                  edges={edges}
-                  activeNodeIds={activeIds}
-                  selectedNodeIds={selectedIds}
-                  onSelectionChange={handleSelectionChange}
-                  onNodeOpenDetail={(id) => setDetailNodeId(id)}
-                  onCreateEdge={handleCreateEdge}
-                  onDeleteEdges={handleDeleteEdges}
-                  onDeleteNodes={handleDeleteNodes}
-                  onFoldSelected={foldNodeIds}
-                  onActivateNodes={activateNodeIds}
-                  onDeactivateNodes={deactivateNodeIds}
-                  onCommitUnfold={unfoldFold}
-                  onSaveLayout={saveGraphLayoutPositions}
-                  layoutScopeKey={threadId}
-                  priorityBucketByNodeId={graphPriorityBucketById}
-                />
-                {detailNodeId && (
-                  <NodeDetailModal
-                    nodeId={detailNodeId}
-                    threadId={threadId}
-                    ctxId={ctxId}
-                    mode="drawer"
-                    onClose={() => setDetailNodeId(null)}
-                    onAfterMutation={async () => {
-                      await reloadAll()
-                    }}
-                  />
-                )}
-              </div>
-            </>
-          )}
-        </div>
-
-        {workspaceMainTab === 'graph' && !isMobileLayout && (
-          <div
-            className="panelResizer"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize right panel"
-            onMouseDown={(evt) => startPanelResize('right', evt)}
-          />
-        )}
-
-        {workspaceMainTab === 'graph' && (
-          <div className={`col col-right ${showRightPanel ? '' : 'isMobileHidden'}`}>
-            <ActiveContext
-              activeIds={activeIds}
-              nodesById={nodesById}
-              allNodes={nodes}
-              onOpenNode={(id) => setDetailNodeId(id)}
-              partCountByParent={partCountByParent}
-              onAdd={async (id) => {
-                await toggleActive(id, true)
-              }}
-              onReorder={reorderActive}
-              onRemove={async (id) => {
-                await toggleActive(id, false)
-              }}
-              onUnfold={unfoldFold}
-            />
-
-            <div className="card rightPanelTabs">
-              <div className="row" style={{ marginBottom: 8 }}>
-                <button
-                  className={(rightPanelTab !== 'conversation_agents') ? 'primary' : ''}
-                  onClick={() => setRightPanelTab('inspector')}
-                >
-                  Inspector
-                </button>
-                <button
-                  className={rightPanelTab === 'conversation_agents' ? 'primary' : ''}
-                  onClick={() => setRightPanelTab('conversation_agents')}
-                >
-                  Thread Team
-                </button>
-              </div>
-              <div className="muted">
-                {(rightPanelTab === 'conversation_agents')
-                  ? 'Manage thread team (enabled/order/overrides)'
-                  : 'Compiled context, version diff, and planner diagnostics'}
-              </div>
-            </div>
-
-            {rightPanelTab === 'conversation_agents' ? (
-              <ConversationAgentsPanel threadId={threadId} />
-            ) : (
-              <ContextInspector
-                compiledText={compiledInfo?.compiled_text || ''}
-                excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
-                keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
-                versions={contextVersions}
-                versionDiff={versionDiff}
-                plannerResult={plannerResult}
-                nodesById={nodesById}
-                onRefresh={async () => {
-                  await refreshContextInspector()
-                }}
-                onLoadDiff={loadVersionDiff}
-                onPlan={previewPlanner}
-                onApplySeeds={applyPlannerSeeds}
-              />
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+    <WorkspaceShell
+      isMobileLayout={isMobileLayout}
+      mobileSection={mobileSection}
+      setMobileSection={setMobileSection}
+      workspaceMainTab={workspaceMainTab}
+      workspaceMainTabLabel={workspaceMainTabLabel}
+      wrapRef={wrapRef}
+      wrapStyle={wrapStyle}
+      showLeftPanel={showLeftPanel}
+      showCenterPanel={showCenterPanel}
+      showRightPanel={showRightPanel}
+      onStartLeftResize={(evt) => startPanelResize('left', evt)}
+      onStartRightResize={(evt) => startPanelResize('right', evt)}
+      leftContent={leftPanelContent}
+      centerContent={centerPanelContent}
+      rightContent={rightPanelContent}
+    />
   )
 }
