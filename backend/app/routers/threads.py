@@ -25,6 +25,12 @@ from app.schemas import (
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
 from app.services.graph import add_edge, compile_active_context_explain, get_last_node, load_thread_graph
+from app.services.run_studio import (
+    build_run_studio_agent_team,
+    build_run_studio_context_decisions,
+    build_run_studio_evidence,
+    build_run_studio_summary,
+)
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -557,6 +563,68 @@ def get_graph(thread_id: str):
             "thread": _thread_to_response(t),
             **graph,
         }
+
+
+@router.get("/{thread_id}/run_studio/summary")
+def get_run_studio_summary(
+    thread_id: str,
+    context_set_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        try:
+            summary = build_run_studio_summary(
+                s,
+                thread=thread,
+                context_set_id=context_set_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        return {"ok": True, **summary}
+
+
+@router.get("/{thread_id}/run_studio/agent_team")
+def get_run_studio_agent_team(thread_id: str):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        team = build_run_studio_agent_team(s, thread=thread)
+        return {"ok": True, **team}
+
+
+@router.get("/{thread_id}/run_studio/context_decisions")
+def get_run_studio_context_decisions(
+    thread_id: str,
+    context_set_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        try:
+            decisions = build_run_studio_context_decisions(
+                s,
+                thread=thread,
+                context_set_id=context_set_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        return {"ok": True, **decisions}
+
+
+@router.get("/{thread_id}/run_studio/evidence")
+def get_run_studio_evidence(
+    thread_id: str,
+    context_set_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        try:
+            evidence = build_run_studio_evidence(
+                s,
+                thread=thread,
+                context_set_id=context_set_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        return {"ok": True, **evidence}
 
 
 @router.get("/{thread_id}/trace_export")

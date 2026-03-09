@@ -1,4 +1,4 @@
-# Graph-of-Context MVP (Frontend)
+# Graph-of-Context Run Studio (Frontend)
 
 ## Run
 ```bash
@@ -32,7 +32,11 @@ https://<host>/goc/?thread=<threadId>&ctx=<ctxId>#token=gocu1.<service_id>.<exp>
 
 ## Notes
 - Graph visualization uses React Flow.
-- Timeline + Active Context panels drive control.
+- Default workspace is **Run Studio** (Now / Agent Team / Context Decisions / Evidence).
+- Graph editor still exists under the `Graph` secondary tab.
+- Raw execution trace view exists under `Raw Trace`.
+- Prompt Builder + copy/paste flow moved under `Advanced` tools.
+- Artifacts are available in a dedicated `Artifacts` tab.
 - Copy to ChatGPT panel auto-embeds TAGGED FORMAT rules (English) plus a Korean-only response instruction (`답변은 한국어`) before Active Context and User Request.
 - Paste from ChatGPT can parse `[FINAL]/[DECISIONS]/[ASSUMPTIONS]/[PLAN]/[CONTEXT_CANDIDATES]` and create active context nodes.
 - You can create and activate a context node directly without running the agent.

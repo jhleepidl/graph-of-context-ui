@@ -1,0 +1,62 @@
+import React from 'react'
+import { type RunStudioContextDecisions } from './types'
+
+type Props = {
+  decisions: RunStudioContextDecisions | null
+}
+
+export default function ContextDecisionPanel({ decisions }: Props) {
+  const selected = decisions?.selected || []
+  const pinned = decisions?.pinned || []
+  const excluded = decisions?.excluded || []
+  const counts = decisions?.counts || {}
+
+  return (
+    <section className="card runStudioPanel">
+      <div className="runStudioPanelHeader">
+        <h3>Context Decisions</h3>
+        <div className="runStudioMetaRow">
+          <span className="pill">selected: {counts.selected ?? selected.length}</span>
+          <span className="pill">pinned: {counts.pinned ?? pinned.length}</span>
+          <span className="pill">excluded: {counts.excluded ?? excluded.length}</span>
+          <span className="pill">missing: {counts.missing ?? 0}</span>
+          <span className="pill">conflicts: {counts.conflicting ?? 0}</span>
+        </div>
+      </div>
+
+      <div className="runStudioDualList">
+        <div>
+          <div className="muted" style={{ marginBottom: 6 }}>Selected / Pinned</div>
+          <div className="runStudioList">
+            {selected.slice(0, 10).map((item) => (
+              <article key={item.id} className="runStudioListItem">
+                <div className="row" style={{ marginBottom: 4 }}>
+                  <span className="pill">{item.type || 'Node'}</span>
+                  {item.pinned && <span className="pill">pinned {item.pin_level || ''}</span>}
+                </div>
+                <div>{item.text || item.id}</div>
+              </article>
+            ))}
+            {selected.length === 0 && <div className="muted">No selected context nodes.</div>}
+          </div>
+        </div>
+
+        <div>
+          <div className="muted" style={{ marginBottom: 6 }}>Excluded From Compiled</div>
+          <div className="runStudioList">
+            {excluded.slice(0, 8).map((item) => (
+              <article key={item.id} className="runStudioListItem">
+                <div className="row" style={{ marginBottom: 4 }}>
+                  <span className="pill">{item.type || 'Node'}</span>
+                </div>
+                <div>{item.text || item.id}</div>
+                <div className="muted">{item.reason || ''}</div>
+              </article>
+            ))}
+            {excluded.length === 0 && <div className="muted">No currently excluded parent placeholders.</div>}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}

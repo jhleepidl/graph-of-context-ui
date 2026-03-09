@@ -401,6 +401,29 @@ export const api = {
     j<any>(apiFetch(`/api/threads/${threadId}`, { method: 'DELETE' })),
 
   graph: (threadId: string) => j<any>(apiFetch(`/api/threads/${threadId}/graph`)),
+  runStudioSummary: (threadId: string, contextSetId?: string | null) => {
+    const q = new URLSearchParams()
+    const clean = (contextSetId || '').trim()
+    if (clean) q.set('context_set_id', clean)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/summary${suffix}`))
+  },
+  runStudioAgentTeam: (threadId: string) =>
+    j<any>(apiFetch(`/api/threads/${threadId}/run_studio/agent_team`)),
+  runStudioContextDecisions: (threadId: string, contextSetId?: string | null) => {
+    const q = new URLSearchParams()
+    const clean = (contextSetId || '').trim()
+    if (clean) q.set('context_set_id', clean)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/context_decisions${suffix}`))
+  },
+  runStudioEvidence: (threadId: string, contextSetId?: string | null) => {
+    const q = new URLSearchParams()
+    const clean = (contextSetId || '').trim()
+    if (clean) q.set('context_set_id', clean)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/evidence${suffix}`))
+  },
   traceExport: async (
     threadId: string,
     params?: {

@@ -1,6 +1,7 @@
-# Graph-of-Context MVP (Backend) - Postgres + FAISS (no pgvector extension)
+# Graph-of-Context Run Studio (Backend) - Postgres + FAISS (no pgvector extension)
 
-This backend stores the conversation graph in Postgres, and performs vector search using an in-process FAISS index.
+This backend stores the conversation graph in Postgres, performs vector search using an in-process FAISS index,
+and now exposes additive Run Studio projection APIs over the same generic graph model.
 This avoids needing the `pgvector` Postgres extension (useful on older PG versions / restricted environments).
 
 ## 0) Configure Postgres connection
@@ -74,6 +75,17 @@ uvicorn app.main:app --reload --port 8000
 - Version diff endpoints
 - Research-inspired recovery planner endpoints (`/unfold_plan`, `/apply_unfold_plan`)
 - Dependency-aware unfold with bounded closure
+
+## Run Studio projection endpoints (additive)
+- `GET /api/threads/{thread_id}/run_studio/summary`
+- `GET /api/threads/{thread_id}/run_studio/agent_team`
+- `GET /api/threads/{thread_id}/run_studio/context_decisions`
+- `GET /api/threads/{thread_id}/run_studio/evidence`
+
+Notes:
+- Existing routes are preserved.
+- The underlying graph schema (`Node`/`Edge`) is unchanged.
+- Projections expose conversation/execution/memory-context logical views for frontend consumption.
 
 ## Resource node plain-text + structured payload
 - `POST /api/threads/{thread_id}/resources`는 기존 필드와 함께 아래 옵션을 지원합니다.

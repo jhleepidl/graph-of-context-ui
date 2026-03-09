@@ -1,26 +1,25 @@
-# Graph-of-Context MVP (Web) - Postgres + FAISS (no pgvector extension)
+# Graph-of-Context Run Studio (Web) - Postgres + FAISS (no pgvector extension)
 
-This repo contains a minimal Graph-of-Context workflow:
-- Graph storage (nodes/edges) + visualization
-- Active Context (user on/off control)
-- Run with Active Context (LLM call; stub if no API key)
-- Folding/Unfolding
-- Context search powered by in-process FAISS (no pgvector extension)
-- Copy-to-ChatGPT prompt generation with embedded TAGGED FORMAT rules and explicit Korean-answer instruction
-- Paste-from-ChatGPT import and manual context-node creation without running the agent
-- Direct USER REQUEST-to-context-node creation, persisted draggable node layout, and cleaner chronological edges
-- Interactive edge add/delete in graph view (connect handles, delete selected edge)
-- Interactive Active Context toggling from graph and fold-focused view (members hidden until detail view/zoom)
-- Folded-view virtual edges preserve connectivity between a fold and outside nodes
-- Drag-and-drop Active Context composition (add from timeline, reorder, drop-to-remove)
-- Graph viewer node movement is disabled to focus on edge create/delete and fold/unfold workflows
+This repo now ships with a **Run Studio-first** workspace while keeping the generic graph backend/model:
+- Run Studio default UI:
+  - Now panel (task/objective/current step/blocked/pending approval)
+  - Agent Team panel (active roles, order, runtime status)
+  - Context Decisions panel (selected/pinned/excluded/missing/conflicting)
+  - Evidence panel (claims/evidence/provenance/uncertainty/conflicts)
+- Secondary tabs:
+  - Graph (manual graph editing and fold/unfold)
+  - Raw Trace (execution graph + timeline + inspector)
+  - Artifacts
+  - Advanced tools (Prompt Builder / Run / Job Settings / Thread Team / Inspector)
+- Backend remains graph-first and generic (`Node`/`Edge`), with additive run-studio projection endpoints.
 
-## Recommended ChatGPT Web Workflow
-1. Type `USER REQUEST` in the UI, then click `Copy Prompt` and paste it into ChatGPT Web.
-2. Paste ChatGPT's answer back with `Paste from ChatGPT` to create structured nodes and `REPLY_TO` edges.
-3. Use `Suggest Context for this request` for follow-up requests and add recommended nodes to Active Context.
-4. If context becomes too large/slow, keep important nodes active or Fold, then copy into a new chat.
-5. Use token estimates (Active Context + Full Prompt) and the usage bar to stay within context window limits.
+## Run Studio API Additions
+- `GET /api/threads/{thread_id}/run_studio/summary`
+- `GET /api/threads/{thread_id}/run_studio/agent_team`
+- `GET /api/threads/{thread_id}/run_studio/context_decisions`
+- `GET /api/threads/{thread_id}/run_studio/evidence`
+
+All existing APIs remain available.
 
 ## 1) Backend
 ```bash
