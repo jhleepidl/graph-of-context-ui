@@ -34,8 +34,9 @@ https://<host>/goc/?thread=<threadId>&ctx=<ctxId>#token=gocu1.<service_id>.<exp>
 - Graph visualization uses React Flow.
 - Default workspace is **Run Studio** (Now / Agent Team / Context Decisions / Evidence).
 - Agent Team prefers runtime snapshot metadata when available and clearly labels source (`runtime_snapshot`, `conversation_membership`, `inferred_from_steps`).
+- Runtime team extraction is stricter server-side, so plain `team_plan` metadata no longer appears as fake runtime members.
 - Context projection metadata is separated into core/supporting/execution buckets to reduce execution-noise in primary context summaries.
-- Context Decisions and Evidence panels support operator drill-down actions (`Open`, `Open pair`, `Open trace`) that jump to graph/node details.
+- Context Decisions / Missing Context / Evidence panels support lightweight operator actions (`Focus in graph`, `Open detail`, `Include/Add to active`, `Pin`, `Compare pair`) wired to existing graph/context flows.
 - Graph editor still exists under the `Graph` secondary tab.
 - Raw execution trace view exists under `Raw Trace`.
 - Prompt Builder + copy/paste flow moved under `Advanced` tools.

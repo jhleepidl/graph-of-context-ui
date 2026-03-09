@@ -894,22 +894,56 @@ export default function WorkspaceApp() {
     await reloadAll()
   }
 
-  const openNodesInGraph = useCallback((rawIds: string[]) => {
-    const ids = rawIds
+  const normalizeGraphTargetIds = useCallback((rawIds: string[]) => {
+    return rawIds
       .map((id) => String(id || '').trim())
       .filter((id, index, arr) => id && arr.indexOf(id) === index)
       .filter((id) => nodesById.has(id))
+  }, [nodesById])
+
+  const focusNodesInGraph = useCallback((rawIds: string[]) => {
+    const ids = normalizeGraphTargetIds(rawIds)
+    if (ids.length === 0) return
+    setWorkspaceMainTab('graph')
+    setSelectedIds(ids)
+  }, [normalizeGraphTargetIds, setWorkspaceMainTab])
+
+  const openNodesInGraph = useCallback((rawIds: string[]) => {
+    const ids = normalizeGraphTargetIds(rawIds)
     if (ids.length === 0) return
     setWorkspaceMainTab('graph')
     setSelectedIds(ids)
     setDetailNodeId(ids[0])
-  }, [nodesById, setWorkspaceMainTab])
+  }, [normalizeGraphTargetIds, setWorkspaceMainTab])
+
+  const focusNodeInGraph = useCallback((nodeId: string) => {
+    const clean = String(nodeId || '').trim()
+    if (!clean) return
+    focusNodesInGraph([clean])
+  }, [focusNodesInGraph])
 
   const openNodeInGraph = useCallback((nodeId: string) => {
     const clean = String(nodeId || '').trim()
     if (!clean) return
     openNodesInGraph([clean])
   }, [openNodesInGraph])
+
+  async function addNodeToActiveFromStudio(nodeId: string) {
+    const clean = String(nodeId || '').trim()
+    if (!clean) return
+    await activateNodeIds([clean])
+  }
+
+  async function pinNodeFromStudio(nodeId: string, level: 'required' | 'preferred') {
+    const clean = String(nodeId || '').trim()
+    if (!clean) return
+    try {
+      await api.pinNode(clean, level)
+      await reloadAll(threadId || undefined, ctxId || undefined)
+    } catch (error) {
+      console.error('failed to pin node from run studio', error)
+    }
+  }
 
   const leftPanelContent = (
     <>
@@ -1047,8 +1081,12 @@ export default function WorkspaceApp() {
           onOpenGraph={() => setWorkspaceMainTab('graph')}
           onOpenRawTrace={() => setWorkspaceMainTab('raw_trace')}
           onOpenAdvanced={() => setWorkspaceMainTab('advanced')}
+          onFocusNode={focusNodeInGraph}
           onOpenNode={openNodeInGraph}
+          onFocusTrace={focusNodesInGraph}
           onOpenTrace={openNodesInGraph}
+          onAddToActive={addNodeToActiveFromStudio}
+          onPinNode={pinNodeFromStudio}
         />
       )}
 

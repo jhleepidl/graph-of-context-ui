@@ -23,8 +23,12 @@ type Props = {
   onOpenGraph: () => void
   onOpenRawTrace: () => void
   onOpenAdvanced: () => void
+  onFocusNode: (nodeId: string) => void
   onOpenNode: (nodeId: string) => void
+  onFocusTrace: (nodeIds: string[]) => void
   onOpenTrace: (nodeIds: string[]) => void
+  onAddToActive: (nodeId: string) => void
+  onPinNode: (nodeId: string, level: 'required' | 'preferred') => void
 }
 
 export default function RunStudioLayout({
@@ -38,8 +42,12 @@ export default function RunStudioLayout({
   onOpenGraph,
   onOpenRawTrace,
   onOpenAdvanced,
+  onFocusNode,
   onOpenNode,
+  onFocusTrace,
   onOpenTrace,
+  onAddToActive,
+  onPinNode,
 }: Props) {
   const memoryProjection = summary?.projections?.memory_context
 
@@ -73,12 +81,34 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <ContextDecisionPanel decisions={decisions} onOpenNode={onOpenNode} />
-        <EvidencePanel evidence={evidence} onOpenNode={onOpenNode} onOpenTrace={onOpenTrace} />
+        <ContextDecisionPanel
+          decisions={decisions}
+          onFocusNode={onFocusNode}
+          onOpenNode={onOpenNode}
+          onAddToActive={onAddToActive}
+          onPinNode={onPinNode}
+        />
+        <EvidencePanel
+          evidence={evidence}
+          onFocusNode={onFocusNode}
+          onOpenNode={onOpenNode}
+          onFocusTrace={onFocusTrace}
+          onOpenTrace={onOpenTrace}
+          onAddToActive={onAddToActive}
+          onPinNode={onPinNode}
+        />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <MissingContextPanel decisions={decisions} onOpenNode={onOpenNode} onOpenConflict={onOpenTrace} />
+        <MissingContextPanel
+          decisions={decisions}
+          onFocusNode={onFocusNode}
+          onOpenNode={onOpenNode}
+          onIncludeNode={onAddToActive}
+          onPinNode={onPinNode}
+          onFocusConflict={onFocusTrace}
+          onOpenConflict={onOpenTrace}
+        />
         <AdvancedToolsPanel
           onOpenGraph={onOpenGraph}
           onOpenRawTrace={onOpenRawTrace}

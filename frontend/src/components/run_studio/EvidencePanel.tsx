@@ -4,10 +4,22 @@ import { type RunStudioEvidence } from './types'
 type Props = {
   evidence: RunStudioEvidence | null
   onOpenNode?: (nodeId: string) => void
+  onFocusNode?: (nodeId: string) => void
   onOpenTrace?: (nodeIds: string[]) => void
+  onFocusTrace?: (nodeIds: string[]) => void
+  onAddToActive?: (nodeId: string) => void
+  onPinNode?: (nodeId: string, level: 'required' | 'preferred') => void
 }
 
-export default function EvidencePanel({ evidence, onOpenNode, onOpenTrace }: Props) {
+export default function EvidencePanel({
+  evidence,
+  onOpenNode,
+  onFocusNode,
+  onOpenTrace,
+  onFocusTrace,
+  onAddToActive,
+  onPinNode,
+}: Props) {
   const items = evidence?.items || []
   const counts = evidence?.counts || {}
 
@@ -28,9 +40,18 @@ export default function EvidencePanel({ evidence, onOpenNode, onOpenTrace }: Pro
           <article key={item.claim_node_id} className="runStudioListItem">
             <div className="row" style={{ marginBottom: 4 }}>
               <span className="pill">{item.claim_node_type || 'Claim'}</span>
-              <button className="tiny" onClick={() => onOpenNode?.(item.claim_node_id)}>Open claim</button>
+              <button className="tiny" onClick={() => onFocusNode?.(item.claim_node_id)}>Focus in graph</button>
+              <button className="tiny" onClick={() => onOpenNode?.(item.claim_node_id)}>Open detail</button>
+              {!item.selected_in_context && <button className="tiny" onClick={() => onAddToActive?.(item.claim_node_id)}>Add to active</button>}
+              <button className="tiny" onClick={() => onPinNode?.(item.claim_node_id, 'preferred')}>Pin</button>
               {item.related_node_ids && item.related_node_ids.length > 1 && (
-                <button className="tiny" onClick={() => onOpenTrace?.(item.related_node_ids || [])}>Open trace</button>
+                <>
+                  <button className="tiny" onClick={() => onFocusTrace?.(item.related_node_ids || [])}>Focus trace</button>
+                  <button className="tiny" onClick={() => onOpenTrace?.(item.related_node_ids || [])}>Open trace</button>
+                </>
+              )}
+              {(item.conflict_node_ids?.length || 0) > 0 && (
+                <button className="tiny" onClick={() => onOpenTrace?.([item.claim_node_id, ...(item.conflict_node_ids || [])])}>Compare pair</button>
               )}
               {item.selected_in_context && <span className="pill">selected</span>}
               {(item.evidence_nodes?.length || 0) > 0 && <span className="pill">evidence {item.evidence_nodes?.length}</span>}

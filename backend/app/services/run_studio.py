@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
 from sqlmodel import Session, select
 
@@ -15,7 +15,31 @@ from app.services.graph_projections import build_logical_projections
 CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary"}
 EVIDENCE_EDGE_TYPES = {"SUPPORTS", "REFERENCES", "DEPENDS"}
 CONFLICT_EDGE_TYPES = {"CONFLICTS", "CONTRADICTS"}
-RUNTIME_TEAM_KEYS = ("runtime_team_snapshot", "runtime_agents", "team_plan")
+RUNTIME_MEMBER_ID_KEYS = ("agent_id", "runtime_instance_id", "instance_id", "id", "member_id")
+RUNTIME_MEMBER_HINT_KEYS = (
+    "role_label",
+    "role",
+    "title",
+    "name",
+    "display_name",
+    "label",
+    "template_id",
+    "agent_template_id",
+    "provider",
+    "llm_provider",
+    "model",
+    "model_name",
+    "runtime_status",
+    "status",
+    "state",
+    "capability_tags",
+    "capabilities",
+    "responsibilities",
+    "responsibility",
+    "ephemeral",
+    "transient",
+)
+RUNTIME_NESTED_BLOCK_KEYS = ("runtime", "meta", "result", "output", "state", "data")
 
 
 def _jload(raw: str | None, default: Any) -> Any:
@@ -78,7 +102,49 @@ def _clean_list_of_text(value: Any, *, limit: int = 12) -> list[str]:
     return out
 
 
-def _runtime_member_list(raw: Any) -> list[dict[str, Any]]:
+def _has_non_empty_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+    return True
+
+
+def _is_runtime_member_record(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+
+    if any(_has_non_empty_value(value.get(key)) for key in RUNTIME_MEMBER_ID_KEYS):
+        return True
+
+    hint_count = sum(1 for key in RUNTIME_MEMBER_HINT_KEYS if _has_non_empty_value(value.get(key)))
+    return hint_count >= 2
+
+
+def _extract_runtime_member_map(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    for map_key, value in raw.items():
+        if not _is_runtime_member_record(value):
+            continue
+        member = dict(value)
+        if not any(_has_non_empty_value(member.get(key)) for key in RUNTIME_MEMBER_ID_KEYS):
+            clean_key = str(map_key or "").strip()
+            if clean_key:
+                member["agent_id"] = clean_key
+        out.append(member)
+    return out
+
+
+def _extract_runtime_members(
+    raw: Any,
+    *,
+    allow_string_ids: bool = False,
+    allow_keyed_map: bool = False,
+) -> list[dict[str, Any]]:
     if isinstance(raw, str):
         clean = raw.strip()
         if not clean:
@@ -86,43 +152,164 @@ def _runtime_member_list(raw: Any) -> list[dict[str, Any]]:
         if clean.startswith("{") or clean.startswith("["):
             parsed = _jload(clean, None)
             if parsed is not None:
-                return _runtime_member_list(parsed)
-        return [{"agent_id": clean}]
+                return _extract_runtime_members(
+                    parsed,
+                    allow_string_ids=allow_string_ids,
+                    allow_keyed_map=allow_keyed_map,
+                )
+        if allow_string_ids:
+            return [{"agent_id": clean}]
+        return []
 
     if isinstance(raw, list):
         out: list[dict[str, Any]] = []
         for item in raw:
-            if isinstance(item, dict):
+            if _is_runtime_member_record(item):
                 out.append(item)
-            elif isinstance(item, str) and item.strip():
+            elif allow_string_ids and isinstance(item, str) and item.strip():
                 out.append({"agent_id": item.strip()})
         return out
+
     if isinstance(raw, dict):
-        for key in ("agents", "members", "team", "items", "runtime_agents"):
-            nested = raw.get(key)
-            nested_items = _runtime_member_list(nested)
-            if nested_items:
-                return nested_items
-
-        # Support keyed maps like {"planner": {...}, "critic": {...}}.
-        map_items: list[dict[str, Any]] = []
-        for map_key, value in raw.items():
-            if isinstance(value, dict):
-                enriched = dict(value)
-                if not any(k in enriched for k in ("agent_id", "id", "runtime_instance_id", "instance_id", "name")):
-                    enriched["agent_id"] = str(map_key)
-                map_items.append(enriched)
-            elif isinstance(value, str) and value.strip():
-                map_items.append({"agent_id": str(map_key), "name": value.strip()})
-        if map_items:
-            return map_items
-
-        has_member_shape = any(
-            key in raw for key in ("id", "agent_id", "runtime_instance_id", "instance_id", "role", "role_label", "name")
-        )
-        if has_member_shape:
+        if _is_runtime_member_record(raw):
             return [raw]
+        if allow_keyed_map:
+            return _extract_runtime_member_map(raw)
     return []
+
+
+def _is_runtime_snapshot_shape(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+
+    if any(
+        key in value
+        for key in (
+            "runtime_team_snapshot",
+            "runtime_agents",
+            "snapshot_id",
+            "snapshot_at",
+            "snapshot_version",
+            "snapshot_source",
+            "snapshot_kind",
+        )
+    ):
+        return True
+
+    for key in ("kind", "type", "source"):
+        raw = str(value.get(key) or "").strip().lower()
+        if raw and "snapshot" in raw and ("runtime" in raw or "team" in raw):
+            return True
+    return False
+
+
+def _team_plan_member_candidates(team_plan: Any, *, source_prefix: str) -> list[tuple[str, list[dict[str, Any]]]]:
+    if isinstance(team_plan, str):
+        parsed = _jload(team_plan, None)
+        if parsed is not None:
+            team_plan = parsed
+
+    if not isinstance(team_plan, dict):
+        return []
+
+    out: list[tuple[str, list[dict[str, Any]]]] = []
+    runtime_agents = _extract_runtime_members(team_plan.get("runtime_agents"), allow_string_ids=True, allow_keyed_map=True)
+    if runtime_agents:
+        out.append((f"{source_prefix}.runtime_agents", runtime_agents))
+
+    for key in ("members", "agents"):
+        members = _extract_runtime_members(team_plan.get(key), allow_keyed_map=True)
+        if members:
+            out.append((f"{source_prefix}.{key}", members))
+
+    role_members = _extract_runtime_member_map(team_plan.get("roles"))
+    if role_members:
+        out.append((f"{source_prefix}.roles", role_members))
+
+    return out
+
+
+def _runtime_member_candidates_from_container(
+    container: dict[str, Any],
+    *,
+    source_prefix: str,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    out: list[tuple[str, list[dict[str, Any]]]] = []
+
+    runtime_snapshot = container.get("runtime_team_snapshot")
+    if isinstance(runtime_snapshot, str):
+        parsed = _jload(runtime_snapshot, None)
+        if parsed is not None:
+            runtime_snapshot = parsed
+
+    if isinstance(runtime_snapshot, dict):
+        canonical_runtime_agents = _extract_runtime_members(
+            runtime_snapshot.get("runtime_agents"),
+            allow_string_ids=True,
+            allow_keyed_map=True,
+        )
+        if canonical_runtime_agents:
+            out.append((f"{source_prefix}runtime_team_snapshot.runtime_agents", canonical_runtime_agents))
+
+        out.extend(
+            _team_plan_member_candidates(
+                runtime_snapshot.get("team_plan"),
+                source_prefix=f"{source_prefix}runtime_team_snapshot.team_plan",
+            )
+        )
+
+        for key in ("members", "agents"):
+            members = _extract_runtime_members(runtime_snapshot.get(key), allow_keyed_map=True)
+            if members:
+                out.append((f"{source_prefix}runtime_team_snapshot.{key}", members))
+
+    elif runtime_snapshot is not None:
+        # Some runtimes write runtime_team_snapshot directly as a list of member records.
+        members = _extract_runtime_members(runtime_snapshot, allow_string_ids=True)
+        if members:
+            out.append((f"{source_prefix}runtime_team_snapshot", members))
+
+    top_runtime_agents = _extract_runtime_members(
+        container.get("runtime_agents"),
+        allow_string_ids=True,
+        allow_keyed_map=True,
+    )
+    if top_runtime_agents:
+        out.append((f"{source_prefix}runtime_agents", top_runtime_agents))
+
+    if _is_runtime_snapshot_shape(container):
+        for key in ("members", "agents"):
+            members = _extract_runtime_members(container.get(key), allow_keyed_map=True)
+            if members:
+                out.append((f"{source_prefix}{key}", members))
+
+    # Top-level/nested team_plan is allowed only when it explicitly carries member-like shapes.
+    out.extend(
+        _team_plan_member_candidates(
+            container.get("team_plan"),
+            source_prefix=f"{source_prefix}team_plan",
+        )
+    )
+    return out
+
+
+def _runtime_source_priority(source_key: str) -> int:
+    clean = str(source_key or "")
+    if clean.endswith("runtime_team_snapshot.runtime_agents"):
+        return 70
+    if clean.endswith("runtime_team_snapshot.team_plan.runtime_agents"):
+        return 65
+    if clean.endswith("runtime_agents"):
+        return 60
+    if ".runtime_team_snapshot." in clean:
+        return 50
+    if clean.endswith(".members") or clean.endswith(".agents"):
+        return 40
+    if ".team_plan." in clean:
+        return 30
+    if clean.endswith("runtime_team_snapshot"):
+        return 20
+    return 10
 
 
 def _extract_runtime_team_snapshot(nodes: list[Node]) -> dict[str, Any] | None:
@@ -130,14 +317,18 @@ def _extract_runtime_team_snapshot(nodes: list[Node]) -> dict[str, Any] | None:
     sorted_nodes = sorted([node for node in nodes if node.type in {"Run", "Step"}], key=_created_sort_key)
     for node in sorted_nodes:
         payload = _node_payload(node)
-        containers: list[tuple[str, Any]] = [(key, payload.get(key)) for key in RUNTIME_TEAM_KEYS]
-        for block_name in ("runtime", "meta", "result", "output", "state", "data"):
+        source_candidates = _runtime_member_candidates_from_container(payload, source_prefix="")
+        for block_name in RUNTIME_NESTED_BLOCK_KEYS:
             block = payload.get(block_name)
             if isinstance(block, dict):
-                containers.extend((f"{block_name}.{key}", block.get(key)) for key in RUNTIME_TEAM_KEYS)
+                source_candidates.extend(
+                    _runtime_member_candidates_from_container(
+                        block,
+                        source_prefix=f"{block_name}.",
+                    )
+                )
 
-        for source_key, raw in containers:
-            members = _runtime_member_list(raw)
+        for source_key, members in source_candidates:
             if not members:
                 continue
             candidates.append(
@@ -153,22 +344,10 @@ def _extract_runtime_team_snapshot(nodes: list[Node]) -> dict[str, Any] | None:
     if not candidates:
         return None
 
-    # Prefer the latest snapshot; tie-break by explicitness of source key.
-    source_priority = {
-        "runtime_team_snapshot": 3,
-        "runtime.runtime_team_snapshot": 3,
-        "meta.runtime_team_snapshot": 3,
-        "runtime_agents": 2,
-        "runtime.runtime_agents": 2,
-        "meta.runtime_agents": 2,
-        "team_plan": 1,
-        "runtime.team_plan": 1,
-        "meta.team_plan": 1,
-    }
     candidates.sort(
         key=lambda item: (
             str(item.get("created_at") or ""),
-            source_priority.get(str(item.get("source_key") or ""), 0),
+            _runtime_source_priority(str(item.get("source_key") or "")),
             str(item.get("node_id") or ""),
         )
     )

@@ -5,8 +5,11 @@ import unittest
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from sqlmodel import SQLModel, Session, create_engine
+
+from app.models import Agent, Conversation, ConversationAgent
 from app.services.graph_projections import memory_context_projection
-from app.services.run_studio import _evidence_summary, _extract_runtime_team_snapshot
+from app.services.run_studio import _agent_team_summary, _evidence_summary, _extract_runtime_team_snapshot
 
 
 @dataclass
@@ -48,31 +51,75 @@ def make_edge(edge_id: str, from_id: str, to_id: str, edge_type: str) -> FakeEdg
 
 
 class RunStudioLogicTests(unittest.TestCase):
-    def test_runtime_team_snapshot_prefers_latest_valid_snapshot(self) -> None:
+    def test_runtime_team_snapshot_prefers_canonical_runtime_snapshot_shape(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
         nodes = [
             make_node(
-                "run-old",
+                "run-canonical",
                 "Run",
-                payload={"runtime_team_snapshot": [{"agent_id": "planner", "role": "Planner"}]},
+                payload={
+                    "runtime_team_snapshot": {
+                        "runtime_agents": [
+                            {
+                                "runtime_instance_id": "rt-planner-1",
+                                "role_label": "Planner",
+                                "ephemeral": True,
+                            }
+                        ],
+                    },
+                    "runtime_agents": [{"agent_id": "legacy-top-level"}],
+                },
                 created_at=base,
-            ),
-            make_node(
-                "step-new",
-                "Step",
-                payload={"runtime_agents": [{"runtime_instance_id": "exec-1", "role_label": "Executor"}]},
-                created_at=base + timedelta(seconds=10),
             ),
         ]
 
         snapshot = _extract_runtime_team_snapshot(nodes)
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
-        self.assertEqual(snapshot["node_id"], "step-new")
+        self.assertEqual(snapshot["source_key"], "runtime_team_snapshot.runtime_agents")
+        self.assertEqual(snapshot["members"][0]["runtime_instance_id"], "rt-planner-1")
+        self.assertTrue(bool(snapshot["members"][0]["ephemeral"]))
+
+    def test_runtime_team_snapshot_uses_top_level_runtime_agents_when_needed(self) -> None:
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+        nodes = [
+            make_node(
+                "step-top-runtime-agents",
+                "Step",
+                payload={"runtime_agents": [{"runtime_instance_id": "exec-1", "role_label": "Executor"}]},
+                created_at=base,
+            ),
+        ]
+
+        snapshot = _extract_runtime_team_snapshot(nodes)
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
         self.assertEqual(snapshot["source_key"], "runtime_agents")
         self.assertEqual(snapshot["members"][0]["runtime_instance_id"], "exec-1")
 
-    def test_runtime_team_snapshot_accepts_keyed_member_map(self) -> None:
+    def test_runtime_team_snapshot_ignores_plain_team_plan_metadata(self) -> None:
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+        nodes = [
+            make_node(
+                "run-plan-only",
+                "Run",
+                payload={
+                    "team_plan": {
+                        "mode": "parallel",
+                        "reason": "decompose into planner/writer",
+                        "budget": {"tokens": 3200},
+                        "execution_order": ["planner", "writer"],
+                        "roles": {"planner": "plan first", "writer": "draft after plan"},
+                    }
+                },
+                created_at=base,
+            ),
+        ]
+
+        snapshot = _extract_runtime_team_snapshot(nodes)
+        self.assertIsNone(snapshot)
+
+    def test_runtime_team_snapshot_accepts_member_like_keyed_map(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
         nodes = [
             make_node(
@@ -81,7 +128,7 @@ class RunStudioLogicTests(unittest.TestCase):
                 payload={
                     "team_plan": {
                         "agents": {
-                            "planner": {"role_label": "Planner"},
+                            "planner": {"role_label": "Planner", "model": "gpt-4o-mini"},
                             "critic": {"role_label": "Critic", "runtime_instance_id": "rt-critic-1"},
                         }
                     }
@@ -93,13 +140,91 @@ class RunStudioLogicTests(unittest.TestCase):
         snapshot = _extract_runtime_team_snapshot(nodes)
         self.assertIsNotNone(snapshot)
         assert snapshot is not None
-        self.assertEqual(snapshot["source_key"], "team_plan")
+        self.assertEqual(snapshot["source_key"], "team_plan.agents")
         member_ids = {
             str(item.get("agent_id") or item.get("runtime_instance_id") or "")
             for item in snapshot["members"]
         }
         self.assertIn("planner", member_ids)
         self.assertIn("rt-critic-1", member_ids)
+
+    def test_agent_team_falls_back_to_conversation_membership(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            conversation = Conversation(thread_id="thread-conv", owner_user_id="u1", service_id="svc")
+            session.add(conversation)
+            agent = Agent(
+                owner_user_id="u1",
+                service_id="svc",
+                name="Analyst",
+                description="Conversation-level analyst",
+                model="gpt-4o",
+            )
+            session.add(agent)
+            session.commit()
+
+            membership = ConversationAgent(
+                conversation_id=conversation.id,
+                agent_id=agent.id,
+                enabled=True,
+                order_index=0,
+                overrides_json=json.dumps({"ephemeral": True}),
+            )
+            session.add(membership)
+            session.commit()
+
+            summary = _agent_team_summary(session, thread_id="thread-conv", nodes=[])
+            self.assertEqual(len(summary["items"]), 1)
+            self.assertEqual(summary["items"][0]["source"], "conversation_membership")
+            self.assertTrue(bool(summary["items"][0]["ephemeral"]))
+
+    def test_agent_team_falls_back_to_inferred_step_agents(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            nodes = [
+                make_node(
+                    "step-a",
+                    "Step",
+                    payload={"agent_id": "runtime-worker", "status": "running"},
+                    created_at=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+                ),
+            ]
+            summary = _agent_team_summary(session, thread_id="thread-no-conversation", nodes=nodes)
+            self.assertEqual(len(summary["items"]), 1)
+            self.assertEqual(summary["items"][0]["source"], "inferred_from_steps")
+            self.assertEqual(summary["items"][0]["agent_id"], "runtime-worker")
+            self.assertEqual(summary["items"][0]["runtime_status"], "running")
+
+    def test_agent_team_preserves_runtime_ephemeral_flag(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            nodes = [
+                make_node(
+                    "run-runtime",
+                    "Run",
+                    payload={
+                        "runtime_team_snapshot": {
+                            "runtime_agents": [
+                                {
+                                    "runtime_instance_id": "rt-ephemeral",
+                                    "role_label": "Temp Planner",
+                                    "status": "running",
+                                    "ephemeral": True,
+                                }
+                            ]
+                        }
+                    },
+                    created_at=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+                ),
+            ]
+            summary = _agent_team_summary(session, thread_id="thread-runtime", nodes=nodes)
+            self.assertEqual(len(summary["items"]), 1)
+            self.assertEqual(summary["items"][0]["source"], "runtime_snapshot")
+            self.assertTrue(bool(summary["items"][0]["ephemeral"]))
+            self.assertEqual(summary["items"][0]["runtime_status"], "running")
 
     def test_evidence_ranking_prioritizes_supported_selected_claims(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)

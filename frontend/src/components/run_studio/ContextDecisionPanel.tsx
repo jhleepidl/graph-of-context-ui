@@ -4,9 +4,18 @@ import { type RunStudioContextDecisions } from './types'
 type Props = {
   decisions: RunStudioContextDecisions | null
   onOpenNode?: (nodeId: string) => void
+  onFocusNode?: (nodeId: string) => void
+  onAddToActive?: (nodeId: string) => void
+  onPinNode?: (nodeId: string, level: 'required' | 'preferred') => void
 }
 
-export default function ContextDecisionPanel({ decisions, onOpenNode }: Props) {
+export default function ContextDecisionPanel({
+  decisions,
+  onOpenNode,
+  onFocusNode,
+  onAddToActive,
+  onPinNode,
+}: Props) {
   const selected = decisions?.selected || []
   const pinned = decisions?.pinned || []
   const excluded = decisions?.excluded || []
@@ -35,9 +44,14 @@ export default function ContextDecisionPanel({ decisions, onOpenNode }: Props) {
                   <span className="pill">{item.type || 'Node'}</span>
                   {item.pinned && <span className="pill">pinned {item.pin_level || ''}</span>}
                   {item.target_node_id && (
-                    <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id)}>
-                      Open
-                    </button>
+                    <>
+                      <button className="tiny" onClick={() => onFocusNode?.(item.target_node_id || item.id)}>
+                        Focus in graph
+                      </button>
+                      <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id)}>
+                        Open detail
+                      </button>
+                    </>
                   )}
                 </div>
                 <div>{item.text || item.id}</div>
@@ -54,11 +68,10 @@ export default function ContextDecisionPanel({ decisions, onOpenNode }: Props) {
               <article key={item.id} className="runStudioListItem">
                 <div className="row" style={{ marginBottom: 4 }}>
                   <span className="pill">{item.type || 'Node'}</span>
-                  {item.target_node_id && (
-                    <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id)}>
-                      Open
-                    </button>
-                  )}
+                  {item.target_node_id && <button className="tiny" onClick={() => onAddToActive?.(item.target_node_id || item.id)}>Include</button>}
+                  {item.target_node_id && <button className="tiny" onClick={() => onPinNode?.(item.target_node_id || item.id, 'preferred')}>Pin</button>}
+                  {item.target_node_id && <button className="tiny" onClick={() => onFocusNode?.(item.target_node_id || item.id)}>Focus in graph</button>}
+                  {item.target_node_id && <button className="tiny" onClick={() => onOpenNode?.(item.target_node_id || item.id)}>Open detail</button>}
                 </div>
                 <div>{item.text || item.id}</div>
                 <div className="muted">{item.reason || ''}</div>

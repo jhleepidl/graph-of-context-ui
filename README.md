@@ -23,11 +23,12 @@ All existing APIs remain available.
 
 ## Run Studio second-pass behavior
 - Agent Team prefers runtime team snapshots (`runtime_team_snapshot`, `runtime_agents`, `team_plan`) from run/step payloads when present, and falls back to conversation membership/inferred steps when missing.
+- Runtime extraction is now stricter: plain `team_plan` metadata dictionaries are ignored unless they contain explicit member-like collections, preventing garbage members from keys like `mode`, `reason`, `budget`, `execution_order`.
 - Context projection separates:
   - `core_items` (Decision/Assumption/Plan/MemoryItem/Observation/ContextSummary)
   - `supporting_items` (Artifact/Resource/ContextCandidate)
   - `execution_items` (Step/Message/Fold/Run/ToolCall/ToolResult)
-- Context Decisions and Evidence cards support drill-down actions (open node / open trace pair), routing operators to graph-level details quickly.
+- Context Decisions / Missing Context / Evidence cards support lightweight operator actions (`Focus in graph`, `Open detail`, `Include/Add to active`, `Pin`, `Compare pair`) using existing graph/context flows.
 - Graph/editor/manual tools remain available under secondary tabs (`Graph`, `Raw Trace`, `Advanced`).
 
 ## 1) Backend
