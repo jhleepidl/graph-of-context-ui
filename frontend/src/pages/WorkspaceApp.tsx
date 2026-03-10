@@ -1058,7 +1058,7 @@ export default function WorkspaceApp() {
           <button className={workspaceMainTab === 'artifacts' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('artifacts')}>Artifacts</button>
           <button className={workspaceMainTab === 'advanced' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('advanced')}>Advanced</button>
           <span className="muted">
-            {workspaceMainTab === 'run_studio' && 'Decision-first operational view for current run'}
+            {workspaceMainTab === 'run_studio' && 'Operational view: run status, runtime team, context decisions, and evidence'}
             {workspaceMainTab === 'graph' && 'Graph editing and manual fold/unfold controls'}
             {workspaceMainTab === 'raw_trace' && 'Detailed execution graph + timeline + node inspector'}
             {workspaceMainTab === 'artifacts' && 'Artifact/resource inventory and selection state'}
@@ -1131,14 +1131,14 @@ export default function WorkspaceApp() {
                 <button className={rightPanelTab === 'prompt' ? 'primary' : ''} onClick={() => setRightPanelTab('prompt')}>Prompt Builder</button>
                 <button className={rightPanelTab === 'run' ? 'primary' : ''} onClick={() => setRightPanelTab('run')}>Run</button>
                 <button className={rightPanelTab === 'job_settings' ? 'primary' : ''} onClick={() => setRightPanelTab('job_settings')}>Job Settings</button>
-                <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Thread Team</button>
+                <button className={rightPanelTab === 'conversation_agents' ? 'primary' : ''} onClick={() => setRightPanelTab('conversation_agents')}>Thread Team Config</button>
                 <button className={rightPanelTab === 'inspector' ? 'primary' : ''} onClick={() => setRightPanelTab('inspector')}>Inspector</button>
               </div>
               <div className="muted">
                 {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budgeting, resource notes'}
                 {rightPanelTab === 'run' && 'Run query with current active context'}
                 {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current thread'}
-                {rightPanelTab === 'conversation_agents' && 'Manage conversation agents, enabled/order/overrides'}
+                {rightPanelTab === 'conversation_agents' && 'Configure thread team defaults (setup only; actual runtime team appears in Run Studio)'}
                 {rightPanelTab === 'inspector' && 'Compiled context and version/planner diagnostics'}
               </div>
             </div>
@@ -1284,12 +1284,12 @@ export default function WorkspaceApp() {
             className={rightPanelTab === 'conversation_agents' ? 'primary' : ''}
             onClick={() => setRightPanelTab('conversation_agents')}
           >
-            Thread Team
+            Thread Team Config
           </button>
         </div>
         <div className="muted">
           {(rightPanelTab === 'conversation_agents')
-            ? 'Manage thread team (enabled/order/overrides)'
+            ? 'Configure thread team defaults (setup only)'
             : 'Compiled context, version diff, and planner diagnostics'}
         </div>
       </div>

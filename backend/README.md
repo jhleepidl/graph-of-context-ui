@@ -86,6 +86,7 @@ Notes:
 - Existing routes are preserved.
 - The underlying graph schema (`Node`/`Edge`) is unchanged.
 - Projections expose conversation/execution/memory-context logical views for frontend consumption.
+- UI/operator guide is documented at [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md), including how to distinguish thread team setup from actual execution.
 - Agent Team projection now uses stricter runtime extraction rules:
   - canonical runtime snapshot field is `runtime_team_snapshot` (camelCase `runtimeTeamSnapshot` tolerated for compatibility)
   - canonical precedence favors `runtime_team_snapshot.runtime_agents`, then `runtime_agents`, then recognized snapshot member collections

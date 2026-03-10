@@ -12,6 +12,7 @@ This repo now ships with a **Run Studio-first** workspace while keeping the gene
   - Artifacts
   - Advanced tools (Prompt Builder / Run / Job Settings / Thread Team / Inspector)
 - Backend remains graph-first and generic (`Node`/`Edge`), with additive run-studio projection endpoints.
+- Operator usage guide is available at [`UI_USAGE_GUIDE.md`](UI_USAGE_GUIDE.md), including team setup vs execution troubleshooting.
 
 ## Run Studio API Additions
 - `GET /api/threads/{thread_id}/run_studio/summary`
@@ -31,6 +32,7 @@ All existing APIs remain available.
   - `supporting_items` (Artifact/Resource/ContextCandidate)
   - `execution_items` (Step/Message/Fold/Run/ToolCall/ToolResult)
 - Context Decisions / Missing Context / Evidence cards support lightweight operator actions (`Focus in graph`, `Open detail`, `Include/Add to active`, `Pin`, `Compare pair`) using existing graph/context flows.
+- The Now panel includes an execution hint to distinguish team-configuration changes from actual execution-step progress.
 - Graph/editor/manual tools remain available under secondary tabs (`Graph`, `Raw Trace`, `Advanced`).
 
 ## 1) Backend

@@ -5,6 +5,14 @@ type Props = {
   team: RunStudioAgentTeam | null
 }
 
+function sourceLabel(source: string): string {
+  const clean = source.trim().toLowerCase()
+  if (clean === 'runtime_snapshot') return 'runtime team'
+  if (clean === 'conversation_membership') return 'thread team'
+  if (clean === 'inferred_from_steps') return 'inferred from steps'
+  return clean || 'unknown'
+}
+
 function runtimeClass(status: string): string {
   const clean = status.trim().toLowerCase()
   if (clean === 'running') return 'runStudioStatus--running'
@@ -16,16 +24,29 @@ function runtimeClass(status: string): string {
 
 export default function AgentTeamPanel({ team }: Props) {
   const items = team?.items || []
+  const runtimeCount = items.filter((item) => String(item.source || '') === 'runtime_snapshot').length
+  const threadTeamCount = items.filter((item) => String(item.source || '') === 'conversation_membership').length
+  const inferredCount = items.filter((item) => String(item.source || '') === 'inferred_from_steps').length
 
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
         <h3>Agent Team</h3>
-        <span className="pill">active: {team?.active_count ?? 0}</span>
+        <div className="runStudioMetaRow">
+          <span className="pill">active: {team?.active_count ?? 0}</span>
+          <span className="pill">runtime: {runtimeCount}</span>
+          <span className="pill">thread team: {threadTeamCount}</span>
+          <span className="pill">inferred: {inferredCount}</span>
+        </div>
       </div>
 
       {items.length === 0 && (
-        <div className="muted">No configured conversation team yet. Runtime roles will appear after step execution.</div>
+        <div className="muted">No thread team is configured yet. Runtime members appear only after execution emits team snapshots or step agents.</div>
+      )}
+      {items.length > 0 && runtimeCount === 0 && (
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Runtime team snapshot not detected yet. This list currently reflects thread team configuration and/or inferred step agents.
+        </div>
       )}
 
       <div className="runStudioList">
@@ -37,7 +58,7 @@ export default function AgentTeamPanel({ team }: Props) {
               <div className="row" style={{ marginBottom: 6 }}>
                 <b>{item.name || item.role_label || item.agent_id}</b>
                 <span className={`pill runStudioStatus ${runtimeClass(status)}`}>{status}</span>
-                <span className="pill">{source}</span>
+                <span className="pill">{sourceLabel(source)}</span>
                 {!item.enabled && <span className="pill">disabled</span>}
                 {typeof item.order_index === 'number' && <span className="pill">#{item.order_index + 1}</span>}
                 {item.ephemeral && <span className="pill">ephemeral</span>}

@@ -1,8 +1,9 @@
 import React from 'react'
-import { type RunStudioSummary } from './types'
+import { type RunStudioAgentTeam, type RunStudioSummary } from './types'
 
 type Props = {
   summary: RunStudioSummary | null
+  team?: RunStudioAgentTeam | null
 }
 
 function statusClass(status: string): string {
@@ -14,7 +15,7 @@ function statusClass(status: string): string {
   return 'runStudioStatus--idle'
 }
 
-export default function NowPanel({ summary }: Props) {
+export default function NowPanel({ summary, team }: Props) {
   const now = summary?.now
   const task = now?.task
   const state = now?.state
@@ -22,6 +23,24 @@ export default function NowPanel({ summary }: Props) {
   const blocked = Boolean(state?.blocked)
   const pendingApproval = Boolean(state?.pending_approval)
   const stepStatusCounts = state?.step_status_counts || {}
+  const stepCount = Object.values(stepStatusCounts).reduce((acc, value) => acc + Number(value || 0), 0)
+  const teamItems = team?.items || []
+  const runtimeTeamCount = teamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
+
+  let executionHint = 'No execution step detected yet'
+  if (pendingApproval) {
+    executionHint = 'Waiting for approval before execution continues'
+  } else if (stepCount === 0 && runtimeTeamCount > 0) {
+    executionHint = 'Team updated, but no execution step detected yet'
+  } else if (stepCount === 0 && teamItems.length > 0) {
+    executionHint = 'Thread team configured, but no execution step detected yet'
+  } else if (status === 'running' || status === 'queued') {
+    executionHint = 'Execution started'
+  } else if (status === 'done' && stepCount > 0) {
+    executionHint = 'Execution completed'
+  } else if (stepCount > 0) {
+    executionHint = 'Execution steps detected'
+  }
 
   return (
     <section className="card runStudioPanel">
@@ -32,6 +51,10 @@ export default function NowPanel({ summary }: Props) {
           {blocked && <span className="pill runStudioStatus runStudioStatus--blocked">blocked</span>}
           {pendingApproval && <span className="pill runStudioStatus runStudioStatus--queued">pending approval</span>}
         </div>
+      </div>
+
+      <div className="runStudioWarning">
+        <b>Team / Execution Hint:</b> {executionHint}
       </div>
 
       <div className="runStudioNowGrid">

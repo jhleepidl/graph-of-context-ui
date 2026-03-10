@@ -76,7 +76,7 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--top">
-        <NowPanel summary={summary} />
+        <NowPanel summary={summary} team={team} />
         <AgentTeamPanel team={team} />
       </div>
 
