@@ -33,6 +33,8 @@ All existing APIs remain available.
   - `execution_items` (Step/Message/Fold/Run/ToolCall/ToolResult)
 - Context Decisions / Missing Context / Evidence cards support lightweight operator actions (`Focus in graph`, `Open detail`, `Include/Add to active`, `Pin`, `Compare pair`) using existing graph/context flows.
 - The Now panel includes an execution hint to distinguish team-configuration changes from actual execution-step progress.
+- Now summary selection is current-run scoped, so stale queued steps from older/superseded runs are de-prioritized in the primary status view.
+- Deep-link `?thread=<id>` is deterministic: the UI opens that thread or shows an explicit unavailable notice (no silent fallback to another thread).
 - Graph/editor/manual tools remain available under secondary tabs (`Graph`, `Raw Trace`, `Advanced`).
 
 ## 1) Backend

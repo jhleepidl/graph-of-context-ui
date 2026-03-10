@@ -38,6 +38,8 @@ https://<host>/goc/?thread=<threadId>&ctx=<ctxId>#token=gocu1.<service_id>.<exp>
 - Runtime team extraction is stricter server-side, so plain `team_plan` metadata no longer appears as fake runtime members.
 - Thread Team configuration is setup state; actual work execution is tracked separately via run/step status in Run Studio.
 - The Now panel includes an execution hint to clarify whether only team setup changed or execution steps have started.
+- `?thread=<id>` deep links are deterministic: the app opens that exact thread or shows an explicit unavailable notice (no silent fallback thread auto-open).
+- Now status uses current-run scoped fields and de-prioritizes stale queued steps from older/superseded runs.
 - Context projection metadata is separated into core/supporting/execution buckets to reduce execution-noise in primary context summaries.
 - Context Decisions / Missing Context / Evidence panels support lightweight operator actions (`Focus in graph`, `Open detail`, `Include/Add to active`, `Pin`, `Compare pair`) wired to existing graph/context flows.
 - Graph editor still exists under the `Graph` secondary tab.

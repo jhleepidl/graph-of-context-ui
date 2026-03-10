@@ -207,6 +207,7 @@ export default function WorkspaceApp() {
   const [threads, setThreads] = useState<any[]>([])
   const [workspaceKey, setWorkspaceKey] = useState<string>(() => readStoredWorkspaceKey())
   const [threadId, setThreadId] = useState<string | null>(null)
+  const [threadResolutionNotice, setThreadResolutionNotice] = useState<string>('')
 
   const [ctxSets, setCtxSets] = useState<any[]>([])
   const [ctxId, setCtxId] = useState<string | null>(null)
@@ -341,13 +342,40 @@ export default function WorkspaceApp() {
     await refreshRunStudio(tId, cId, { silent: true })
   }
 
-  async function loadThreads(preferredThreadId?: string | null) {
-    const ts = await api.threads()
+  async function loadThreads(preferredThreadId?: string | null): Promise<string | null> {
+    const requestedThreadId = (preferredThreadId || '').trim()
+    let ts = await api.threads()
     setThreads(ts)
+
+    if (requestedThreadId) {
+      if (ts.some((t) => t.id === requestedThreadId)) {
+        setThreadResolutionNotice('')
+        return requestedThreadId
+      }
+
+      // Explicit deep link: try direct thread fetch before failing.
+      try {
+        const directThread = await api.thread(requestedThreadId)
+        if (directThread && directThread.id === requestedThreadId) {
+          if (!ts.some((t) => t.id === requestedThreadId)) {
+            ts = [directThread, ...ts]
+            setThreads(ts)
+          }
+          setThreadResolutionNotice('')
+          return requestedThreadId
+        }
+      } catch {
+        // handled below with explicit non-fallback notice
+      }
+
+      setThreadResolutionNotice(
+        `Requested thread (${requestedThreadId}) was not found or is unavailable. No fallback thread was auto-selected.`,
+      )
+      return null
+    }
+
     let tid = ts[0]?.id
-    if (preferredThreadId && ts.some((t) => t.id === preferredThreadId)) {
-      tid = preferredThreadId
-    } else if (threadId && ts.some((t) => t.id === threadId)) {
+    if (threadId && ts.some((t) => t.id === threadId)) {
       tid = threadId
     } else if (workspaceKey) {
       const inWorkspace = ts.find((t) => buildWorkspaceGroup(t).key === workspaceKey)
@@ -359,6 +387,7 @@ export default function WorkspaceApp() {
       const refreshed = await api.threads()
       setThreads(refreshed)
     }
+    setThreadResolutionNotice('')
     return tid
   }
 
@@ -396,6 +425,7 @@ export default function WorkspaceApp() {
     if (!nextThreadId) return
     const seq = ++switchSeqRef.current
 
+    setThreadResolutionNotice('')
     setThreadId(nextThreadId)
     const nextThread = threads.find((t) => t.id === nextThreadId)
     if (nextThread) {
@@ -444,6 +474,11 @@ export default function WorkspaceApp() {
         setAuthGateState('ready')
         const tid = await loadThreads(initialDeepLink.threadId)
         if (cancelled) return
+        if (!tid) {
+          setThreadId(null)
+          clearThreadScopedState()
+          return
+        }
         await switchThread(tid, initialDeepLink.ctxId)
         return
       }
@@ -478,6 +513,11 @@ export default function WorkspaceApp() {
       setAuthGateState('ready')
       const tid = await loadThreads(initialDeepLink.threadId)
       if (cancelled) return
+      if (!tid) {
+        setThreadId(null)
+        clearThreadScopedState()
+        return
+      }
       await switchThread(tid, initialDeepLink.ctxId)
     })()
     return () => {
@@ -947,6 +987,12 @@ export default function WorkspaceApp() {
 
   const leftPanelContent = (
     <>
+      {threadResolutionNotice && (
+        <div className="runStudioWarning">
+          <b>Thread deep-link notice:</b> {threadResolutionNotice}
+        </div>
+      )}
+
       <div className="row">
         <select
           value={workspaceKey}
@@ -979,8 +1025,11 @@ export default function WorkspaceApp() {
         <button className="danger" onClick={handleDeleteCurrentThread} disabled={!threadId}>Delete Thread</button>
 
         <select value={threadId || ''} onChange={async (e) => {
-          await switchThread(e.target.value)
+          const nextThreadId = e.target.value
+          if (!nextThreadId) return
+          await switchThread(nextThreadId)
         }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
+          {!threadId && <option value="">Select thread...</option>}
           {visibleThreads.map((t) => (
             <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0, 6)})</option>
           ))}
@@ -1050,6 +1099,14 @@ export default function WorkspaceApp() {
 
   const centerPanelContent = (
     <>
+      {!threadId && (
+        <div className="card">
+          <div className="runStudioWarning">
+            <b>No thread selected.</b> {threadResolutionNotice || 'Select a thread to open Run Studio.'}
+          </div>
+        </div>
+      )}
+
       <div className="card">
         <div className="row" style={{ marginBottom: 0 }}>
           <button className={workspaceMainTab === 'run_studio' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('run_studio')}>Run Studio</button>

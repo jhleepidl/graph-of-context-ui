@@ -7,9 +7,9 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import SQLModel, Session, create_engine
 
-from app.models import Agent, Conversation, ConversationAgent
+from app.models import Agent, Conversation, ConversationAgent, Thread
 from app.services.graph_projections import memory_context_projection
-from app.services.run_studio import _agent_team_summary, _evidence_summary, _extract_runtime_team_snapshot
+from app.services.run_studio import _agent_team_summary, _evidence_summary, _extract_runtime_team_snapshot, _now_panel_summary
 
 
 @dataclass
@@ -347,6 +347,66 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertTrue(items[0]["selected_in_context"])
         self.assertGreater(len(items[0]["evidence_nodes"]), 0)
         self.assertGreaterEqual(items[0]["score"], items[-1]["score"])
+
+    def test_now_panel_prefers_latest_relevant_run_over_older_queued_run(self) -> None:
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+        thread = Thread(id="thread-now", service_id="svc", title="Now Test")
+        nodes = [
+            make_node("run-old", "Run", payload={"status": "queued"}, created_at=base),
+            make_node(
+                "step-old-queued",
+                "Step",
+                payload={"run_id": "run-old", "status": "queued", "title": "Old queued step"},
+                created_at=base + timedelta(seconds=1),
+            ),
+            make_node("run-new", "Run", payload={"status": "done"}, created_at=base + timedelta(seconds=10)),
+            make_node(
+                "step-new-done",
+                "Step",
+                payload={"run_id": "run-new", "status": "done", "title": "New completed step"},
+                created_at=base + timedelta(seconds=11),
+            ),
+        ]
+
+        summary = _now_panel_summary(thread=thread, nodes=nodes, edges=[], active_ids=[])
+        state = summary["state"]
+        self.assertEqual(state["run_status"], "done")
+        self.assertEqual(state["current_run_id"], "run-new")
+        self.assertEqual(state["current_run_step_status_counts"].get("done"), 1)
+        self.assertEqual(state["stale_queued_step_count"], 1)
+        self.assertEqual(summary["task"]["current_step_id"], "step-new-done")
+
+    def test_now_panel_exposes_current_pending_approval_separately_from_old_runs(self) -> None:
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+        thread = Thread(id="thread-now-pending", service_id="svc", title="Now Pending Test")
+        nodes = [
+            make_node("run-old", "Run", payload={"status": "queued"}, created_at=base),
+            make_node(
+                "step-old-pending",
+                "Step",
+                payload={
+                    "run_id": "run-old",
+                    "status": "queued",
+                    "pending_approval": True,
+                    "title": "Old pending step",
+                },
+                created_at=base + timedelta(seconds=1),
+            ),
+            make_node("run-new", "Run", payload={"status": "done"}, created_at=base + timedelta(seconds=10)),
+            make_node(
+                "step-new-done",
+                "Step",
+                payload={"run_id": "run-new", "status": "done"},
+                created_at=base + timedelta(seconds=11),
+            ),
+        ]
+
+        summary = _now_panel_summary(thread=thread, nodes=nodes, edges=[], active_ids=[])
+        state = summary["state"]
+        self.assertTrue(state["pending_approval"])
+        self.assertFalse(state["current_pending_approval"])
+        self.assertEqual(state["current_run_id"], "run-new")
+        self.assertEqual(state["stale_queued_step_count"], 1)
 
     def test_context_projection_splits_core_supporting_execution(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)

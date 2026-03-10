@@ -367,6 +367,7 @@ export const api = {
     ),
 
   threads: () => j<any[]>(apiFetch('/api/threads')),
+  thread: (threadId: string) => j<any>(apiFetch(`/api/threads/${threadId}`)),
   createThread: (
     title?: string,
     options?: {

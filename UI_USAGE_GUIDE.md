@@ -24,13 +24,23 @@ This guide explains how to interpret Run Studio and avoid confusion between team
 ## Approvals and Post-Team-Change Behavior
 - If Run Studio shows **Waiting for approval**, execution is paused until approval resolves.
 - If Run Studio shows **Team updated, but no execution step detected yet**, team composition changed but execution has not started.
+- If Run Studio shows **Older queued work exists in prior runs**, queued steps exist in older runs but are not treated as the current run.
 - If status indicates running/done and steps exist, execution has started/completed.
+
+## Deep-Link Behavior (`?thread=...`)
+- If a `thread` query parameter is provided, the workspace tries to open that exact thread.
+- If the thread cannot be resolved or accessed, the UI now shows a clear notice and does **not** silently open a different thread.
+- You can then manually pick a different thread from the selector.
 
 ## Basic Troubleshooting
 - **Team changed but no work executed**:
   - Check the Now panel execution hint.
   - Open Raw Trace and verify run/step nodes exist.
   - Trigger a run action if only team configuration changed.
+- **`/context` (or `?thread=`) opened unexpected content**:
+  - Check the deep-link notice in the left panel.
+  - If the target thread is unavailable, no fallback thread is auto-opened.
+  - Select a thread manually after confirming access.
 - **Runtime team differs from Thread Team**:
   - Runtime snapshots represent what actually ran.
   - Thread Team is only default configuration.

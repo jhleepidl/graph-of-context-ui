@@ -77,6 +77,7 @@ uvicorn app.main:app --reload --port 8000
 - Dependency-aware unfold with bounded closure
 
 ## Run Studio projection endpoints (additive)
+- `GET /api/threads/{thread_id}` (direct thread fetch for deterministic deep-link resolution)
 - `GET /api/threads/{thread_id}/run_studio/summary`
 - `GET /api/threads/{thread_id}/run_studio/agent_team`
 - `GET /api/threads/{thread_id}/run_studio/context_decisions`
@@ -95,6 +96,7 @@ Notes:
   - `source` / `source_key` labels are normalized for predictable consumers
 - Memory/context projection includes explicit buckets: `core_items`, `supporting_items`, `execution_items` (while preserving compatibility fields like `recent_items`).
 - Evidence projection now returns ranked claims with `score` and `related_node_ids` for UI drill-down.
+- Now summary includes current-run scoped status fields (for example `current_run_id`, `current_run_step_status_counts`, `stale_queued_step_count`) so stale queued steps from older runs do not dominate the primary status.
 
 ## Resource node plain-text + structured payload
 - `POST /api/threads/{thread_id}/resources`는 기존 필드와 함께 아래 옵션을 지원합니다.

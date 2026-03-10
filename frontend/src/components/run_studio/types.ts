@@ -12,12 +12,39 @@ export type RunStudioNow = {
     run_status?: string | null
     blocked?: boolean
     blocked_reason?: string | null
+    current_blocked?: boolean
+    current_blocked_reason?: string | null
     pending_approval?: boolean
     pending_approval_count?: number
+    current_pending_approval?: boolean
+    current_pending_approval_count?: number
     active_context_count?: number
     step_status_counts?: Record<string, number>
+    current_run_step_status_counts?: Record<string, number>
+    current_run_id?: string | null
+    current_run_status?: string | null
+    current_run_inactive?: boolean
+    current_run_selection_source?: string | null
+    current_run_step_count?: number
+    stale_queued_step_count?: number
+  }
+  current_run?: {
+    id?: string | null
+    node_id?: string | null
+    created_at?: string | null
+    status?: string | null
+    inactive?: boolean
+    selection_source?: string | null
+    step_count?: number
+    stale_queued_step_count?: number
   }
   pending_approval_items?: Array<{
+    id: string
+    type: string
+    text?: string | null
+    created_at?: string | null
+  }>
+  current_pending_approval_items?: Array<{
     id: string
     type: string
     text?: string | null

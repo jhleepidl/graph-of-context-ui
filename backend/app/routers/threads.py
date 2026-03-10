@@ -511,6 +511,13 @@ def ensure_thread(body: ThreadEnsureRequest):
         return _thread_to_response(t)
 
 
+@router.get("/{thread_id}", response_model=ThreadRead)
+def get_thread(thread_id: str):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        return _thread_to_response(thread)
+
+
 @router.delete("/{thread_id}")
 def delete_thread(thread_id: str):
     with Session(engine) as s:
