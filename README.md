@@ -17,6 +17,8 @@ It keeps the generic `Node`/`Edge` model and adds an additive Run Studio control
 - `RuntimeAgent = instantiated role with attached skills`
 
 This is projection-only over the existing graph backend; no new graph stack is required.
+- Run Studio uses `summary` as the primary load and lazy-loads detail panels.
+- No-skill payloads remain valid: skill/context panels render empty-state safely.
 
 ## Docs Map
 - Project overview: this file.
@@ -42,4 +44,3 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173`.
-

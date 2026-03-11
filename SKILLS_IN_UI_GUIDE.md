@@ -26,3 +26,4 @@ This is a supplement to [`UI_USAGE_GUIDE.md`](UI_USAGE_GUIDE.md), focused only o
 - `GET /api/threads/{thread_id}/run_studio/context_packs`
 - `GET /api/threads/{thread_id}/run_studio/skill_usage`
 
+If these responses have empty `attached_skills` / `context_packs` / `skill_usage`, UI behavior is still valid and indicates no skill-aware runtime metadata was emitted for that run scope.

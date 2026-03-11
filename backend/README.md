@@ -39,6 +39,7 @@ postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
 Summary-first strategy:
 - `summary` is the canonical initial payload.
 - detail routes are additive and intended for on-demand UI expansion.
+- Skill-aware fields may be populated or empty depending on runtime payload availability; both shapes are supported.
 
 Additional skill routes:
 - `GET /api/skills`
@@ -56,4 +57,3 @@ Additional skill routes:
 - Existing routes and graph model compatibility are preserved.
 - Runtime snapshot extraction precedence and normalization now live in `runtime_snapshot.py`.
 - See operator behavior details in [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md).
-

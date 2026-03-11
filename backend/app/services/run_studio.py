@@ -11,13 +11,13 @@ from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
 from app.services.graph_projections import build_logical_projections
 from app.services.runtime_snapshot import (
-    clean_list_of_text,
-    created_sort_key as _runtime_created_sort_key,
-    extract_runtime_team_snapshot,
-    has_non_empty_value,
-    node_payload as _runtime_node_payload,
-    normalize_runtime_source_key,
-    normalize_status,
+    clean_list_of_text as _clean_list_of_text,
+    created_sort_key as _created_sort_key,
+    extract_runtime_team_snapshot as _extract_runtime_team_snapshot,
+    has_non_empty_value as _has_non_empty_value,
+    node_payload as _node_payload,
+    normalize_runtime_source_key as _normalize_runtime_source_key,
+    normalize_status as _normalize_status,
 )
 from app.services.run_skill_summary import (
     build_run_skill_summary,
@@ -49,40 +49,11 @@ def _jload(raw: str | None, default: Any) -> Any:
     except Exception:
         return default
 
-
-def _node_payload(node: Node | None) -> dict[str, Any]:
-    return _runtime_node_payload(node)
-
-
 def _short_text(value: str, max_len: int = 220) -> str:
     compact = " ".join(str(value or "").split())
     if len(compact) <= max_len:
         return compact
     return f"{compact[:max_len]}..."
-
-
-def _created_sort_key(node: Node) -> tuple[str, str]:
-    return _runtime_created_sort_key(node)
-
-
-def _normalize_status(raw: Any) -> str:
-    return normalize_status(raw)
-
-
-def _clean_list_of_text(value: Any, *, limit: int = 12) -> list[str]:
-    return clean_list_of_text(value, limit=limit)
-
-
-def _has_non_empty_value(value: Any) -> bool:
-    return has_non_empty_value(value)
-
-
-def _normalize_runtime_source_key(source_key: Any) -> str:
-    return normalize_runtime_source_key(source_key)
-
-
-def _extract_runtime_team_snapshot(nodes: list[Node]) -> dict[str, Any] | None:
-    return extract_runtime_team_snapshot(nodes)
 
 
 def _step_activity_index(nodes: list[Node]) -> dict[str, dict[str, int]]:

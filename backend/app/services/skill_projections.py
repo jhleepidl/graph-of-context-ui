@@ -4,13 +4,13 @@ import json
 from typing import Any, Iterable
 
 from app.services.runtime_snapshot import (
-    created_sort_key as _runtime_created_sort_key,
+    created_sort_key as _created_sort_key,
     extract_runtime_team_snapshot,
-    has_non_empty_value,
-    iter_payload_containers as _runtime_iter_payload_containers,
-    node_payload as _runtime_node_payload,
-    normalize_runtime_source_key,
-    normalize_status,
+    has_non_empty_value as _has_non_empty_value,
+    iter_payload_containers as _iter_payload_containers,
+    node_payload as _node_payload,
+    normalize_runtime_source_key as _normalize_runtime_source_key,
+    normalize_status as _normalize_status,
 )
 
 SKILL_ATTACHMENT_KEYS = (
@@ -51,25 +51,9 @@ def _jload(raw: str | None, default: Any) -> Any:
         return default
 
 
-def _node_payload(node: Any) -> dict[str, Any]:
-    return _runtime_node_payload(node)
-
-
-def _created_sort_key(node: Any) -> tuple[str, str]:
-    return _runtime_created_sort_key(node)
-
-
 def _clean_text(value: Any) -> str | None:
     clean = str(value or "").strip()
     return clean or None
-
-
-def _has_non_empty_value(value: Any) -> bool:
-    return has_non_empty_value(value)
-
-
-def _iter_payload_containers(payload: dict[str, Any], *, prefix: str = "", depth: int = 0, max_depth: int = 2):
-    yield from _runtime_iter_payload_containers(payload, prefix=prefix, depth=depth, max_depth=max_depth)
 
 
 def _short_payload_summary(value: Any, *, max_len: int = 240) -> str:
@@ -282,10 +266,6 @@ def extract_runtime_snapshot_with_members(nodes: Iterable[Any]) -> dict[str, Any
     return extract_runtime_team_snapshot(nodes)
 
 
-def _normalize_status(raw: Any) -> str:
-    return normalize_status(raw)
-
-
 def extract_runtime_agents_with_skills(
     nodes: Iterable[Any],
     *,
@@ -303,7 +283,7 @@ def extract_runtime_agents_with_skills(
         }
 
     runtime_source_path = str(snapshot.get("source_key") or "")
-    runtime_source_key = normalize_runtime_source_key(runtime_source_path)
+    runtime_source_key = _normalize_runtime_source_key(runtime_source_path)
 
     items: list[dict[str, Any]] = []
     for raw_member in snapshot.get("members", []):

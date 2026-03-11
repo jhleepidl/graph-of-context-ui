@@ -18,6 +18,7 @@ This guide is for operators using Run Studio day-to-day.
 - `Attached Skills`: role -> skill links, load level, selected-by, reason.
 - `Context Packs`: shared/role-specific/skill-scoped loading counts.
 - `Skill Usage`: event stream for selection/escalation/usage traces.
+- If a run has no skill metadata, these panels stay visible and show empty-state messages.
 
 Skill-specific interpretation is documented in [`SKILLS_IN_UI_GUIDE.md`](SKILLS_IN_UI_GUIDE.md).
 
@@ -33,4 +34,3 @@ Skill-specific interpretation is documented in [`SKILLS_IN_UI_GUIDE.md`](SKILLS_
   - inspect `Now.stale_queued_step_count` (older runs can be excluded from current status).
 - Need context/evidence validation:
   - start in `Context Decisions` + `Evidence`, then jump to `Graph`.
-
