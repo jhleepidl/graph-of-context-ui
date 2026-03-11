@@ -1,14 +1,19 @@
 import React from 'react'
 import NowPanel from './NowPanel'
 import AgentTeamPanel from './AgentTeamPanel'
+import AttachedSkillsPanel from './AttachedSkillsPanel'
+import ContextPackPanel from './ContextPackPanel'
 import ContextDecisionPanel from './ContextDecisionPanel'
 import EvidencePanel from './EvidencePanel'
 import MissingContextPanel from './MissingContextPanel'
+import SkillUsagePanel from './SkillUsagePanel'
 import AdvancedToolsPanel from './AdvancedToolsPanel'
 import {
   type RunStudioAgentTeam,
+  type RunStudioContextPacks,
   type RunStudioContextDecisions,
   type RunStudioEvidence,
+  type RunStudioSkillUsage,
   type RunStudioSummary,
 } from './types'
 
@@ -17,6 +22,8 @@ type Props = {
   team: RunStudioAgentTeam | null
   decisions: RunStudioContextDecisions | null
   evidence: RunStudioEvidence | null
+  contextPacks: RunStudioContextPacks | null
+  skillUsage: RunStudioSkillUsage | null
   loading: boolean
   error: string
   onRefresh: () => void
@@ -36,6 +43,8 @@ export default function RunStudioLayout({
   team,
   decisions,
   evidence,
+  contextPacks,
+  skillUsage,
   loading,
   error,
   onRefresh,
@@ -81,6 +90,11 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
+        <AttachedSkillsPanel summary={summary} team={team} />
+        <ContextPackPanel contextPacks={contextPacks} summary={summary} />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
         <ContextDecisionPanel
           decisions={decisions}
           onFocusNode={onFocusNode}
@@ -99,6 +113,7 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
+        <SkillUsagePanel skillUsage={skillUsage} summary={summary} />
         <MissingContextPanel
           decisions={decisions}
           onFocusNode={onFocusNode}
@@ -108,6 +123,9 @@ export default function RunStudioLayout({
           onFocusConflict={onFocusTrace}
           onOpenConflict={onOpenTrace}
         />
+      </div>
+
+      <div className="runStudioGrid" style={{ gridTemplateColumns: '1fr' }}>
         <AdvancedToolsPanel
           onOpenGraph={onOpenGraph}
           onOpenRawTrace={onOpenRawTrace}

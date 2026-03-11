@@ -425,6 +425,45 @@ export const api = {
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/evidence${suffix}`))
   },
+  runStudioContextPacks: (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/context_packs${suffix}`))
+  },
+  runStudioSkillUsage: (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/skill_usage${suffix}`))
+  },
+  threadSkillUsage: (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/skill_usage${suffix}`))
+  },
+  skills: (threadId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanThreadId = (threadId || '').trim()
+    if (cleanThreadId) q.set('thread_id', cleanThreadId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/skills${suffix}`))
+  },
+  skillDetail: (skillId: string, threadId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanThreadId = (threadId || '').trim()
+    if (cleanThreadId) q.set('thread_id', cleanThreadId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/skills/${encodeURIComponent(skillId)}${suffix}`))
+  },
+  runSkills: (runId: string) =>
+    j<any>(apiFetch(`/api/runs/${encodeURIComponent(runId)}/skills`)),
+  runContextPacks: (runId: string) =>
+    j<any>(apiFetch(`/api/runs/${encodeURIComponent(runId)}/context_packs`)),
   traceExport: async (
     threadId: string,
     params?: {

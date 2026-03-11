@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sqlmodel import Session
 
 from app.db import engine
@@ -9,12 +9,22 @@ from app.schemas import RunCreate
 from app.llm import call_openai
 from app.services.graph import add_edge, get_last_node, jload
 from app.services.graph import compile_active_context
-from app.tenant import require_context_set_access, require_thread_write_access
+from app.services.graph import load_thread_graph
+from app.services.run_skill_summary import build_run_skill_summary, build_thread_context_pack_summary
+from app.tenant import require_context_set_access, require_thread_access, require_thread_write_access
 
 router = APIRouter(prefix="/api", tags=["runs"])
 
 def jdump(x) -> str:
     return json.dumps(x, ensure_ascii=False)
+
+
+def _require_run_node_access(session: Session, run_id: str) -> Node:
+    run_node = session.get(Node, run_id)
+    if not run_node or run_node.type != "Run":
+        raise HTTPException(404, "run not found")
+    require_thread_access(session, run_node.thread_id)
+    return run_node
 
 @router.post("/runs")
 def run_agent(body: RunCreate):
@@ -84,4 +94,38 @@ def run_agent(body: RunCreate):
             "run_id": run_node.id,
             "response_text": response_text,
             "active_node_ids": active_ids,
+        }
+
+
+@router.get("/runs/{run_id}/skills")
+def get_run_skills(run_id: str):
+    with Session(engine) as s:
+        run_node = _require_run_node_access(s, run_id)
+        nodes, edges = load_thread_graph(s, run_node.thread_id)
+        summary = build_run_skill_summary(
+            nodes=nodes,
+            edges=edges,
+            run_id=run_node.id,
+        )
+        return {
+            "ok": True,
+            "thread_id": run_node.thread_id,
+            **summary,
+        }
+
+
+@router.get("/runs/{run_id}/context_packs")
+def get_run_context_packs(run_id: str):
+    with Session(engine) as s:
+        run_node = _require_run_node_access(s, run_id)
+        nodes, edges = load_thread_graph(s, run_node.thread_id)
+        summary = build_thread_context_pack_summary(
+            nodes=nodes,
+            edges=edges,
+            run_id=run_node.id,
+        )
+        return {
+            "ok": True,
+            "thread_id": run_node.thread_id,
+            **summary,
         }

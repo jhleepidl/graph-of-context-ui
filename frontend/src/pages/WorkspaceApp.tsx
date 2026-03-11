@@ -199,6 +199,8 @@ export default function WorkspaceApp() {
     agentTeam: runStudioAgentTeam,
     contextDecisions: runStudioContextDecisions,
     evidence: runStudioEvidence,
+    contextPacks: runStudioContextPacks,
+    skillUsage: runStudioSkillUsage,
     loading: runStudioLoading,
     error: runStudioError,
     refresh: refreshRunStudio,
@@ -1130,6 +1132,8 @@ export default function WorkspaceApp() {
           team={runStudioAgentTeam}
           decisions={runStudioContextDecisions}
           evidence={runStudioEvidence}
+          contextPacks={runStudioContextPacks}
+          skillUsage={runStudioSkillUsage}
           loading={runStudioLoading}
           error={runStudioError}
           onRefresh={() => {

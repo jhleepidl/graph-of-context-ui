@@ -3,7 +3,10 @@
 This repo now ships with a **Run Studio-first** workspace while keeping the generic graph backend/model:
 - Run Studio default UI:
   - Now panel (task/objective/current step/blocked/pending approval)
-  - Agent Team panel (active roles, order, runtime status, runtime snapshot source)
+  - Agent Team panel (active roles, order, runtime status, runtime snapshot source, attached skills)
+  - Attached Skills panel (role -> skill mapping, load level, selection reason)
+  - Context Packs panel (shared/role-specific/skill-specific loading and conflicts)
+  - Skill Usage panel (skill events and runtime selection traces)
   - Context Decisions panel (selected/pinned/excluded/missing/conflicting)
   - Evidence panel (claims/evidence/provenance/uncertainty/conflicts with ranking)
 - Secondary tabs:
@@ -13,14 +16,30 @@ This repo now ships with a **Run Studio-first** workspace while keeping the gene
   - Advanced tools (Prompt Builder / Run / Job Settings / Thread Team / Inspector)
 - Backend remains graph-first and generic (`Node`/`Edge`), with additive run-studio projection endpoints.
 - Operator usage guide is available at [`UI_USAGE_GUIDE.md`](UI_USAGE_GUIDE.md), including team setup vs execution troubleshooting.
+- Skill-focused operator guide is available at [`SKILLS_IN_UI_GUIDE.md`](SKILLS_IN_UI_GUIDE.md).
 
 ## Run Studio API Additions
 - `GET /api/threads/{thread_id}/run_studio/summary`
 - `GET /api/threads/{thread_id}/run_studio/agent_team`
 - `GET /api/threads/{thread_id}/run_studio/context_decisions`
 - `GET /api/threads/{thread_id}/run_studio/evidence`
+- `GET /api/threads/{thread_id}/run_studio/context_packs`
+- `GET /api/threads/{thread_id}/run_studio/skill_usage`
+- `GET /api/threads/{thread_id}/skill_usage`
+- `GET /api/runs/{run_id}/skills`
+- `GET /api/runs/{run_id}/context_packs`
+- `GET /api/skills`
+- `GET /api/skills/{skill_id}`
 
 All existing APIs remain available.
+
+## Skill layer model (additive)
+- **Agent = role** at runtime.
+- **Skill = reusable expertise package** attached to a runtime role.
+- **TeamPlan** can define roles and attached skills.
+- **ContextPack** includes shared + role-specific + skill-specific context loading.
+- **RuntimeAgent** is an instantiated role with attached skills and optional context pack linkage.
+- **Graph / Run Studio** remains generic `Node`/`Edge`, now with additive projections for skill/context/evidence lineage.
 
 ## Run Studio behavior (hardened)
 - Canonical runtime snapshot field is `runtime_team_snapshot` (with compatibility tolerance for `runtimeTeamSnapshot`).

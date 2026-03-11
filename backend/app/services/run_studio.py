@@ -10,6 +10,13 @@ from app.models import Agent, ContextSet, Conversation, ConversationAgent, Edge,
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
 from app.services.graph_projections import build_logical_projections
+from app.services.run_skill_summary import (
+    build_run_skill_summary,
+    build_thread_context_pack_summary,
+    build_thread_skill_usage_summary,
+)
+from app.services.skill_projections import extract_attached_skills
+from app.services.skill_registry import build_skill_registry
 
 
 CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary"}
@@ -941,6 +948,19 @@ def _agent_team_summary(
     ).first()
     step_activity_by_agent = _step_activity_index(nodes)
     step_activity_sources_by_agent = _step_activity_source_index(nodes)
+    skill_registry = build_skill_registry(nodes=nodes, include_defaults=True)
+
+    def _skill_packages_for_items(team_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        skill_ids: set[str] = set()
+        for team_item in team_items:
+            for attached in list(team_item.get("attached_skills") or []):
+                skill_id = str(attached.get("skill_id") or "").strip()
+                if skill_id:
+                    skill_ids.add(skill_id)
+        return sorted(
+            [skill_registry[skill_id] for skill_id in skill_ids if skill_id in skill_registry],
+            key=lambda item: (str(item.get("name") or "").lower(), str(item.get("id") or "")),
+        )
 
     runtime_snapshot = _extract_runtime_team_snapshot(nodes)
     if runtime_snapshot:
@@ -967,6 +987,18 @@ def _agent_team_summary(
                 for status_key, count in source_counts.items():
                     status_counts[status_key] = status_counts.get(status_key, 0) + int(count)
 
+            attached_skills = extract_attached_skills(raw_member, skill_lookup=skill_registry)
+            context_pack_id = str(raw_member.get("context_pack_id") or raw_member.get("contextPackId") or "").strip() or None
+            if not context_pack_id:
+                member_pack = raw_member.get("context_pack") or raw_member.get("contextPack")
+                if isinstance(member_pack, dict):
+                    context_pack_id = str(
+                        member_pack.get("context_pack_id")
+                        or member_pack.get("contextPackId")
+                        or member_pack.get("id")
+                        or ""
+                    ).strip() or None
+
             runtime_items.append(
                 {
                     "agent_id": agent_id or runtime_instance_id or template_id or "unknown-runtime-agent",
@@ -991,6 +1023,8 @@ def _agent_team_summary(
                     "responsibilities": _clean_list_of_text(raw_member.get("responsibilities") or raw_member.get("responsibility")),
                     "capability_tags": _clean_list_of_text(raw_member.get("capability_tags") or raw_member.get("capabilities")),
                     "ephemeral": bool(raw_member.get("ephemeral") or raw_member.get("transient") or False),
+                    "attached_skills": attached_skills,
+                    "context_pack_id": context_pack_id,
                 }
             )
 
@@ -1001,6 +1035,7 @@ def _agent_team_summary(
             "snapshot_source_key": runtime_source_key,
             "snapshot_source_path": runtime_source_path or None,
             "items": runtime_items,
+            "skill_packages": _skill_packages_for_items(runtime_items),
             "active_count": sum(1 for item in runtime_items if item["runtime_status"] in {"running", "queued"}),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -1028,6 +1063,8 @@ def _agent_team_summary(
                     "ephemeral": False,
                     "source": "inferred_from_steps",
                     "source_key": _preferred_step_source_key(step_activity_sources_by_agent.get(agent_id)),
+                    "attached_skills": [],
+                    "context_pack_id": None,
                 }
             )
         return {
@@ -1037,6 +1074,7 @@ def _agent_team_summary(
             "snapshot_source_key": None,
             "snapshot_source_path": None,
             "items": inferred_items,
+            "skill_packages": [],
             "active_count": sum(1 for item in inferred_items if item["runtime_status"] in {"running", "queued"}),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -1103,6 +1141,12 @@ def _agent_team_summary(
                 "visibility": agent.visibility if agent else "",
                 "source": "conversation_membership",
                 "source_key": "conversation_agents",
+                "attached_skills": extract_attached_skills(overrides, skill_lookup=skill_registry),
+                "context_pack_id": str(
+                    overrides.get("context_pack_id")
+                    or overrides.get("contextPackId")
+                    or ""
+                ).strip() or None,
             }
         )
 
@@ -1113,6 +1157,7 @@ def _agent_team_summary(
         "snapshot_source_key": None,
         "snapshot_source_path": None,
         "items": items,
+        "skill_packages": _skill_packages_for_items(items),
         "active_count": sum(1 for item in items if item["runtime_status"] in {"running", "queued"}),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1327,6 +1372,12 @@ def build_run_studio_summary(
 
     projections = build_logical_projections(nodes, edges, active_node_ids=active_ids)
     now_panel = _now_panel_summary(thread=thread, nodes=nodes, edges=edges, active_ids=active_ids)
+    current_run_id = str((now_panel.get("state") or {}).get("current_run_id") or "").strip() or None
+    run_skill_summary = build_run_skill_summary(
+        nodes=nodes,
+        edges=edges,
+        run_id=current_run_id,
+    )
     context_decisions = _context_decisions_summary(
         session,
         thread_id=thread.id,
@@ -1351,6 +1402,18 @@ def build_run_studio_summary(
         "projections": projections,
         "context_decisions_counts": context_decisions.get("counts", {}),
         "evidence_counts": evidence.get("counts", {}),
+        "skill_counts": run_skill_summary.get("counts", {}),
+        "current_run_skills": {
+            "run_id": run_skill_summary.get("run_id"),
+            "attached_skills": run_skill_summary.get("attached_skills", []),
+            "runtime_agents": run_skill_summary.get("runtime_agents", []),
+            "skill_packages": run_skill_summary.get("skill_packages", []),
+            "context_packs": run_skill_summary.get("context_packs", []),
+            "skill_usage": run_skill_summary.get("skill_usage", []),
+            "lineage": run_skill_summary.get("lineage", {}),
+            "counts": run_skill_summary.get("counts", {}),
+            "updated_at": run_skill_summary.get("updated_at"),
+        },
         "graph_counts": {
             "nodes": len(nodes),
             "edges": len(edges),
@@ -1395,3 +1458,31 @@ def build_run_studio_evidence(
     active_ids = _active_ids(context_set)
     nodes, edges = load_thread_graph(session, thread.id)
     return _evidence_summary(nodes=nodes, edges=edges, active_ids=active_ids)
+
+
+def build_run_studio_context_packs(
+    session: Session,
+    *,
+    thread: Thread,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    nodes, edges = load_thread_graph(session, thread.id)
+    return build_thread_context_pack_summary(
+        nodes=nodes,
+        edges=edges,
+        run_id=run_id,
+    )
+
+
+def build_run_studio_skill_usage(
+    session: Session,
+    *,
+    thread: Thread,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    nodes, edges = load_thread_graph(session, thread.id)
+    return build_thread_skill_usage_summary(
+        nodes=nodes,
+        edges=edges,
+        run_id=run_id,
+    )

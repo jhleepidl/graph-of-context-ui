@@ -2,8 +2,10 @@ import { useCallback, useState } from 'react'
 import { api } from '../api'
 import {
   type RunStudioAgentTeam,
+  type RunStudioContextPacks,
   type RunStudioContextDecisions,
   type RunStudioEvidence,
+  type RunStudioSkillUsage,
   type RunStudioSummary,
 } from '../components/run_studio/types'
 
@@ -33,6 +35,8 @@ export function useRunStudioData() {
   const [agentTeam, setAgentTeam] = useState<RunStudioAgentTeam | null>(null)
   const [contextDecisions, setContextDecisions] = useState<RunStudioContextDecisions | null>(null)
   const [evidence, setEvidence] = useState<RunStudioEvidence | null>(null)
+  const [contextPacks, setContextPacks] = useState<RunStudioContextPacks | null>(null)
+  const [skillUsage, setSkillUsage] = useState<RunStudioSkillUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -41,6 +45,8 @@ export function useRunStudioData() {
     setAgentTeam(null)
     setContextDecisions(null)
     setEvidence(null)
+    setContextPacks(null)
+    setSkillUsage(null)
     setError('')
     setLoading(false)
   }, [])
@@ -57,16 +63,20 @@ export function useRunStudioData() {
     if (!silent) setLoading(true)
     setError('')
     try {
-      const [nextSummary, nextTeam, nextDecisions, nextEvidence] = await Promise.all([
+      const [nextSummary, nextTeam, nextDecisions, nextEvidence, nextContextPacks, nextSkillUsage] = await Promise.all([
         api.runStudioSummary(tId, cId || undefined),
         api.runStudioAgentTeam(tId),
         api.runStudioContextDecisions(tId, cId || undefined),
         api.runStudioEvidence(tId, cId || undefined),
+        api.runStudioContextPacks(tId),
+        api.runStudioSkillUsage(tId),
       ])
       setSummary(nextSummary)
       setAgentTeam(nextTeam)
       setContextDecisions(nextDecisions)
       setEvidence(nextEvidence)
+      setContextPacks(nextContextPacks)
+      setSkillUsage(nextSkillUsage)
     } catch (refreshError) {
       setError(toErrorMessage(refreshError))
     } finally {
@@ -79,6 +89,8 @@ export function useRunStudioData() {
     agentTeam,
     contextDecisions,
     evidence,
+    contextPacks,
+    skillUsage,
     loading,
     error,
     refresh,

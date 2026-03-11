@@ -27,6 +27,7 @@ from app.routers.service_auth import router as service_auth_router
 from app.routers.publish_requests import router as publish_requests_router
 from app.routers.telegram_auth import router as telegram_auth_router
 from app.routers.agents import router as agents_router
+from app.routers.skills import router as skills_router
 from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
@@ -114,5 +115,6 @@ app.include_router(service_auth_router)
 app.include_router(publish_requests_router)
 app.include_router(telegram_auth_router)
 app.include_router(agents_router)
+app.include_router(skills_router)
 
 app.include_router(hierarchy_router)

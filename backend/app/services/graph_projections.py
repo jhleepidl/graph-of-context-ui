@@ -5,6 +5,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Iterable
 
+from app.services.run_skill_summary import build_skill_lineage_projection
+
 
 RUN_STEP_LINK_EDGE_TYPES = {"BELONGS_TO_RUN", "IN_RUN"}
 CONTEXT_NODE_TYPES = {
@@ -307,8 +309,11 @@ def build_logical_projections(
     *,
     active_node_ids: Iterable[str] | None = None,
 ) -> dict[str, Any]:
+    nodes_list = list(nodes)
+    edges_list = list(edges)
     return {
-        "conversation": conversation_projection(nodes, edges),
-        "execution": execution_projection(nodes, edges),
-        "memory_context": memory_context_projection(nodes, edges, active_node_ids=active_node_ids),
+        "conversation": conversation_projection(nodes_list, edges_list),
+        "execution": execution_projection(nodes_list, edges_list),
+        "memory_context": memory_context_projection(nodes_list, edges_list, active_node_ids=active_node_ids),
+        "skills": build_skill_lineage_projection(nodes=nodes_list, edges=edges_list),
     }

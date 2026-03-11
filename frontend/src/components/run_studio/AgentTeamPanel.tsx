@@ -27,6 +27,7 @@ export default function AgentTeamPanel({ team }: Props) {
   const runtimeCount = items.filter((item) => String(item.source || '') === 'runtime_snapshot').length
   const threadTeamCount = items.filter((item) => String(item.source || '') === 'conversation_membership').length
   const inferredCount = items.filter((item) => String(item.source || '') === 'inferred_from_steps').length
+  const rolesWithSkillsCount = items.filter((item) => (item.attached_skills || []).length > 0).length
 
   return (
     <section className="card runStudioPanel">
@@ -37,6 +38,7 @@ export default function AgentTeamPanel({ team }: Props) {
           <span className="pill">runtime: {runtimeCount}</span>
           <span className="pill">thread team: {threadTeamCount}</span>
           <span className="pill">inferred: {inferredCount}</span>
+          <span className="pill">with skills: {rolesWithSkillsCount}</span>
         </div>
       </div>
 
@@ -73,6 +75,22 @@ export default function AgentTeamPanel({ team }: Props) {
               {(item.template_id || item.provider || item.model) && (
                 <div className="muted">
                   template: {item.template_id || '-'} | provider: {item.provider || '-'} | model: {item.model || '-'}
+                </div>
+              )}
+              {item.context_pack_id && <div className="muted">context pack: {item.context_pack_id}</div>}
+              {item.attached_skills && item.attached_skills.length > 0 && (
+                <div className="runStudioList" style={{ marginTop: 6 }}>
+                  {item.attached_skills.slice(0, 6).map((skill) => (
+                    <div key={skill.skill_id} className="runStudioInlineSubItem">
+                      <div className="row" style={{ marginBottom: 4 }}>
+                        <span className="pill">{skill.skill_name || skill.skill_id}</span>
+                        <span className="pill">load: {skill.load_level || 'metadata_only'}</span>
+                        {skill.selected_by && <span className="pill">by: {skill.selected_by}</span>}
+                        {skill.status && <span className="pill">{skill.status}</span>}
+                      </div>
+                      {skill.selection_reason && <div className="muted">{skill.selection_reason}</div>}
+                    </div>
+                  ))}
                 </div>
               )}
               {item.description && <div className="muted">{item.description}</div>}

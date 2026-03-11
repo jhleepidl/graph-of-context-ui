@@ -1039,6 +1039,13 @@ button.tiny.isActive {
   line-height: 1.36;
 }
 
+.runStudioInlineSubItem {
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  padding: 6px;
+  background: #fbfdff;
+}
+
 .runStudioStatus {
   font-weight: 700;
 }

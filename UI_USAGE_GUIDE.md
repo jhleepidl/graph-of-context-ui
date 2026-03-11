@@ -10,7 +10,10 @@ This guide explains how to interpret Run Studio and avoid confusion between team
 
 ## What Run Studio Shows
 - **Now**: current task/objective/step, run status, approval state, and an execution hint.
-- **Agent Team**: runtime team first (when available), otherwise thread team/inferred step agents.
+- **Agent Team**: runtime team first (when available), otherwise thread team/inferred step agents. Runtime items now include attached skills/context pack links when emitted.
+- **Attached Skills**: role -> skill mapping, load level (`metadata_only` / `instructions` / `resources`), and selection reason.
+- **Context Packs**: shared context count, role-specific count, and skill-scoped loading summaries.
+- **Skill Usage**: skill usage/feedback events with event type, timestamp, and payload summary.
 - **Context Decisions**: selected, pinned, excluded, missing, and conflicting context signals.
 - **Evidence**: ranked claims with supporting nodes, provenance, uncertainty, and conflicts.
 
@@ -47,3 +50,8 @@ This guide explains how to interpret Run Studio and avoid confusion between team
 - **Need to inspect evidence/context quality**:
   - Use Context Decisions and Evidence cards first.
   - Use Focus/Open actions to jump into Graph details for verification.
+- **Need to answer \"why was this skill selected?\"**:
+  - Check `Attached Skills` for `selection_reason` and `selected_by`.
+  - Check `Skill Usage` for selection/escalation events.
+  - Check `Context Packs` for whether the skill stayed at `metadata_only` or escalated to `instructions/resources`.
+  - Use Graph/Raw Trace if you need deeper downstream lineage inspection.

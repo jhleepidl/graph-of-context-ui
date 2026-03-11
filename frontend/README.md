@@ -33,9 +33,14 @@ https://<host>/goc/?thread=<threadId>&ctx=<ctxId>#token=gocu1.<service_id>.<exp>
 ## Notes
 - Graph visualization uses React Flow.
 - Start with [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md) for operator-facing usage and troubleshooting.
-- Default workspace is **Run Studio** (Now / Agent Team / Context Decisions / Evidence).
+- Skill-focused interpretation guide: [`../SKILLS_IN_UI_GUIDE.md`](../SKILLS_IN_UI_GUIDE.md).
+- Default workspace is **Run Studio** (Now / Agent Team / Attached Skills / Context Packs / Skill Usage / Context Decisions / Evidence).
 - Agent Team uses normalized source metadata (`source`, `source_key`) and prefers canonical runtime snapshot data (`runtime_team_snapshot.runtime_agents`), with compatibility tolerance for `runtimeTeamSnapshot`.
 - Runtime team extraction is stricter server-side, so plain `team_plan` metadata no longer appears as fake runtime members.
+- Runtime team items include additive `attached_skills` and `context_pack_id` fields when runtime payloads provide them.
+- Skill load levels are shown as `metadata_only`, `instructions`, `resources`.
+- Context Packs panel exposes shared/role-specific/skill-specific loading, missing items, and conflicts.
+- Skill Usage panel exposes skill selection/use events and concise reason summaries.
 - Thread Team configuration is setup state; actual work execution is tracked separately via run/step status in Run Studio.
 - The Now panel includes an execution hint to clarify whether only team setup changed or execution steps have started.
 - `?thread=<id>` deep links are deterministic: the app opens that exact thread or shows an explicit unavailable notice (no silent fallback thread auto-open).

@@ -82,12 +82,25 @@ uvicorn app.main:app --reload --port 8000
 - `GET /api/threads/{thread_id}/run_studio/agent_team`
 - `GET /api/threads/{thread_id}/run_studio/context_decisions`
 - `GET /api/threads/{thread_id}/run_studio/evidence`
+- `GET /api/threads/{thread_id}/run_studio/context_packs`
+- `GET /api/threads/{thread_id}/run_studio/skill_usage`
+- `GET /api/threads/{thread_id}/skill_usage`
+- `GET /api/runs/{run_id}/skills`
+- `GET /api/runs/{run_id}/context_packs`
+- `GET /api/skills`
+- `GET /api/skills/{skill_id}`
 
 Notes:
 - Existing routes are preserved.
 - The underlying graph schema (`Node`/`Edge`) is unchanged.
 - Projections expose conversation/execution/memory-context logical views for frontend consumption.
+- Skill layer projections are payload-driven and additive:
+  - `SkillPackage` metadata registry (`app/services/skill_registry.py`)
+  - runtime role skill attachments + usage events (`app/services/skill_projections.py`)
+  - context pack summaries with skill load levels (`app/services/context_packs.py`)
+  - run/thread skill-aware projections (`app/services/run_skill_summary.py`)
 - UI/operator guide is documented at [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md), including how to distinguish thread team setup from actual execution.
+- Skill-specific UI interpretation guide: [`../SKILLS_IN_UI_GUIDE.md`](../SKILLS_IN_UI_GUIDE.md).
 - Agent Team projection now uses stricter runtime extraction rules:
   - canonical runtime snapshot field is `runtime_team_snapshot` (camelCase `runtimeTeamSnapshot` tolerated for compatibility)
   - canonical precedence favors `runtime_team_snapshot.runtime_agents`, then `runtime_agents`, then recognized snapshot member collections
@@ -97,6 +110,10 @@ Notes:
 - Memory/context projection includes explicit buckets: `core_items`, `supporting_items`, `execution_items` (while preserving compatibility fields like `recent_items`).
 - Evidence projection now returns ranked claims with `score` and `related_node_ids` for UI drill-down.
 - Now summary includes current-run scoped status fields (for example `current_run_id`, `current_run_step_status_counts`, `stale_queued_step_count`) so stale queued steps from older runs do not dominate the primary status.
+- Run Studio summaries now include additive skill-aware fields:
+  - `attached_skills` on runtime team items
+  - `current_run_skills` in summary (`attached_skills`, `runtime_agents`, `skill_packages`, `context_packs`, `skill_usage`, `lineage`)
+  - `skill_counts` top-level summary counts
 
 ## Resource node plain-text + structured payload
 - `POST /api/threads/{thread_id}/resources`는 기존 필드와 함께 아래 옵션을 지원합니다.

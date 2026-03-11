@@ -27,8 +27,10 @@ from app.services.embedding import rebuild_thread_index, remove_thread_index
 from app.services.graph import add_edge, compile_active_context_explain, get_last_node, load_thread_graph
 from app.services.run_studio import (
     build_run_studio_agent_team,
+    build_run_studio_context_packs,
     build_run_studio_context_decisions,
     build_run_studio_evidence,
+    build_run_studio_skill_usage,
     build_run_studio_summary,
 )
 from app.auth import get_current_principal
@@ -632,6 +634,51 @@ def get_run_studio_evidence(
         except ValueError as exc:
             raise HTTPException(404, str(exc))
         return {"ok": True, **evidence}
+
+
+@router.get("/{thread_id}/run_studio/context_packs")
+def get_run_studio_context_packs(
+    thread_id: str,
+    run_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        summary = build_run_studio_context_packs(
+            s,
+            thread=thread,
+            run_id=(run_id or "").strip() or None,
+        )
+        return {"ok": True, **summary}
+
+
+@router.get("/{thread_id}/run_studio/skill_usage")
+def get_run_studio_skill_usage(
+    thread_id: str,
+    run_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        summary = build_run_studio_skill_usage(
+            s,
+            thread=thread,
+            run_id=(run_id or "").strip() or None,
+        )
+        return {"ok": True, **summary}
+
+
+@router.get("/{thread_id}/skill_usage")
+def get_thread_skill_usage(
+    thread_id: str,
+    run_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        summary = build_run_studio_skill_usage(
+            s,
+            thread=thread,
+            run_id=(run_id or "").strip() or None,
+        )
+        return {"ok": True, **summary}
 
 
 @router.get("/{thread_id}/trace_export")

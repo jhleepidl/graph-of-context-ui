@@ -1,3 +1,81 @@
+export type SkillPackage = {
+  id: string
+  slug?: string | null
+  name?: string | null
+  version?: string | null
+  description?: string | null
+  category?: string | null
+  capability_tags?: string[]
+  compatible_roles?: string[]
+  instructions_ref?: string | null
+  resource_refs?: string[]
+  utility_refs?: string[]
+  visibility?: string | null
+  status?: string | null
+  source?: string | null
+}
+
+export type AttachedSkillSummary = {
+  skill_id: string
+  skill_name?: string | null
+  load_level?: string | null
+  selected_by?: string | null
+  selection_reason?: string | null
+  status?: string | null
+  role_count?: number
+}
+
+export type RuntimeAgentWithSkills = {
+  runtime_instance_id?: string | null
+  role_label?: string | null
+  template_id?: string | null
+  provider?: string | null
+  model?: string | null
+  runtime_status?: string | null
+  attached_skills?: AttachedSkillSummary[]
+  context_pack_id?: string | null
+  source?: string | null
+  source_key?: string | null
+  source_path?: string | null
+  agent_id?: string | null
+  name?: string | null
+  enabled?: boolean
+}
+
+export type ContextPackSummary = {
+  context_pack_id?: string | null
+  scope?: string | null
+  target_runtime_agent_instance_id?: string | null
+  shared_items_count?: number
+  role_specific_items_count?: number
+  skill_items?: Array<{
+    skill_id: string
+    load_level?: string | null
+    count?: number
+  }>
+  missing_items?: unknown[]
+  conflicts?: unknown[]
+  source?: string | null
+  run_id?: string | null
+  node_id?: string | null
+  node_type?: string | null
+}
+
+export type SkillUsageEventSummary = {
+  skill_id: string
+  skill_name?: string | null
+  event_type?: string | null
+  timestamp?: string | null
+  payload_summary?: string | null
+  source?: string | null
+  run_id?: string | null
+  node_id?: string | null
+  node_type?: string | null
+  runtime_instance_id?: string | null
+  selection_reason?: string | null
+  load_level?: string | null
+}
+
 export type RunStudioNow = {
   task?: {
     current_task?: string | null
@@ -148,6 +226,45 @@ export type RunStudioSummary = {
   }
   context_decisions_counts?: Record<string, number>
   evidence_counts?: Record<string, number>
+  skill_counts?: Record<string, number>
+  current_run_skills?: {
+    run_id?: string | null
+    attached_skills?: AttachedSkillSummary[]
+    runtime_agents?: RuntimeAgentWithSkills[]
+    skill_packages?: SkillPackage[]
+    context_packs?: ContextPackSummary[]
+    skill_usage?: SkillUsageEventSummary[]
+    lineage?: {
+      role_skill_links?: Array<{
+        runtime_instance_id?: string | null
+        role_label?: string | null
+        skill_id?: string | null
+        skill_name?: string | null
+        load_level?: string | null
+        selected_by?: string | null
+        selection_reason?: string | null
+      }>
+      skill_context_links?: Array<{
+        context_pack_id?: string | null
+        target_runtime_agent_instance_id?: string | null
+        scope?: string | null
+        skill_id?: string | null
+        load_level?: string | null
+        count?: number
+      }>
+      skill_evidence_links?: Array<{
+        skill_id?: string | null
+        event_type?: string | null
+        from_node_id?: string | null
+        to_node_id?: string | null
+        to_node_type?: string | null
+        edge_type?: string | null
+      }>
+      counts?: Record<string, number>
+    }
+    counts?: Record<string, number>
+    updated_at?: string | null
+  }
   graph_counts?: Record<string, number>
   updated_at?: string | null
 }
@@ -181,7 +298,10 @@ export type RunStudioAgentTeam = {
     source_path?: string | null
     snapshot_node_id?: string | null
     snapshot_node_type?: string | null
+    attached_skills?: AttachedSkillSummary[]
+    context_pack_id?: string | null
   }>
+  skill_packages?: SkillPackage[]
   active_count?: number
   updated_at?: string | null
 }
@@ -259,5 +379,19 @@ export type RunStudioEvidence = {
     score?: number
   }>
   counts?: Record<string, number>
+  updated_at?: string | null
+}
+
+export type RunStudioContextPacks = {
+  run_id?: string | null
+  count?: number
+  items?: ContextPackSummary[]
+  updated_at?: string | null
+}
+
+export type RunStudioSkillUsage = {
+  run_id?: string | null
+  count?: number
+  items?: SkillUsageEventSummary[]
   updated_at?: string | null
 }

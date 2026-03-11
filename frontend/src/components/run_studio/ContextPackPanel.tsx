@@ -1,0 +1,68 @@
+import React from 'react'
+import { type RunStudioContextPacks, type RunStudioSummary } from './types'
+
+type Props = {
+  contextPacks: RunStudioContextPacks | null
+  summary: RunStudioSummary | null
+}
+
+export default function ContextPackPanel({ contextPacks, summary }: Props) {
+  const fallbackItems = summary?.current_run_skills?.context_packs || []
+  const items = (contextPacks?.items && contextPacks.items.length > 0) ? contextPacks.items : fallbackItems
+
+  const sharedCount = items.reduce((acc, item) => acc + Number(item.shared_items_count || 0), 0)
+  const roleSpecificCount = items.reduce((acc, item) => acc + Number(item.role_specific_items_count || 0), 0)
+  const skillScopedCount = items.reduce(
+    (acc, item) => acc + (item.skill_items || []).reduce((inner, sItem) => inner + Number(sItem.count || 0), 0),
+    0,
+  )
+
+  return (
+    <section className="card runStudioPanel">
+      <div className="runStudioPanelHeader">
+        <h3>Context Packs</h3>
+        <div className="runStudioMetaRow">
+          <span className="pill">packs: {items.length}</span>
+          <span className="pill">shared: {sharedCount}</span>
+          <span className="pill">role-specific: {roleSpecificCount}</span>
+          <span className="pill">skill-scoped: {skillScopedCount}</span>
+        </div>
+      </div>
+
+      <div className="runStudioList">
+        {items.slice(0, 12).map((item, index) => (
+          <article key={`${item.context_pack_id || 'context-pack'}:${item.target_runtime_agent_instance_id || 'runtime'}:${index}`} className="runStudioListItem">
+            <div className="row" style={{ marginBottom: 4 }}>
+              <span className="pill">{item.context_pack_id || 'context-pack'}</span>
+              <span className="pill">scope: {item.scope || 'runtime'}</span>
+              {item.target_runtime_agent_instance_id && (
+                <span className="pill">runtime: {item.target_runtime_agent_instance_id}</span>
+              )}
+            </div>
+            <div className="muted">
+              shared: {item.shared_items_count || 0} | role-specific: {item.role_specific_items_count || 0}
+            </div>
+            {item.skill_items && item.skill_items.length > 0 && (
+              <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
+                {item.skill_items.slice(0, 6).map((skillItem) => (
+                  <span key={`${skillItem.skill_id}:${skillItem.load_level || 'metadata_only'}`} className="pill">
+                    {skillItem.skill_id} ({skillItem.load_level || 'metadata_only'}:{skillItem.count || 0})
+                  </span>
+                ))}
+              </div>
+            )}
+            {(item.missing_items?.length || 0) > 0 && (
+              <div className="muted">missing: {(item.missing_items || []).slice(0, 3).map((x) => String(x)).join(' | ')}</div>
+            )}
+            {(item.conflicts?.length || 0) > 0 && (
+              <div className="muted">conflicts: {(item.conflicts || []).slice(0, 3).map((x) => String(x)).join(' | ')}</div>
+            )}
+          </article>
+        ))}
+        {items.length === 0 && (
+          <div className="muted">No context pack projection is available for this run scope yet.</div>
+        )}
+      </div>
+    </section>
+  )
+}
