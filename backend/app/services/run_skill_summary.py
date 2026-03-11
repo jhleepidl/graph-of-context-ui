@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from app.services.context_packs import extract_context_pack_summaries
+from app.services.runtime_snapshot import (
+    created_sort_key as _runtime_created_sort_key,
+    node_payload as _runtime_node_payload,
+)
 from app.services.skill_projections import extract_runtime_agents_with_skills, extract_skill_usage_events
 from app.services.skill_registry import build_skill_registry
 
@@ -13,25 +16,12 @@ RUN_STEP_LINK_EDGE_TYPES = {"BELONGS_TO_RUN", "IN_RUN"}
 EVIDENCE_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary", "Artifact", "Resource", "Message"}
 
 
-def _jload(raw: str | None, default: Any) -> Any:
-    try:
-        return json.loads(raw or "")
-    except Exception:
-        return default
-
-
 def _node_payload(node: Any) -> dict[str, Any]:
-    payload = _jload(getattr(node, "payload_json", "{}"), {})
-    if isinstance(payload, dict):
-        return payload
-    return {}
+    return _runtime_node_payload(node)
 
 
 def _created_sort_key(node: Any) -> tuple[str, str]:
-    created_at = getattr(node, "created_at", None)
-    if hasattr(created_at, "isoformat"):
-        return created_at.isoformat(), str(getattr(node, "id", ""))
-    return str(created_at or ""), str(getattr(node, "id", ""))
+    return _runtime_created_sort_key(node)
 
 
 def build_step_run_id_index(nodes: Iterable[Any], edges: Iterable[Any]) -> dict[str, str | None]:

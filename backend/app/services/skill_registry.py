@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any, Iterable
 
+from app.services.runtime_snapshot import (
+    clean_list_of_text as _runtime_clean_list_of_text,
+    iter_payload_containers as _runtime_iter_payload_containers,
+    node_payload as _runtime_node_payload,
+)
+
 
 SKILL_PACKAGE_KEYS = (
     "skill_packages",
@@ -14,8 +20,6 @@ SKILL_PACKAGE_KEYS = (
     "skill_catalog",
     "skillCatalog",
 )
-
-NESTED_PAYLOAD_KEYS = ("runtime", "meta", "result", "output", "state", "data")
 
 DEFAULT_SKILL_REGISTRY: dict[str, dict[str, Any]] = {
     "skill.thread_team_reconciliation.v1": {
@@ -136,10 +140,7 @@ def _jload(raw: str | None, default: Any) -> Any:
 
 
 def _node_payload(node: Any) -> dict[str, Any]:
-    payload = _jload(getattr(node, "payload_json", "{}"), {})
-    if isinstance(payload, dict):
-        return payload
-    return {}
+    return _runtime_node_payload(node)
 
 
 def _clean_text(value: Any) -> str | None:
@@ -148,20 +149,7 @@ def _clean_text(value: Any) -> str | None:
 
 
 def _clean_list_of_text(value: Any, *, limit: int = 32) -> list[str]:
-    if isinstance(value, str):
-        clean = value.strip()
-        return [clean] if clean else []
-    if not isinstance(value, (list, tuple, set)):
-        return []
-    out: list[str] = []
-    for item in value:
-        clean = str(item or "").strip()
-        if not clean:
-            continue
-        out.append(clean)
-        if len(out) >= limit:
-            break
-    return out
+    return _runtime_clean_list_of_text(value, limit=limit)
 
 
 def _has_non_empty(value: Any) -> bool:
@@ -175,16 +163,7 @@ def _has_non_empty(value: Any) -> bool:
 
 
 def _iter_payload_containers(payload: dict[str, Any], *, prefix: str = "", depth: int = 0, max_depth: int = 2):
-    if not isinstance(payload, dict):
-        return
-    yield prefix, payload
-    if depth >= max_depth:
-        return
-    for key in NESTED_PAYLOAD_KEYS:
-        nested = payload.get(key)
-        if isinstance(nested, dict):
-            next_prefix = f"{prefix}{key}."
-            yield from _iter_payload_containers(nested, prefix=next_prefix, depth=depth + 1, max_depth=max_depth)
+    yield from _runtime_iter_payload_containers(payload, prefix=prefix, depth=depth, max_depth=max_depth)
 
 
 def _guess_skill_name(skill_id: str) -> str:

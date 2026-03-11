@@ -148,6 +148,7 @@ export type RunStudioSummary = {
     active_count?: number
   }
   now?: RunStudioNow
+  agent_team?: RunStudioAgentTeam
   projections?: {
     conversation?: {
       message_count?: number

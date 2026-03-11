@@ -1,5 +1,6 @@
 import React from 'react'
 import { type RunStudioAgentTeam, type RunStudioSummary } from './types'
+import { selectEffectiveAgentTeam } from './selectors'
 
 type Props = {
   summary: RunStudioSummary | null
@@ -7,11 +8,12 @@ type Props = {
 }
 
 export default function AttachedSkillsPanel({ summary, team }: Props) {
+  const effectiveTeam = selectEffectiveAgentTeam(summary, team)
   const currentRunSkills = summary?.current_run_skills
   const aggregatedSkills = currentRunSkills?.attached_skills || []
   const roleSkillLinks = currentRunSkills?.lineage?.role_skill_links || []
 
-  const fallbackRoleSkills = (team?.items || [])
+  const fallbackRoleSkills = (effectiveTeam?.items || [])
     .flatMap((item) =>
       (item.attached_skills || []).map((skill) => ({
         runtime_instance_id: item.runtime_instance_id || null,

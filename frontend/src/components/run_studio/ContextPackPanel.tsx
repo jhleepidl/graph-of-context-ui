@@ -1,14 +1,24 @@
 import React from 'react'
 import { type RunStudioContextPacks, type RunStudioSummary } from './types'
+import { selectEffectiveContextPacks } from './selectors'
 
 type Props = {
   contextPacks: RunStudioContextPacks | null
   summary: RunStudioSummary | null
+  onLoadDetail?: () => void
+  detailLoading?: boolean
+  detailLoaded?: boolean
 }
 
-export default function ContextPackPanel({ contextPacks, summary }: Props) {
-  const fallbackItems = summary?.current_run_skills?.context_packs || []
-  const items = (contextPacks?.items && contextPacks.items.length > 0) ? contextPacks.items : fallbackItems
+export default function ContextPackPanel({
+  contextPacks,
+  summary,
+  onLoadDetail,
+  detailLoading,
+  detailLoaded,
+}: Props) {
+  const effectiveContextPacks = selectEffectiveContextPacks(summary, contextPacks)
+  const items = effectiveContextPacks?.items || []
 
   const sharedCount = items.reduce((acc, item) => acc + Number(item.shared_items_count || 0), 0)
   const roleSpecificCount = items.reduce((acc, item) => acc + Number(item.role_specific_items_count || 0), 0)
@@ -21,11 +31,16 @@ export default function ContextPackPanel({ contextPacks, summary }: Props) {
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
         <h3>Context Packs</h3>
-        <div className="runStudioMetaRow">
+        <div className="row" style={{ marginBottom: 0 }}>
           <span className="pill">packs: {items.length}</span>
           <span className="pill">shared: {sharedCount}</span>
           <span className="pill">role-specific: {roleSpecificCount}</span>
           <span className="pill">skill-scoped: {skillScopedCount}</span>
+          {onLoadDetail && (
+            <button className="tiny" onClick={onLoadDetail} disabled={Boolean(detailLoading)}>
+              {detailLoading ? 'Loading...' : (detailLoaded ? 'Refresh detail' : 'Load detail')}
+            </button>
+          )}
         </div>
       </div>
 

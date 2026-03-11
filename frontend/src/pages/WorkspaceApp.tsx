@@ -14,12 +14,14 @@ import ConversationAgentsPanel from '../components/ConversationAgentsPanel'
 import RunStudioLayout from '../components/run_studio/RunStudioLayout'
 import ArtifactsPanel from '../components/run_studio/ArtifactsPanel'
 import WorkspaceShell from '../components/workspace/WorkspaceShell'
+import WorkspaceRouteState from '../components/workspace/WorkspaceRouteState'
 import { useRunStudioData } from '../hooks/useRunStudioData'
+import { useRunStudioActions } from '../hooks/useRunStudioActions'
+import { buildWorkspaceGroup, useWorkspaceThreadSelection } from '../hooks/useWorkspaceThreadSelection'
 import { useWorkspaceTabs } from '../hooks/useWorkspaceTabs'
 import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPriority'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
-const WORKSPACE_STORAGE_KEY = 'goc:selected-workspace:v1'
 const LEFT_PANEL_MIN_WIDTH = 260
 const RIGHT_PANEL_MIN_WIDTH = 300
 const CENTER_PANEL_MIN_WIDTH = 520
@@ -36,13 +38,6 @@ type ResizeSession = {
 }
 type AuthGateState = 'checking' | 'ready' | 'blocked' | 'error'
 
-type WorkspaceGroup = {
-  key: string
-  label: string
-  chatId: number | string | null
-  threadIds: string[]
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -50,54 +45,6 @@ function clamp(value: number, min: number, max: number): number {
 function detectMobileLayout(): boolean {
   if (typeof window === 'undefined') return false
   return window.innerWidth <= MOBILE_LAYOUT_BREAKPOINT
-}
-
-function readStoredWorkspaceKey(): string {
-  if (typeof window === 'undefined') return ''
-  try {
-    return (window.localStorage.getItem(WORKSPACE_STORAGE_KEY) || '').trim()
-  } catch {
-    return ''
-  }
-}
-
-function parseThreadMetaJson(thread: any): Record<string, any> {
-  const raw = thread?.meta_json
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    return raw as Record<string, any>
-  }
-  if (typeof raw === 'string' && raw.trim()) {
-    try {
-      const parsed = JSON.parse(raw)
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        return parsed as Record<string, any>
-      }
-    } catch {
-      // ignore malformed meta_json
-    }
-  }
-  return {}
-}
-
-function buildWorkspaceGroup(thread: any): WorkspaceGroup {
-  const meta = parseThreadMetaJson(thread)
-  const telegram = meta.telegram && typeof meta.telegram === 'object' ? meta.telegram : null
-  const chatId = telegram ? (telegram.chat_id ?? null) : null
-  if (chatId !== null && chatId !== undefined && String(chatId).trim() !== '') {
-    const title = typeof telegram?.title === 'string' ? telegram.title.trim() : ''
-    return {
-      key: `telegram:${String(chatId)}`,
-      label: title ? `${title} (${chatId})` : `Chat ${chatId}`,
-      chatId,
-      threadIds: [thread.id],
-    }
-  }
-  return {
-    key: 'ungrouped',
-    label: 'Ungrouped',
-    chatId: null,
-    threadIds: [thread.id],
-  }
 }
 
 function readTelegramInitData(): string {
@@ -171,16 +118,6 @@ function captureTokenFromHash(): void {
   window.history.replaceState(null, '', nextUrl)
 }
 
-function readDeepLinkSelection(): { threadId: string | null; ctxId: string | null } {
-  if (typeof window === 'undefined') {
-    return { threadId: null, ctxId: null }
-  }
-  const params = new URLSearchParams(window.location.search)
-  const threadId = (params.get('thread') || '').trim() || null
-  const ctxId = (params.get('ctx') || '').trim() || null
-  return { threadId, ctxId }
-}
-
 export default function WorkspaceApp() {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [authGateState, setAuthGateState] = useState<AuthGateState>('checking')
@@ -201,15 +138,33 @@ export default function WorkspaceApp() {
     evidence: runStudioEvidence,
     contextPacks: runStudioContextPacks,
     skillUsage: runStudioSkillUsage,
+    detailLoaded: runStudioDetailLoaded,
+    detailLoading: runStudioDetailLoading,
     loading: runStudioLoading,
     error: runStudioError,
     refresh: refreshRunStudio,
     clear: clearRunStudio,
+    loadAgentTeam: loadRunStudioAgentTeam,
+    loadContextDecisions: loadRunStudioContextDecisions,
+    loadEvidence: loadRunStudioEvidence,
+    loadContextPacks: loadRunStudioContextPacks,
+    loadSkillUsage: loadRunStudioSkillUsage,
   } = useRunStudioData()
-  const [threads, setThreads] = useState<any[]>([])
-  const [workspaceKey, setWorkspaceKey] = useState<string>(() => readStoredWorkspaceKey())
-  const [threadId, setThreadId] = useState<string | null>(null)
-  const [threadResolutionNotice, setThreadResolutionNotice] = useState<string>('')
+  const {
+    threads,
+    setThreads,
+    workspaceKey,
+    setWorkspaceKey,
+    threadId,
+    setThreadId,
+    threadResolutionNotice,
+    setThreadResolutionNotice,
+    workspaceGroups,
+    visibleThreads,
+    initialDeepLink,
+    loadThreads,
+    setWorkspaceKeyForThread,
+  } = useWorkspaceThreadSelection()
 
   const [ctxSets, setCtxSets] = useState<any[]>([])
   const [ctxId, setCtxId] = useState<string | null>(null)
@@ -241,36 +196,6 @@ export default function WorkspaceApp() {
   })
   const [resizeSession, setResizeSession] = useState<ResizeSession | null>(null)
   const [isMobileLayout, setIsMobileLayout] = useState<boolean>(() => detectMobileLayout())
-  const initialDeepLink = useMemo(() => readDeepLinkSelection(), [])
-  const workspaceGroups = useMemo<WorkspaceGroup[]>(() => {
-    const byKey = new Map<string, WorkspaceGroup>()
-    for (const thread of threads) {
-      const group = buildWorkspaceGroup(thread)
-      const existing = byKey.get(group.key)
-      if (!existing) {
-        byKey.set(group.key, group)
-        continue
-      }
-      existing.threadIds.push(thread.id)
-      if (existing.label === `Chat ${String(existing.chatId)}` && group.label) {
-        existing.label = group.label
-      }
-    }
-    const groups = Array.from(byKey.values())
-    groups.sort((a, b) => {
-      if (a.key === 'ungrouped') return 1
-      if (b.key === 'ungrouped') return -1
-      return a.label.localeCompare(b.label)
-    })
-    return groups
-  }, [threads])
-  const visibleThreads = useMemo(() => {
-    if (!workspaceKey) return threads
-    const group = workspaceGroups.find((item) => item.key === workspaceKey)
-    if (!group) return threads
-    const idSet = new Set(group.threadIds)
-    return threads.filter((thread) => idSet.has(thread.id))
-  }, [threads, workspaceGroups, workspaceKey])
 
   const nodesById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes])
   const activeNodes = useMemo(() => activeIds.map((id) => nodesById.get(id)).filter(Boolean), [activeIds, nodesById])
@@ -341,56 +266,7 @@ export default function WorkspaceApp() {
     const ctx = await api.ctx(cId)
     setActiveIds(ctx.active_node_ids || [])
     await refreshContextInspector(cId)
-    await refreshRunStudio(tId, cId, { silent: true })
-  }
-
-  async function loadThreads(preferredThreadId?: string | null): Promise<string | null> {
-    const requestedThreadId = (preferredThreadId || '').trim()
-    let ts = await api.threads()
-    setThreads(ts)
-
-    if (requestedThreadId) {
-      if (ts.some((t) => t.id === requestedThreadId)) {
-        setThreadResolutionNotice('')
-        return requestedThreadId
-      }
-
-      // Explicit deep link: try direct thread fetch before failing.
-      try {
-        const directThread = await api.thread(requestedThreadId)
-        if (directThread && directThread.id === requestedThreadId) {
-          if (!ts.some((t) => t.id === requestedThreadId)) {
-            ts = [directThread, ...ts]
-            setThreads(ts)
-          }
-          setThreadResolutionNotice('')
-          return requestedThreadId
-        }
-      } catch {
-        // handled below with explicit non-fallback notice
-      }
-
-      setThreadResolutionNotice(
-        `Requested thread (${requestedThreadId}) was not found or is unavailable. No fallback thread was auto-selected.`,
-      )
-      return null
-    }
-
-    let tid = ts[0]?.id
-    if (threadId && ts.some((t) => t.id === threadId)) {
-      tid = threadId
-    } else if (workspaceKey) {
-      const inWorkspace = ts.find((t) => buildWorkspaceGroup(t).key === workspaceKey)
-      if (inWorkspace) tid = inWorkspace.id
-    }
-    if (!tid) {
-      const t = await api.createThread('Demo Thread')
-      tid = t.id
-      const refreshed = await api.threads()
-      setThreads(refreshed)
-    }
-    setThreadResolutionNotice('')
-    return tid
+    await refreshRunStudio(tId, cId, { silent: true, includeLoadedDetails: true })
   }
 
   async function loadCtxSets(tid: string, preferredCtxId?: string | null) {
@@ -429,10 +305,7 @@ export default function WorkspaceApp() {
 
     setThreadResolutionNotice('')
     setThreadId(nextThreadId)
-    const nextThread = threads.find((t) => t.id === nextThreadId)
-    if (nextThread) {
-      setWorkspaceKey(buildWorkspaceGroup(nextThread).key)
-    }
+    setWorkspaceKeyForThread(nextThreadId)
     clearThreadScopedState()
 
     try {
@@ -457,7 +330,7 @@ export default function WorkspaceApp() {
       if (switchSeqRef.current !== seq) return
       setCompiledInfo(compiled)
       setContextVersions(versions?.versions || [])
-      await refreshRunStudio(nextThreadId, cid, { silent: true })
+      await refreshRunStudio(nextThreadId, cid, { silent: true, includeLoadedDetails: true })
     } catch (e) {
       console.error('failed to switch thread', e)
     }
@@ -536,32 +409,6 @@ export default function WorkspaceApp() {
   }, [panelWidths])
 
   useEffect(() => {
-    if (workspaceGroups.length === 0) return
-    const exists = workspaceKey && workspaceGroups.some((group) => group.key === workspaceKey)
-    if (exists) return
-    if (threadId) {
-      const currentThread = threads.find((thread) => thread.id === threadId)
-      if (currentThread) {
-        setWorkspaceKey(buildWorkspaceGroup(currentThread).key)
-        return
-      }
-    }
-    setWorkspaceKey(workspaceGroups[0].key)
-  }, [workspaceGroups, workspaceKey, threadId, threads])
-
-  useEffect(() => {
-    try {
-      if (workspaceKey) {
-        window.localStorage.setItem(WORKSPACE_STORAGE_KEY, workspaceKey)
-      } else {
-        window.localStorage.removeItem(WORKSPACE_STORAGE_KEY)
-      }
-    } catch {
-      // ignore localStorage errors
-    }
-  }, [workspaceKey])
-
-  useEffect(() => {
     function handleResize() {
       setIsMobileLayout(detectMobileLayout())
     }
@@ -624,7 +471,7 @@ export default function WorkspaceApp() {
         setNodes((prev) => (graphNodesEqual(prev, nextNodes) ? prev : nextNodes))
         setEdges((prev) => (graphEdgesEqual(prev, nextEdges) ? prev : nextEdges))
         if (workspaceMainTab === 'run_studio') {
-          void refreshRunStudio(threadId, ctxId || undefined, { silent: true })
+          void refreshRunStudio(threadId, ctxId || undefined, { silent: true, includeLoadedDetails: true })
         }
       } catch (e) {
         console.error('runtime graph poll failed', e)
@@ -647,7 +494,7 @@ export default function WorkspaceApp() {
   useEffect(() => {
     if (workspaceMainTab !== 'run_studio') return
     if (!threadId) return
-    void refreshRunStudio(threadId, ctxId || undefined)
+    void refreshRunStudio(threadId, ctxId || undefined, { includeLoadedDetails: true })
   }, [workspaceMainTab, threadId, ctxId])
 
   const startPanelResize = useCallback((handle: ResizeHandle, evt: React.MouseEvent<HTMLDivElement>) => {
@@ -681,7 +528,7 @@ export default function WorkspaceApp() {
       if (Array.isArray(out?.active_node_ids)) {
         setActiveIds(out.active_node_ids)
         await refreshContextInspector(ctxId)
-        await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+        await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
         return
       }
     } else {
@@ -689,7 +536,7 @@ export default function WorkspaceApp() {
       if (Array.isArray(out?.active_node_ids)) {
         setActiveIds(out.active_node_ids)
         await refreshContextInspector(ctxId)
-        await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+        await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
         return
       }
     }
@@ -702,7 +549,7 @@ export default function WorkspaceApp() {
       await api.reorderActive(ctxId, nodeIds)
       setActiveIds(nodeIds)
       await refreshContextInspector(ctxId)
-      await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+      await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
     } catch (e) {
       console.error('failed to reorder active nodes', e)
       await reloadAll()
@@ -728,7 +575,7 @@ export default function WorkspaceApp() {
     if (Array.isArray(out?.active_node_ids)) {
       setActiveIds(out.active_node_ids)
       await refreshContextInspector(ctxId)
-      await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+      await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
       return
     }
     await reloadAll()
@@ -740,7 +587,7 @@ export default function WorkspaceApp() {
     if (Array.isArray(out?.active_node_ids)) {
       setActiveIds(out.active_node_ids)
       await refreshContextInspector(ctxId)
-      await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+      await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
       return
     }
     await reloadAll()
@@ -765,7 +612,7 @@ export default function WorkspaceApp() {
     if (Array.isArray(out?.active_node_ids)) {
       setActiveIds(out.active_node_ids)
       await refreshContextInspector(ctxId)
-      await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+      await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
       return
     }
     await reloadAll()
@@ -838,7 +685,7 @@ export default function WorkspaceApp() {
       await api.reorderActive(ctxId, deduped)
       setActiveIds(deduped)
       await refreshContextInspector(ctxId)
-      await refreshRunStudio(threadId || undefined, ctxId, { silent: true })
+      await refreshRunStudio(threadId || undefined, ctxId, { silent: true, includeLoadedDetails: true })
     } catch (e) {
       console.error('failed to replace active context', e)
       await reloadAll()
@@ -935,57 +782,23 @@ export default function WorkspaceApp() {
     setPlannerResult(null)
     await reloadAll()
   }
-
-  const normalizeGraphTargetIds = useCallback((rawIds: string[]) => {
-    return rawIds
-      .map((id) => String(id || '').trim())
-      .filter((id, index, arr) => id && arr.indexOf(id) === index)
-      .filter((id) => nodesById.has(id))
-  }, [nodesById])
-
-  const focusNodesInGraph = useCallback((rawIds: string[]) => {
-    const ids = normalizeGraphTargetIds(rawIds)
-    if (ids.length === 0) return
-    setWorkspaceMainTab('graph')
-    setSelectedIds(ids)
-  }, [normalizeGraphTargetIds, setWorkspaceMainTab])
-
-  const openNodesInGraph = useCallback((rawIds: string[]) => {
-    const ids = normalizeGraphTargetIds(rawIds)
-    if (ids.length === 0) return
-    setWorkspaceMainTab('graph')
-    setSelectedIds(ids)
-    setDetailNodeId(ids[0])
-  }, [normalizeGraphTargetIds, setWorkspaceMainTab])
-
-  const focusNodeInGraph = useCallback((nodeId: string) => {
-    const clean = String(nodeId || '').trim()
-    if (!clean) return
-    focusNodesInGraph([clean])
-  }, [focusNodesInGraph])
-
-  const openNodeInGraph = useCallback((nodeId: string) => {
-    const clean = String(nodeId || '').trim()
-    if (!clean) return
-    openNodesInGraph([clean])
-  }, [openNodesInGraph])
-
-  async function addNodeToActiveFromStudio(nodeId: string) {
-    const clean = String(nodeId || '').trim()
-    if (!clean) return
-    await activateNodeIds([clean])
-  }
-
-  async function pinNodeFromStudio(nodeId: string, level: 'required' | 'preferred') {
-    const clean = String(nodeId || '').trim()
-    if (!clean) return
-    try {
-      await api.pinNode(clean, level)
-      await reloadAll(threadId || undefined, ctxId || undefined)
-    } catch (error) {
-      console.error('failed to pin node from run studio', error)
-    }
-  }
+  const {
+    focusNodesInGraph,
+    openNodesInGraph,
+    focusNodeInGraph,
+    openNodeInGraph,
+    addNodeToActiveFromStudio,
+    pinNodeFromStudio,
+  } = useRunStudioActions({
+    nodesById,
+    setWorkspaceMainTab,
+    setSelectedIds,
+    setDetailNodeId,
+    activateNodeIds,
+    reloadAll,
+    threadId,
+    ctxId,
+  })
 
   const leftPanelContent = (
     <>
@@ -1109,22 +922,10 @@ export default function WorkspaceApp() {
         </div>
       )}
 
-      <div className="card">
-        <div className="row" style={{ marginBottom: 0 }}>
-          <button className={workspaceMainTab === 'run_studio' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('run_studio')}>Run Studio</button>
-          <button className={workspaceMainTab === 'graph' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('graph')}>Graph</button>
-          <button className={workspaceMainTab === 'raw_trace' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('raw_trace')}>Raw Trace</button>
-          <button className={workspaceMainTab === 'artifacts' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('artifacts')}>Artifacts</button>
-          <button className={workspaceMainTab === 'advanced' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('advanced')}>Advanced</button>
-          <span className="muted">
-            {workspaceMainTab === 'run_studio' && 'Operational view: run status, runtime team, context decisions, and evidence'}
-            {workspaceMainTab === 'graph' && 'Graph editing and manual fold/unfold controls'}
-            {workspaceMainTab === 'raw_trace' && 'Detailed execution graph + timeline + node inspector'}
-            {workspaceMainTab === 'artifacts' && 'Artifact/resource inventory and selection state'}
-            {workspaceMainTab === 'advanced' && 'Copy/Paste prompt tools and thread-level power controls'}
-          </span>
-        </div>
-      </div>
+      <WorkspaceRouteState
+        workspaceMainTab={workspaceMainTab}
+        setWorkspaceMainTab={setWorkspaceMainTab}
+      />
 
       {workspaceMainTab === 'run_studio' && (
         <RunStudioLayout
@@ -1134,10 +935,29 @@ export default function WorkspaceApp() {
           evidence={runStudioEvidence}
           contextPacks={runStudioContextPacks}
           skillUsage={runStudioSkillUsage}
+          detailLoaded={runStudioDetailLoaded}
+          detailLoading={runStudioDetailLoading}
           loading={runStudioLoading}
           error={runStudioError}
           onRefresh={() => {
-            void refreshRunStudio(threadId || undefined, ctxId || undefined)
+            void refreshRunStudio(threadId || undefined, ctxId || undefined, { includeLoadedDetails: true })
+          }}
+          onLoadAgentTeam={() => {
+            void loadRunStudioAgentTeam(threadId || undefined)
+          }}
+          onLoadContextDecisions={() => {
+            void loadRunStudioContextDecisions(threadId || undefined, ctxId || undefined)
+          }}
+          onLoadEvidence={() => {
+            void loadRunStudioEvidence(threadId || undefined, ctxId || undefined)
+          }}
+          onLoadContextPacks={() => {
+            const currentRunId = runStudioSummary?.current_run_skills?.run_id
+            void loadRunStudioContextPacks(threadId || undefined, currentRunId || undefined)
+          }}
+          onLoadSkillUsage={() => {
+            const currentRunId = runStudioSummary?.current_run_skills?.run_id
+            void loadRunStudioSkillUsage(threadId || undefined, currentRunId || undefined)
           }}
           onOpenGraph={() => setWorkspaceMainTab('graph')}
           onOpenRawTrace={() => setWorkspaceMainTab('raw_trace')}

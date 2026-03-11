@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any, Iterable
 
+from app.services.runtime_snapshot import (
+    created_sort_key as _runtime_created_sort_key,
+    extract_runtime_members_from_container,
+    iter_payload_containers as _runtime_iter_payload_containers,
+    node_payload as _runtime_node_payload,
+)
 from app.services.skill_projections import normalize_load_level
 
 
@@ -18,9 +23,6 @@ CONTEXT_PACK_KEYS = (
     "contextPacks",
 )
 
-NESTED_PAYLOAD_KEYS = ("runtime", "meta", "result", "output", "state", "data")
-
-
 def _jload(raw: str | None, default: Any) -> Any:
     try:
         return json.loads(raw or "")
@@ -29,17 +31,11 @@ def _jload(raw: str | None, default: Any) -> Any:
 
 
 def _node_payload(node: Any) -> dict[str, Any]:
-    payload = _jload(getattr(node, "payload_json", "{}"), {})
-    if isinstance(payload, dict):
-        return payload
-    return {}
+    return _runtime_node_payload(node)
 
 
 def _created_sort_key(node: Any) -> tuple[str, str]:
-    created_at = getattr(node, "created_at", None)
-    if isinstance(created_at, datetime):
-        return created_at.isoformat(), str(getattr(node, "id", ""))
-    return str(created_at or ""), str(getattr(node, "id", ""))
+    return _runtime_created_sort_key(node)
 
 
 def _clean_text(value: Any) -> str | None:
@@ -81,16 +77,7 @@ def _clean_list(value: Any, *, limit: int = 24) -> list[Any]:
 
 
 def _iter_payload_containers(payload: dict[str, Any], *, prefix: str = "", depth: int = 0, max_depth: int = 2):
-    if not isinstance(payload, dict):
-        return
-    yield prefix, payload
-    if depth >= max_depth:
-        return
-    for key in NESTED_PAYLOAD_KEYS:
-        nested = payload.get(key)
-        if isinstance(nested, dict):
-            next_prefix = f"{prefix}{key}."
-            yield from _iter_payload_containers(nested, prefix=next_prefix, depth=depth + 1, max_depth=max_depth)
+    yield from _runtime_iter_payload_containers(payload, prefix=prefix, depth=depth, max_depth=max_depth)
 
 
 def _expand_skill_items(value: Any) -> list[dict[str, Any]]:
@@ -338,37 +325,6 @@ def _merge_context_pack_summary(base: dict[str, Any], incoming: dict[str, Any]) 
     return merged
 
 
-def _runtime_members_from_container(container: dict[str, Any]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-
-    runtime_snapshot = container.get("runtime_team_snapshot")
-    if runtime_snapshot is None:
-        runtime_snapshot = container.get("runtimeTeamSnapshot")
-    if isinstance(runtime_snapshot, str):
-        parsed = _jload(runtime_snapshot, None)
-        if parsed is not None:
-            runtime_snapshot = parsed
-
-    if isinstance(runtime_snapshot, dict):
-        runtime_agents = runtime_snapshot.get("runtime_agents")
-        if runtime_agents is None:
-            runtime_agents = runtime_snapshot.get("runtimeAgents")
-        if isinstance(runtime_agents, list):
-            out.extend([item for item in runtime_agents if isinstance(item, dict)])
-        elif isinstance(runtime_agents, dict):
-            out.extend([item for item in runtime_agents.values() if isinstance(item, dict)])
-
-    runtime_agents_top = container.get("runtime_agents")
-    if runtime_agents_top is None:
-        runtime_agents_top = container.get("runtimeAgents")
-    if isinstance(runtime_agents_top, list):
-        out.extend([item for item in runtime_agents_top if isinstance(item, dict)])
-    elif isinstance(runtime_agents_top, dict):
-        out.extend([item for item in runtime_agents_top.values() if isinstance(item, dict)])
-
-    return out
-
-
 def extract_context_pack_summaries(
     nodes: Iterable[Any],
     *,
@@ -396,7 +352,7 @@ def extract_context_pack_summaries(
                     normalized["run_id"] = run_id
                     rows.append(normalized)
 
-            for runtime_member in _runtime_members_from_container(container):
+            for runtime_member in extract_runtime_members_from_container(container):
                 runtime_instance_id = _clean_text(runtime_member.get("runtime_instance_id") or runtime_member.get("instance_id"))
                 direct_context_pack_id = _clean_text(runtime_member.get("context_pack_id") or runtime_member.get("contextPackId"))
                 if direct_context_pack_id:

@@ -7,9 +7,15 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import SQLModel, Session, create_engine
 
-from app.models import Agent, Conversation, ConversationAgent, Thread
+from app.models import Agent, ContextSet, Conversation, ConversationAgent, Node, Thread
 from app.services.graph_projections import memory_context_projection
-from app.services.run_studio import _agent_team_summary, _evidence_summary, _extract_runtime_team_snapshot, _now_panel_summary
+from app.services.run_studio import (
+    _agent_team_summary,
+    _evidence_summary,
+    _extract_runtime_team_snapshot,
+    _now_panel_summary,
+    build_run_studio_summary,
+)
 
 
 @dataclass
@@ -433,6 +439,75 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertIn("c1", recent_ids)
         self.assertIn("s1", recent_ids)
         self.assertNotIn("x1", recent_ids)
+
+    def test_run_studio_summary_includes_agent_team_and_skill_fields(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+
+        with Session(engine) as session:
+            thread = Thread(id="thread-summary", service_id="svc", title="Summary Test")
+            context_set = ContextSet(
+                id="ctx-summary",
+                thread_id=thread.id,
+                name="default",
+                active_node_ids_json="[]",
+            )
+            run_node = Node(
+                id="run-summary",
+                thread_id=thread.id,
+                type="Run",
+                text="run",
+                payload_json=json.dumps(
+                    {
+                        "runtime_team_snapshot": {
+                            "runtime_agents": [
+                                {
+                                    "runtime_instance_id": "rt-summary-1",
+                                    "role_label": "Analyst",
+                                    "attached_skills": [
+                                        {
+                                            "skill_id": "skill.claim_evidence_audit.v1",
+                                            "load_level": "instructions",
+                                            "selected_by": "policy",
+                                            "selection_reason": "confidence drop",
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ),
+                created_at=base,
+            )
+            step_node = Node(
+                id="step-summary",
+                thread_id=thread.id,
+                type="Step",
+                text="step",
+                payload_json=json.dumps(
+                    {
+                        "run_id": "run-summary",
+                        "status": "running",
+                        "agent_id": "rt-summary-1",
+                    }
+                ),
+                created_at=base + timedelta(seconds=1),
+            )
+
+            session.add(thread)
+            session.add(context_set)
+            session.add(run_node)
+            session.add(step_node)
+            session.commit()
+
+            summary = build_run_studio_summary(session, thread=thread, context_set_id=context_set.id)
+            self.assertIn("agent_team", summary)
+            self.assertIn("current_run_skills", summary)
+            self.assertGreaterEqual(len(summary["agent_team"].get("items", [])), 1)
+            self.assertEqual(summary["agent_team"]["items"][0]["source"], "runtime_snapshot")
+            self.assertGreaterEqual(len(summary["current_run_skills"].get("attached_skills", [])), 1)
+            self.assertIn("skill_counts", summary)
 
 
 if __name__ == "__main__":

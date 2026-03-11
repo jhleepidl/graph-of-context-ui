@@ -1,22 +1,37 @@
 import React from 'react'
 import { type RunStudioSkillUsage, type RunStudioSummary } from './types'
+import { selectEffectiveSkillUsage } from './selectors'
 
 type Props = {
   skillUsage: RunStudioSkillUsage | null
   summary: RunStudioSummary | null
+  onLoadDetail?: () => void
+  detailLoading?: boolean
+  detailLoaded?: boolean
 }
 
-export default function SkillUsagePanel({ skillUsage, summary }: Props) {
-  const fallbackItems = summary?.current_run_skills?.skill_usage || []
-  const items = (skillUsage?.items && skillUsage.items.length > 0) ? skillUsage.items : fallbackItems
+export default function SkillUsagePanel({
+  skillUsage,
+  summary,
+  onLoadDetail,
+  detailLoading,
+  detailLoaded,
+}: Props) {
+  const effectiveSkillUsage = selectEffectiveSkillUsage(summary, skillUsage)
+  const items = effectiveSkillUsage?.items || []
 
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
         <h3>Skill Usage</h3>
-        <div className="runStudioMetaRow">
+        <div className="row" style={{ marginBottom: 0 }}>
           <span className="pill">events: {items.length}</span>
           <span className="pill">run: {summary?.current_run_skills?.run_id ? String(summary.current_run_skills.run_id).slice(0, 8) : '-'}</span>
+          {onLoadDetail && (
+            <button className="tiny" onClick={onLoadDetail} disabled={Boolean(detailLoading)}>
+              {detailLoading ? 'Loading...' : (detailLoaded ? 'Refresh detail' : 'Load detail')}
+            </button>
+          )}
         </div>
       </div>
 

@@ -16,6 +16,15 @@ import {
   type RunStudioSkillUsage,
   type RunStudioSummary,
 } from './types'
+import { selectEffectiveAgentTeam } from './selectors'
+
+type DetailState = {
+  agentTeam?: boolean
+  contextDecisions?: boolean
+  evidence?: boolean
+  contextPacks?: boolean
+  skillUsage?: boolean
+}
 
 type Props = {
   summary: RunStudioSummary | null
@@ -24,9 +33,16 @@ type Props = {
   evidence: RunStudioEvidence | null
   contextPacks: RunStudioContextPacks | null
   skillUsage: RunStudioSkillUsage | null
+  detailLoaded?: DetailState
+  detailLoading?: DetailState
   loading: boolean
   error: string
   onRefresh: () => void
+  onLoadAgentTeam?: () => void
+  onLoadContextDecisions?: () => void
+  onLoadEvidence?: () => void
+  onLoadContextPacks?: () => void
+  onLoadSkillUsage?: () => void
   onOpenGraph: () => void
   onOpenRawTrace: () => void
   onOpenAdvanced: () => void
@@ -45,9 +61,16 @@ export default function RunStudioLayout({
   evidence,
   contextPacks,
   skillUsage,
+  detailLoaded,
+  detailLoading,
   loading,
   error,
   onRefresh,
+  onLoadAgentTeam,
+  onLoadContextDecisions,
+  onLoadEvidence,
+  onLoadContextPacks,
+  onLoadSkillUsage,
   onOpenGraph,
   onOpenRawTrace,
   onOpenAdvanced,
@@ -59,6 +82,9 @@ export default function RunStudioLayout({
   onPinNode,
 }: Props) {
   const memoryProjection = summary?.projections?.memory_context
+  const effectiveTeam = selectEffectiveAgentTeam(summary, team)
+  const decisionsLoaded = Boolean(detailLoaded?.contextDecisions || decisions)
+  const evidenceLoaded = Boolean(detailLoaded?.evidence || evidence)
 
   return (
     <div className="runStudioLayout">
@@ -85,44 +111,119 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--top">
-        <NowPanel summary={summary} team={team} />
-        <AgentTeamPanel team={team} />
+        <NowPanel summary={summary} team={effectiveTeam} />
+        {effectiveTeam ? (
+          <AgentTeamPanel team={effectiveTeam} />
+        ) : (
+          <section className="card runStudioPanel">
+            <div className="runStudioPanelHeader">
+              <h3>Agent Team</h3>
+            </div>
+            <div className="muted" style={{ marginBottom: 8 }}>
+              Runtime team detail is available on demand.
+            </div>
+            <button onClick={onLoadAgentTeam} disabled={Boolean(detailLoading?.agentTeam)}>
+              {detailLoading?.agentTeam ? 'Loading...' : 'Load detail'}
+            </button>
+          </section>
+        )}
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <AttachedSkillsPanel summary={summary} team={team} />
-        <ContextPackPanel contextPacks={contextPacks} summary={summary} />
-      </div>
-
-      <div className="runStudioGrid runStudioGrid--bottom">
-        <ContextDecisionPanel
-          decisions={decisions}
-          onFocusNode={onFocusNode}
-          onOpenNode={onOpenNode}
-          onPinNode={onPinNode}
-        />
-        <EvidencePanel
-          evidence={evidence}
-          onFocusNode={onFocusNode}
-          onOpenNode={onOpenNode}
-          onFocusTrace={onFocusTrace}
-          onOpenTrace={onOpenTrace}
-          onAddToActive={onAddToActive}
-          onPinNode={onPinNode}
+        <AttachedSkillsPanel summary={summary} team={effectiveTeam} />
+        <ContextPackPanel
+          contextPacks={contextPacks}
+          summary={summary}
+          onLoadDetail={onLoadContextPacks}
+          detailLoading={Boolean(detailLoading?.contextPacks)}
+          detailLoaded={Boolean(detailLoaded?.contextPacks)}
         />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <SkillUsagePanel skillUsage={skillUsage} summary={summary} />
-        <MissingContextPanel
-          decisions={decisions}
-          onFocusNode={onFocusNode}
-          onOpenNode={onOpenNode}
-          onIncludeNode={onAddToActive}
-          onPinNode={onPinNode}
-          onFocusConflict={onFocusTrace}
-          onOpenConflict={onOpenTrace}
+        {decisionsLoaded ? (
+          <ContextDecisionPanel
+            decisions={decisions}
+            onFocusNode={onFocusNode}
+            onOpenNode={onOpenNode}
+            onPinNode={onPinNode}
+          />
+        ) : (
+          <section className="card runStudioPanel">
+            <div className="runStudioPanelHeader">
+              <h3>Context Decisions</h3>
+            </div>
+            <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+              <span className="pill">selected: {summary?.context_decisions_counts?.selected ?? 0}</span>
+              <span className="pill">pinned: {summary?.context_decisions_counts?.pinned ?? 0}</span>
+              <span className="pill">missing: {summary?.context_decisions_counts?.missing ?? 0}</span>
+              <span className="pill">conflicts: {summary?.context_decisions_counts?.conflicting ?? 0}</span>
+            </div>
+            <button onClick={onLoadContextDecisions} disabled={Boolean(detailLoading?.contextDecisions)}>
+              {detailLoading?.contextDecisions ? 'Loading...' : 'Load detail'}
+            </button>
+          </section>
+        )}
+
+        {evidenceLoaded ? (
+          <EvidencePanel
+            evidence={evidence}
+            onFocusNode={onFocusNode}
+            onOpenNode={onOpenNode}
+            onFocusTrace={onFocusTrace}
+            onOpenTrace={onOpenTrace}
+            onAddToActive={onAddToActive}
+            onPinNode={onPinNode}
+          />
+        ) : (
+          <section className="card runStudioPanel">
+            <div className="runStudioPanelHeader">
+              <h3>Evidence</h3>
+            </div>
+            <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+              <span className="pill">claims: {summary?.evidence_counts?.claims ?? 0}</span>
+              <span className="pill">supported: {summary?.evidence_counts?.supported ?? 0}</span>
+              <span className="pill">uncertain: {summary?.evidence_counts?.with_uncertainty ?? 0}</span>
+              <span className="pill">conflicts: {summary?.evidence_counts?.with_conflicts ?? 0}</span>
+            </div>
+            <button onClick={onLoadEvidence} disabled={Boolean(detailLoading?.evidence)}>
+              {detailLoading?.evidence ? 'Loading...' : 'Load detail'}
+            </button>
+          </section>
+        )}
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <SkillUsagePanel
+          skillUsage={skillUsage}
+          summary={summary}
+          onLoadDetail={onLoadSkillUsage}
+          detailLoading={Boolean(detailLoading?.skillUsage)}
+          detailLoaded={Boolean(detailLoaded?.skillUsage)}
         />
+        {decisionsLoaded ? (
+          <MissingContextPanel
+            decisions={decisions}
+            onFocusNode={onFocusNode}
+            onOpenNode={onOpenNode}
+            onIncludeNode={onAddToActive}
+            onPinNode={onPinNode}
+            onFocusConflict={onFocusTrace}
+            onOpenConflict={onOpenTrace}
+          />
+        ) : (
+          <section className="card runStudioPanel">
+            <div className="runStudioPanelHeader">
+              <h3>Missing / Conflicting Context</h3>
+            </div>
+            <div className="muted" style={{ marginBottom: 8 }}>
+              Context decision details are loaded on demand to keep initial Run Studio fetch lightweight.
+            </div>
+            <button onClick={onLoadContextDecisions} disabled={Boolean(detailLoading?.contextDecisions)}>
+              {detailLoading?.contextDecisions ? 'Loading...' : 'Load detail'}
+            </button>
+          </section>
+        )}
       </div>
 
       <div className="runStudioGrid" style={{ gridTemplateColumns: '1fr' }}>
