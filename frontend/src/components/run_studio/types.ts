@@ -76,6 +76,29 @@ export type SkillUsageEventSummary = {
   load_level?: string | null
 }
 
+export type RuntimeAuthorityProjection = {
+  mode?: 'standalone' | 'goc'
+  plan_source?: 'local' | 'goc' | 'local_fallback'
+  context_source?: 'local' | 'goc'
+  agent_catalog_source?: 'local' | 'goc'
+  conversation_team_source?: 'local' | 'goc'
+  skill_catalog_source?: 'local' | 'goc' | 'mixed'
+  degraded_mode?: boolean
+  fallback_reason?: string | null
+}
+
+export type PlanningBoundaryProjection = {
+  status?: string | null
+  managed_by?: string | null
+  run_id?: string | null
+  plan_source?: string | null
+  mode?: string | null
+  degraded_mode?: boolean
+  fallback_reason?: string | null
+  ready_for_goc_planner?: boolean
+  future_capabilities?: string[]
+}
+
 export type RunStudioNow = {
   task?: {
     current_task?: string | null
@@ -105,6 +128,15 @@ export type RunStudioNow = {
     current_run_selection_source?: string | null
     current_run_step_count?: number
     stale_queued_step_count?: number
+    runtime_authority?: RuntimeAuthorityProjection
+    mode?: 'standalone' | 'goc'
+    plan_source?: 'local' | 'goc' | 'local_fallback'
+    context_source?: 'local' | 'goc'
+    agent_catalog_source?: 'local' | 'goc'
+    conversation_team_source?: 'local' | 'goc'
+    skill_catalog_source?: 'local' | 'goc' | 'mixed'
+    degraded_mode?: boolean
+    fallback_reason?: string | null
   }
   current_run?: {
     id?: string | null
@@ -115,6 +147,15 @@ export type RunStudioNow = {
     selection_source?: string | null
     step_count?: number
     stale_queued_step_count?: number
+    runtime_authority?: RuntimeAuthorityProjection
+    mode?: 'standalone' | 'goc'
+    plan_source?: 'local' | 'goc' | 'local_fallback'
+    context_source?: 'local' | 'goc'
+    agent_catalog_source?: 'local' | 'goc'
+    conversation_team_source?: 'local' | 'goc'
+    skill_catalog_source?: 'local' | 'goc' | 'mixed'
+    degraded_mode?: boolean
+    fallback_reason?: string | null
   }
   pending_approval_items?: Array<{
     id: string
@@ -265,7 +306,27 @@ export type RunStudioSummary = {
     }
     counts?: Record<string, number>
     updated_at?: string | null
+    planning_boundary?: PlanningBoundaryProjection
+    runtime_authority?: RuntimeAuthorityProjection
+    mode?: 'standalone' | 'goc'
+    plan_source?: 'local' | 'goc' | 'local_fallback'
+    context_source?: 'local' | 'goc'
+    agent_catalog_source?: 'local' | 'goc'
+    conversation_team_source?: 'local' | 'goc'
+    skill_catalog_source?: 'local' | 'goc' | 'mixed'
+    degraded_mode?: boolean
+    fallback_reason?: string | null
   }
+  planning_boundary?: PlanningBoundaryProjection
+  runtime_authority?: RuntimeAuthorityProjection
+  mode?: 'standalone' | 'goc'
+  plan_source?: 'local' | 'goc' | 'local_fallback'
+  context_source?: 'local' | 'goc'
+  agent_catalog_source?: 'local' | 'goc'
+  conversation_team_source?: 'local' | 'goc'
+  skill_catalog_source?: 'local' | 'goc' | 'mixed'
+  degraded_mode?: boolean
+  fallback_reason?: string | null
   graph_counts?: Record<string, number>
   updated_at?: string | null
 }
@@ -305,6 +366,15 @@ export type RunStudioAgentTeam = {
   skill_packages?: SkillPackage[]
   active_count?: number
   updated_at?: string | null
+  runtime_authority?: RuntimeAuthorityProjection
+  mode?: 'standalone' | 'goc'
+  plan_source?: 'local' | 'goc' | 'local_fallback'
+  context_source?: 'local' | 'goc'
+  agent_catalog_source?: 'local' | 'goc'
+  conversation_team_source?: 'local' | 'goc'
+  skill_catalog_source?: 'local' | 'goc' | 'mixed'
+  degraded_mode?: boolean
+  fallback_reason?: string | null
 }
 
 export type RunStudioContextDecisions = {
@@ -388,6 +458,16 @@ export type RunStudioContextPacks = {
   count?: number
   items?: ContextPackSummary[]
   updated_at?: string | null
+  planning_boundary?: PlanningBoundaryProjection
+  runtime_authority?: RuntimeAuthorityProjection
+  mode?: 'standalone' | 'goc'
+  plan_source?: 'local' | 'goc' | 'local_fallback'
+  context_source?: 'local' | 'goc'
+  agent_catalog_source?: 'local' | 'goc'
+  conversation_team_source?: 'local' | 'goc'
+  skill_catalog_source?: 'local' | 'goc' | 'mixed'
+  degraded_mode?: boolean
+  fallback_reason?: string | null
 }
 
 export type RunStudioSkillUsage = {
@@ -395,4 +475,14 @@ export type RunStudioSkillUsage = {
   count?: number
   items?: SkillUsageEventSummary[]
   updated_at?: string | null
+  planning_boundary?: PlanningBoundaryProjection
+  runtime_authority?: RuntimeAuthorityProjection
+  mode?: 'standalone' | 'goc'
+  plan_source?: 'local' | 'goc' | 'local_fallback'
+  context_source?: 'local' | 'goc'
+  agent_catalog_source?: 'local' | 'goc'
+  conversation_team_source?: 'local' | 'goc'
+  skill_catalog_source?: 'local' | 'goc' | 'mixed'
+  degraded_mode?: boolean
+  fallback_reason?: string | null
 }

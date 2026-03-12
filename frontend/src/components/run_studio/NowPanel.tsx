@@ -19,6 +19,7 @@ export default function NowPanel({ summary, team }: Props) {
   const now = summary?.now
   const task = now?.task
   const state = now?.state
+  const authority = state?.runtime_authority || summary?.runtime_authority || summary?.current_run_skills?.runtime_authority
   const status = String(state?.current_run_status || state?.run_status || 'idle')
   const blocked = Boolean(state?.current_blocked ?? state?.blocked)
   const blockedReason = String(state?.current_blocked_reason || state?.blocked_reason || '').trim()
@@ -30,6 +31,17 @@ export default function NowPanel({ summary, team }: Props) {
   const staleQueuedStepCount = Number(state?.stale_queued_step_count || 0)
   const currentRunId = String(state?.current_run_id || '').trim()
   const currentRunInactive = Boolean(state?.current_run_inactive)
+  const mode = String(authority?.mode || state?.mode || summary?.mode || 'standalone')
+  const degradedMode = Boolean(authority?.degraded_mode ?? state?.degraded_mode ?? summary?.degraded_mode)
+  const fallbackReason = String(authority?.fallback_reason || state?.fallback_reason || summary?.fallback_reason || '').trim()
+  const planSource = String(authority?.plan_source || state?.plan_source || summary?.plan_source || 'local')
+  const contextSource = String(authority?.context_source || state?.context_source || summary?.context_source || 'local')
+  const teamSource = String(
+    authority?.conversation_team_source || state?.conversation_team_source || summary?.conversation_team_source || 'local',
+  )
+  const skillSource = String(
+    authority?.skill_catalog_source || state?.skill_catalog_source || summary?.skill_catalog_source || 'local',
+  )
   const teamItems = team?.items || []
   const runtimeTeamCount = teamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
 
@@ -52,6 +64,9 @@ export default function NowPanel({ summary, team }: Props) {
     executionHint = 'Execution completed'
   } else if (stepCount > 0) {
     executionHint = 'Execution steps detected'
+  }
+  if (degradedMode) {
+    executionHint = `Degraded fallback active${fallbackReason ? `: ${fallbackReason}` : ''}`
   }
 
   return (
@@ -96,6 +111,12 @@ export default function NowPanel({ summary, team }: Props) {
       )}
 
       <div className="runStudioMetaRow">
+        <span className="pill">mode: {mode}</span>
+        <span className="pill">plan: {planSource}</span>
+        <span className="pill">context: {contextSource}</span>
+        <span className="pill">team: {teamSource}</span>
+        <span className="pill">skills: {skillSource}</span>
+        {degradedMode && <span className="pill">degraded fallback</span>}
         <span className="pill">active context: {state?.active_context_count ?? 0}</span>
         {currentRunId && <span className="pill">current run: {currentRunId.slice(0, 8)}</span>}
         {staleQueuedStepCount > 0 && <span className="pill">older queued hidden: {staleQueuedStepCount}</span>}
@@ -106,6 +127,11 @@ export default function NowPanel({ summary, team }: Props) {
           <span key={`all-${key}`} className="pill">all {key}: {count}</span>
         ))}
       </div>
+      {degradedMode && fallbackReason && (
+        <div className="runStudioWarning">
+          <b>Fallback reason:</b> {fallbackReason}
+        </div>
+      )}
     </section>
   )
 }

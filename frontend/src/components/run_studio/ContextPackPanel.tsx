@@ -19,6 +19,15 @@ export default function ContextPackPanel({
 }: Props) {
   const effectiveContextPacks = selectEffectiveContextPacks(summary, contextPacks)
   const items = effectiveContextPacks?.items || []
+  const authority = effectiveContextPacks?.runtime_authority || summary?.runtime_authority
+  const mode = String(authority?.mode || effectiveContextPacks?.mode || summary?.mode || 'standalone')
+  const contextSource = String(
+    authority?.context_source || effectiveContextPacks?.context_source || summary?.context_source || 'local',
+  )
+  const degradedMode = Boolean(authority?.degraded_mode ?? effectiveContextPacks?.degraded_mode ?? summary?.degraded_mode)
+  const fallbackReason = String(
+    authority?.fallback_reason || effectiveContextPacks?.fallback_reason || summary?.fallback_reason || '',
+  ).trim()
 
   const sharedCount = items.reduce((acc, item) => acc + Number(item.shared_items_count || 0), 0)
   const roleSpecificCount = items.reduce((acc, item) => acc + Number(item.role_specific_items_count || 0), 0)
@@ -32,6 +41,9 @@ export default function ContextPackPanel({
       <div className="runStudioPanelHeader">
         <h3>Context Packs</h3>
         <div className="row" style={{ marginBottom: 0 }}>
+          <span className="pill">mode: {mode}</span>
+          <span className="pill">context: {contextSource}</span>
+          {degradedMode && <span className="pill">degraded fallback</span>}
           <span className="pill">packs: {items.length}</span>
           <span className="pill">shared: {sharedCount}</span>
           <span className="pill">role-specific: {roleSpecificCount}</span>
@@ -43,6 +55,11 @@ export default function ContextPackPanel({
           )}
         </div>
       </div>
+      {degradedMode && fallbackReason && (
+        <div className="runStudioWarning">
+          <b>Fallback reason:</b> {fallbackReason}
+        </div>
+      )}
 
       <div className="runStudioList">
         {items.slice(0, 12).map((item, index) => (

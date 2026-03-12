@@ -4,87 +4,27 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from app.services.context_packs import extract_context_pack_summaries
-from app.services.runtime_snapshot import (
-    created_sort_key as _runtime_created_sort_key,
-    node_payload as _runtime_node_payload,
+from app.services.planning_boundary import build_planning_boundary_projection
+from app.services.runtime_authority import apply_runtime_authority, derive_runtime_authority
+from app.services.runtime_scope import (
+    build_step_run_id_index as _build_step_run_id_index,
+    filter_nodes_for_run as _filter_nodes_for_run,
+    infer_current_run_id as _infer_current_run_id,
+    resolve_run_scoped_nodes,
 )
 from app.services.skill_projections import extract_runtime_agents_with_skills, extract_skill_usage_events
 from app.services.skill_registry import build_skill_registry
 
 
-RUN_STEP_LINK_EDGE_TYPES = {"BELONGS_TO_RUN", "IN_RUN"}
 EVIDENCE_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary", "Artifact", "Resource", "Message"}
 
 
-def _node_payload(node: Any) -> dict[str, Any]:
-    return _runtime_node_payload(node)
-
-
-def _created_sort_key(node: Any) -> tuple[str, str]:
-    return _runtime_created_sort_key(node)
-
-
 def build_step_run_id_index(nodes: Iterable[Any], edges: Iterable[Any]) -> dict[str, str | None]:
-    nodes_list = list(nodes)
-    nodes_by_id = {str(getattr(node, "id", "")): node for node in nodes_list}
-    out: dict[str, str | None] = {}
-
-    for node in nodes_list:
-        if str(getattr(node, "type", "")) != "Step":
-            continue
-        payload = _node_payload(node)
-        run_id = str(payload.get("run_id") or "").strip() or None
-        out[str(getattr(node, "id", ""))] = run_id
-
-    def _is_known_run_id(run_id: str | None) -> bool:
-        if not run_id:
-            return False
-        run_node = nodes_by_id.get(run_id)
-        return bool(run_node and str(getattr(run_node, "type", "")) == "Run")
-
-    for edge in edges:
-        etype = str(getattr(edge, "type", "") or "")
-        if etype not in RUN_STEP_LINK_EDGE_TYPES:
-            continue
-
-        src_id = str(getattr(edge, "from_id", "") or "")
-        dst_id = str(getattr(edge, "to_id", "") or "")
-        src = nodes_by_id.get(src_id)
-        dst = nodes_by_id.get(dst_id)
-        if not src or not dst:
-            continue
-
-        src_type = str(getattr(src, "type", "") or "")
-        dst_type = str(getattr(dst, "type", "") or "")
-
-        if src_type == "Run" and dst_type == "Step":
-            existing = out.get(dst_id)
-            if not _is_known_run_id(existing):
-                out[dst_id] = src_id
-        elif src_type == "Step" and dst_type == "Run":
-            existing = out.get(src_id)
-            if not _is_known_run_id(existing):
-                out[src_id] = dst_id
-
-    return out
+    return _build_step_run_id_index(nodes, edges)
 
 
 def infer_current_run_id(nodes: Iterable[Any], edges: Iterable[Any]) -> str | None:
-    nodes_list = list(nodes)
-    run_nodes = sorted([node for node in nodes_list if str(getattr(node, "type", "")) == "Run"], key=_created_sort_key)
-    step_nodes = sorted([node for node in nodes_list if str(getattr(node, "type", "")) == "Step"], key=_created_sort_key)
-    step_run_id_by_step_id = build_step_run_id_index(nodes_list, edges)
-
-    for step in reversed(step_nodes):
-        step_id = str(getattr(step, "id", "") or "")
-        run_id = step_run_id_by_step_id.get(step_id)
-        if run_id:
-            return run_id
-
-    if run_nodes:
-        return str(getattr(run_nodes[-1], "id", "") or "")
-
-    return None
+    return _infer_current_run_id(nodes, edges)
 
 
 def filter_nodes_for_run(
@@ -93,39 +33,7 @@ def filter_nodes_for_run(
     *,
     run_id: str | None,
 ) -> list[Any]:
-    clean_run_id = str(run_id or "").strip()
-    nodes_list = list(nodes)
-    if not clean_run_id:
-        return nodes_list
-
-    step_run_id_by_step_id = build_step_run_id_index(nodes_list, edges)
-
-    out: list[Any] = []
-    for node in nodes_list:
-        node_type = str(getattr(node, "type", "") or "")
-        node_id = str(getattr(node, "id", "") or "")
-        payload = _node_payload(node)
-
-        if node_type == "Run":
-            if node_id == clean_run_id:
-                out.append(node)
-            continue
-
-        if node_type == "Step":
-            step_run_id = step_run_id_by_step_id.get(node_id)
-            if step_run_id == clean_run_id:
-                out.append(node)
-                continue
-            payload_run_id = str(payload.get("run_id") or "").strip()
-            if payload_run_id == clean_run_id:
-                out.append(node)
-            continue
-
-        payload_run_id = str(payload.get("run_id") or "").strip()
-        if payload_run_id == clean_run_id:
-            out.append(node)
-
-    return out
+    return _filter_nodes_for_run(nodes, edges, run_id=run_id)
 
 
 def _aggregate_attached_skills(runtime_agents: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -264,9 +172,9 @@ def build_run_skill_summary(
 ) -> dict[str, Any]:
     nodes_list = list(nodes)
     edges_list = list(edges)
-
-    target_run_id = str(run_id or "").strip() or infer_current_run_id(nodes_list, edges_list)
-    scoped_nodes = filter_nodes_for_run(nodes_list, edges_list, run_id=target_run_id) if target_run_id else nodes_list
+    scoped = resolve_run_scoped_nodes(nodes=nodes_list, edges=edges_list, run_id=run_id)
+    target_run_id = scoped.get("run_id")
+    scoped_nodes = list(scoped.get("nodes") or [])
 
     registry = build_skill_registry(nodes=nodes_list, include_defaults=True)
 
@@ -304,8 +212,17 @@ def build_run_skill_summary(
         nodes=scoped_nodes,
         edges=edges_list,
     )
+    authority = derive_runtime_authority(
+        nodes=scoped_nodes,
+        skill_packages=skill_packages,
+        runtime_agents=runtime_agents,
+        usage_events=usage_events,
+        context_packs=context_packs,
+        context_source_default="goc",
+        plan_source_default="local",
+    )
 
-    return {
+    out = {
         "run_id": target_run_id,
         "runtime_agents": runtime_agents,
         "attached_skills": attached_skill_summaries,
@@ -322,6 +239,12 @@ def build_run_skill_summary(
         },
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    out = apply_runtime_authority(out, authority)
+    out["planning_boundary"] = build_planning_boundary_projection(
+        run_id=target_run_id,
+        runtime_authority=authority,
+    )
+    return out
 
 
 def build_thread_context_pack_summary(
@@ -332,16 +255,29 @@ def build_thread_context_pack_summary(
 ) -> dict[str, Any]:
     nodes_list = list(nodes)
     edges_list = list(edges)
-    target_run_id = str(run_id or "").strip() or infer_current_run_id(nodes_list, edges_list)
-    scoped_nodes = filter_nodes_for_run(nodes_list, edges_list, run_id=target_run_id) if target_run_id else nodes_list
+    scoped = resolve_run_scoped_nodes(nodes=nodes_list, edges=edges_list, run_id=run_id)
+    target_run_id = scoped.get("run_id")
+    scoped_nodes = list(scoped.get("nodes") or [])
 
     context_packs = extract_context_pack_summaries(scoped_nodes)
-    return {
+    authority = derive_runtime_authority(
+        nodes=scoped_nodes,
+        context_packs=context_packs,
+        context_source_default="goc",
+        plan_source_default="local",
+    )
+    out = {
         "run_id": target_run_id,
         "items": context_packs,
         "count": len(context_packs),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    out = apply_runtime_authority(out, authority)
+    out["planning_boundary"] = build_planning_boundary_projection(
+        run_id=target_run_id,
+        runtime_authority=authority,
+    )
+    return out
 
 
 def build_thread_skill_usage_summary(
@@ -352,20 +288,30 @@ def build_thread_skill_usage_summary(
 ) -> dict[str, Any]:
     nodes_list = list(nodes)
     edges_list = list(edges)
-    target_run_id = str(run_id or "").strip()
-
-    scoped_nodes = nodes_list
-    if target_run_id:
-        scoped_nodes = filter_nodes_for_run(nodes_list, edges_list, run_id=target_run_id)
+    scoped = resolve_run_scoped_nodes(nodes=nodes_list, edges=edges_list, run_id=run_id)
+    target_run_id = scoped.get("run_id")
+    scoped_nodes = list(scoped.get("nodes") or [])
 
     registry = build_skill_registry(nodes=nodes_list, include_defaults=True)
     events = extract_skill_usage_events(scoped_nodes, skill_lookup=registry)
-    return {
+    authority = derive_runtime_authority(
+        nodes=scoped_nodes,
+        usage_events=events,
+        context_source_default="goc",
+        plan_source_default="local",
+    )
+    out = {
         "run_id": target_run_id or None,
         "items": events,
         "count": len(events),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    out = apply_runtime_authority(out, authority)
+    out["planning_boundary"] = build_planning_boundary_projection(
+        run_id=target_run_id or None,
+        runtime_authority=authority,
+    )
+    return out
 
 
 def build_skill_lineage_projection(

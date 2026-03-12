@@ -6,41 +6,30 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.models import Agent, ContextSet, Conversation, ConversationAgent, Edge, Node, Thread
+from app.models import ContextSet, Edge, Node, Thread
+from app.services.conversation_team import build_conversation_team_projection
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
 from app.services.graph_projections import build_logical_projections
+from app.services.planning_boundary import build_planning_boundary_projection
+from app.services.runtime_authority import apply_runtime_authority, derive_runtime_authority
 from app.services.runtime_snapshot import (
-    clean_list_of_text as _clean_list_of_text,
     created_sort_key as _created_sort_key,
     extract_runtime_team_snapshot as _extract_runtime_team_snapshot,
-    has_non_empty_value as _has_non_empty_value,
     node_payload as _node_payload,
-    normalize_runtime_source_key as _normalize_runtime_source_key,
     normalize_status as _normalize_status,
 )
+from app.services.runtime_scope import resolve_current_runtime_scope, resolve_run_scoped_nodes
 from app.services.run_skill_summary import (
     build_run_skill_summary,
     build_thread_context_pack_summary,
     build_thread_skill_usage_summary,
 )
-from app.services.skill_projections import extract_attached_skills
-from app.services.skill_registry import build_skill_registry
 
 
 CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary"}
 EVIDENCE_EDGE_TYPES = {"SUPPORTS", "REFERENCES", "DEPENDS"}
 CONFLICT_EDGE_TYPES = {"CONFLICTS", "CONTRADICTS"}
-RUN_STEP_LINK_EDGE_TYPES = {"BELONGS_TO_RUN", "IN_RUN"}
-INACTIVE_RUN_STATUS_VALUES = {
-    "superseded",
-    "abandoned",
-    "replaced",
-    "cancelled",
-    "canceled",
-    "inactive",
-    "skipped",
-}
 
 
 def _jload(raw: str | None, default: Any) -> Any:
@@ -54,78 +43,6 @@ def _short_text(value: str, max_len: int = 220) -> str:
     if len(compact) <= max_len:
         return compact
     return f"{compact[:max_len]}..."
-
-
-def _step_activity_index(nodes: list[Node]) -> dict[str, dict[str, int]]:
-    out: dict[str, dict[str, int]] = {}
-    for step in sorted([node for node in nodes if node.type == "Step"], key=_created_sort_key):
-        payload = _node_payload(step)
-        status = _normalize_status(payload.get("status"))
-        keys = {
-            str(payload.get("agent_id") or "").strip(),
-            str(payload.get("agent") or "").strip(),
-            str(payload.get("assignee") or "").strip(),
-            str(payload.get("runtime_instance_id") or "").strip(),
-            str(payload.get("instance_id") or "").strip(),
-            str(payload.get("executor_id") or "").strip(),
-            str(payload.get("template_id") or "").strip(),
-        }
-        keys = {k for k in keys if k}
-        for key in keys:
-            row = out.setdefault(key, {})
-            row[status] = row.get(status, 0) + 1
-    return out
-
-
-def _step_activity_source_index(nodes: list[Node]) -> dict[str, dict[str, int]]:
-    out: dict[str, dict[str, int]] = {}
-    field_names = (
-        "agent_id",
-        "agent",
-        "assignee",
-        "runtime_instance_id",
-        "instance_id",
-        "executor_id",
-        "template_id",
-    )
-    for step in sorted([node for node in nodes if node.type == "Step"], key=_created_sort_key):
-        payload = _node_payload(step)
-        for field_name in field_names:
-            key = str(payload.get(field_name) or "").strip()
-            if not key:
-                continue
-            row = out.setdefault(key, {})
-            row[field_name] = row.get(field_name, 0) + 1
-    return out
-
-
-def _preferred_step_source_key(field_counts: dict[str, int] | None) -> str:
-    if not field_counts:
-        return "step_payload.agent_id"
-    for field_name in (
-        "agent_id",
-        "agent",
-        "assignee",
-        "runtime_instance_id",
-        "instance_id",
-        "executor_id",
-        "template_id",
-    ):
-        if int(field_counts.get(field_name, 0)) > 0:
-            return f"step_payload.{field_name}"
-    return "step_payload.agent_id"
-
-
-def _runtime_status_from_counts(status_counts: dict[str, int]) -> str:
-    if status_counts.get("running", 0) > 0:
-        return "running"
-    if status_counts.get("error", 0) > 0:
-        return "error"
-    if status_counts.get("queued", 0) > 0:
-        return "queued"
-    if sum(status_counts.values()) > 0:
-        return "done"
-    return "idle"
 
 
 def _resolve_context_set(
@@ -167,234 +84,8 @@ def _latest_user_message(nodes: list[Node]) -> Node | None:
     return messages[-1] if messages else None
 
 
-def _normalize_run_status(raw: Any) -> str:
-    clean = _normalize_status(raw)
-    if clean in {"error", "blocked"}:
-        return "blocked"
-    if clean in {"running", "queued", "done"}:
-        return clean
-    return "idle"
-
-
-def _run_status_from_step_counts(step_status_counts: dict[str, int]) -> str:
-    if step_status_counts.get("running", 0) > 0:
-        return "running"
-    if step_status_counts.get("error", 0) > 0 or step_status_counts.get("blocked", 0) > 0:
-        return "blocked"
-    if step_status_counts.get("queued", 0) > 0:
-        return "queued"
-    if sum(step_status_counts.values()) > 0:
-        return "done"
-    return "idle"
-
-
-def _run_status_priority(status: str) -> int:
-    if status == "running":
-        return 50
-    if status == "queued":
-        return 40
-    if status == "blocked":
-        return 30
-    if status == "done":
-        return 20
-    if status == "idle":
-        return 10
-    return 0
-
-
-def _run_is_inactive(payload: dict[str, Any]) -> bool:
-    status_raw = str(
-        payload.get("status")
-        or payload.get("run_status")
-        or payload.get("state")
-        or ""
-    ).strip().lower()
-    if status_raw in INACTIVE_RUN_STATUS_VALUES:
-        return True
-
-    for key in (
-        "superseded",
-        "abandoned",
-        "cancelled",
-        "canceled",
-        "inactive",
-        "is_superseded",
-        "is_abandoned",
-        "is_cancelled",
-        "is_inactive",
-    ):
-        if payload.get(key) is True:
-            return True
-
-    if _has_non_empty_value(payload.get("superseded_by_run_id")):
-        return True
-    if _has_non_empty_value(payload.get("replaced_by_run_id")):
-        return True
-    return False
-
-
-def _step_run_id_index(nodes: list[Node], edges: list[Edge]) -> dict[str, str | None]:
-    nodes_by_id = {node.id: node for node in nodes}
-    step_run_id_by_step_id: dict[str, str | None] = {}
-
-    for node in nodes:
-        if node.type != "Step":
-            continue
-        payload = _node_payload(node)
-        run_id = str(payload.get("run_id") or "").strip() or None
-        step_run_id_by_step_id[node.id] = run_id
-
-    def _is_known_run_id(run_id: str | None) -> bool:
-        if not run_id:
-            return False
-        run_node = nodes_by_id.get(run_id)
-        return bool(run_node and run_node.type == "Run")
-
-    for edge in edges:
-        if edge.type not in RUN_STEP_LINK_EDGE_TYPES:
-            continue
-        src = nodes_by_id.get(edge.from_id)
-        dst = nodes_by_id.get(edge.to_id)
-        if not src or not dst:
-            continue
-
-        if src.type == "Run" and dst.type == "Step":
-            existing = step_run_id_by_step_id.get(dst.id)
-            if not _is_known_run_id(existing):
-                step_run_id_by_step_id[dst.id] = src.id
-        elif src.type == "Step" and dst.type == "Run":
-            existing = step_run_id_by_step_id.get(src.id)
-            if not _is_known_run_id(existing):
-                step_run_id_by_step_id[src.id] = dst.id
-
-    return step_run_id_by_step_id
-
-
 def _current_run_scope(nodes: list[Node], edges: list[Edge]) -> dict[str, Any]:
-    nodes_by_id = {node.id: node for node in nodes}
-    run_nodes = [node for node in nodes if node.type == "Run"]
-    run_nodes.sort(key=_created_sort_key)
-    step_nodes = [node for node in nodes if node.type == "Step"]
-    step_nodes.sort(key=_created_sort_key)
-    step_run_id_by_step_id = _step_run_id_index(nodes, edges)
-
-    global_step_status_counts: dict[str, int] = {}
-    for step in step_nodes:
-        status = _normalize_status(_node_payload(step).get("status"))
-        global_step_status_counts[status] = global_step_status_counts.get(status, 0) + 1
-
-    candidate_keys = {run.id for run in run_nodes}
-    has_unscoped_steps = False
-    for step in step_nodes:
-        run_id = step_run_id_by_step_id.get(step.id)
-        if run_id:
-            candidate_keys.add(run_id)
-        else:
-            has_unscoped_steps = True
-    if has_unscoped_steps:
-        candidate_keys.add("__unscoped__")
-
-    candidates: list[dict[str, Any]] = []
-    for candidate_key in sorted(candidate_keys):
-        run_node: Node | None = None
-        if candidate_key != "__unscoped__":
-            candidate_run_node = nodes_by_id.get(candidate_key)
-            if candidate_run_node and candidate_run_node.type == "Run":
-                run_node = candidate_run_node
-
-        steps_for_candidate = [
-            step
-            for step in step_nodes
-            if (step_run_id_by_step_id.get(step.id) or "__unscoped__") == candidate_key
-        ]
-
-        step_status_counts: dict[str, int] = {}
-        for step in steps_for_candidate:
-            status = _normalize_status(_node_payload(step).get("status"))
-            step_status_counts[status] = step_status_counts.get(status, 0) + 1
-
-        run_payload = _node_payload(run_node)
-        run_status = _run_status_from_step_counts(step_status_counts)
-        if run_status == "idle":
-            run_status = _normalize_run_status(
-                run_payload.get("status")
-                or run_payload.get("run_status")
-                or run_payload.get("state")
-            )
-
-        activity_keys: list[str] = []
-        if run_node:
-            activity_keys.append(_created_sort_key(run_node)[0])
-        activity_keys.extend(_created_sort_key(step)[0] for step in steps_for_candidate)
-        latest_activity_key = max(activity_keys) if activity_keys else ""
-
-        candidates.append(
-            {
-                "candidate_key": candidate_key,
-                "run_id": None if candidate_key == "__unscoped__" else candidate_key,
-                "run_node": run_node,
-                "steps": steps_for_candidate,
-                "step_status_counts": step_status_counts,
-                "status": run_status,
-                "inactive": _run_is_inactive(run_payload),
-                "latest_activity_key": latest_activity_key,
-                "run_created_key": _created_sort_key(run_node)[0] if run_node else "",
-                "selection_source": (
-                    "run_node"
-                    if run_node
-                    else ("unscoped_steps" if candidate_key == "__unscoped__" else "step_run_id")
-                ),
-            }
-        )
-
-    if not candidates:
-        return {
-            "current_candidate_key": "",
-            "current_run_id": None,
-            "current_run_node": None,
-            "current_run_status": "idle",
-            "current_run_inactive": False,
-            "current_run_steps": [],
-            "current_run_step_status_counts": {},
-            "current_run_selection_source": None,
-            "stale_queued_step_count": 0,
-            "step_run_id_by_step_id": step_run_id_by_step_id,
-            "global_step_status_counts": global_step_status_counts,
-        }
-
-    candidates.sort(
-        key=lambda item: (
-            str(item.get("latest_activity_key") or ""),
-            1 if not item.get("inactive") else 0,
-            _run_status_priority(str(item.get("status") or "idle")),
-            str(item.get("run_created_key") or ""),
-            str(item.get("run_id") or ""),
-        )
-    )
-    current = candidates[-1]
-    current_candidate_key = str(current.get("candidate_key") or "")
-    stale_queued_step_count = 0
-    for step in step_nodes:
-        status = _normalize_status(_node_payload(step).get("status"))
-        if status != "queued":
-            continue
-        step_candidate_key = step_run_id_by_step_id.get(step.id) or "__unscoped__"
-        if step_candidate_key != current_candidate_key:
-            stale_queued_step_count += 1
-
-    return {
-        "current_candidate_key": current_candidate_key,
-        "current_run_id": current.get("run_id"),
-        "current_run_node": current.get("run_node"),
-        "current_run_status": str(current.get("status") or "idle"),
-        "current_run_inactive": bool(current.get("inactive")),
-        "current_run_steps": current.get("steps") or [],
-        "current_run_step_status_counts": current.get("step_status_counts") or {},
-        "current_run_selection_source": current.get("selection_source"),
-        "stale_queued_step_count": stale_queued_step_count,
-        "step_run_id_by_step_id": step_run_id_by_step_id,
-        "global_step_status_counts": global_step_status_counts,
-    }
+    return resolve_current_runtime_scope(nodes, edges)
 
 
 def _current_step(steps: list[Node]) -> tuple[Node | None, str]:
@@ -595,226 +286,7 @@ def _agent_team_summary(
     thread_id: str,
     nodes: list[Node],
 ) -> dict[str, Any]:
-    conversation = session.exec(
-        select(Conversation)
-        .where(Conversation.thread_id == thread_id)
-        .limit(1)
-    ).first()
-    step_activity_by_agent = _step_activity_index(nodes)
-    step_activity_sources_by_agent = _step_activity_source_index(nodes)
-    skill_registry = build_skill_registry(nodes=nodes, include_defaults=True)
-
-    def _skill_packages_for_items(team_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        skill_ids: set[str] = set()
-        for team_item in team_items:
-            for attached in list(team_item.get("attached_skills") or []):
-                skill_id = str(attached.get("skill_id") or "").strip()
-                if skill_id:
-                    skill_ids.add(skill_id)
-        return sorted(
-            [skill_registry[skill_id] for skill_id in skill_ids if skill_id in skill_registry],
-            key=lambda item: (str(item.get("name") or "").lower(), str(item.get("id") or "")),
-        )
-
-    runtime_snapshot = _extract_runtime_team_snapshot(nodes)
-    if runtime_snapshot:
-        runtime_source_path = str(runtime_snapshot.get("source_key") or "")
-        runtime_source_key = _normalize_runtime_source_key(runtime_source_path)
-        runtime_items: list[dict[str, Any]] = []
-        for raw_member in runtime_snapshot.get("members", []):
-            if not isinstance(raw_member, dict):
-                continue
-            llm_block = raw_member.get("llm")
-            llm_info = llm_block if isinstance(llm_block, dict) else {}
-            runtime_instance_id = str(raw_member.get("runtime_instance_id") or raw_member.get("instance_id") or "").strip() or None
-            agent_id = str(raw_member.get("agent_id") or raw_member.get("id") or raw_member.get("agent") or "").strip() or None
-            template_id = str(
-                raw_member.get("template_id")
-                or raw_member.get("agent_template_id")
-                or raw_member.get("template")
-                or ""
-            ).strip() or None
-            lookup_keys = [key for key in [runtime_instance_id, agent_id, template_id] if key]
-            status_counts: dict[str, int] = {}
-            for key in lookup_keys:
-                source_counts = step_activity_by_agent.get(key, {})
-                for status_key, count in source_counts.items():
-                    status_counts[status_key] = status_counts.get(status_key, 0) + int(count)
-
-            attached_skills = extract_attached_skills(raw_member, skill_lookup=skill_registry)
-            context_pack_id = str(raw_member.get("context_pack_id") or raw_member.get("contextPackId") or "").strip() or None
-            if not context_pack_id:
-                member_pack = raw_member.get("context_pack") or raw_member.get("contextPack")
-                if isinstance(member_pack, dict):
-                    context_pack_id = str(
-                        member_pack.get("context_pack_id")
-                        or member_pack.get("contextPackId")
-                        or member_pack.get("id")
-                        or ""
-                    ).strip() or None
-
-            runtime_items.append(
-                {
-                    "agent_id": agent_id or runtime_instance_id or template_id or "unknown-runtime-agent",
-                    "runtime_instance_id": runtime_instance_id,
-                    "name": str(raw_member.get("name") or raw_member.get("display_name") or raw_member.get("label") or agent_id or runtime_instance_id or "").strip() or None,
-                    "role_label": str(raw_member.get("role_label") or raw_member.get("role") or raw_member.get("title") or "").strip() or None,
-                    "template_id": template_id,
-                    "provider": str(raw_member.get("provider") or raw_member.get("llm_provider") or llm_info.get("provider") or "").strip() or None,
-                    "model": str(raw_member.get("model") or raw_member.get("model_name") or llm_info.get("model") or "").strip() or None,
-                    "runtime_status": _normalize_status(raw_member.get("runtime_status") or raw_member.get("status") or raw_member.get("state")) if (
-                        raw_member.get("runtime_status") is not None
-                        or raw_member.get("status") is not None
-                        or raw_member.get("state") is not None
-                    ) else _runtime_status_from_counts(status_counts),
-                    "status_counts": status_counts,
-                    "source": "runtime_snapshot",
-                    "source_key": runtime_source_key,
-                    "source_path": runtime_source_path or None,
-                    "snapshot_node_id": runtime_snapshot.get("node_id"),
-                    "snapshot_node_type": runtime_snapshot.get("node_type"),
-                    "enabled": bool(raw_member.get("enabled", True)),
-                    "responsibilities": _clean_list_of_text(raw_member.get("responsibilities") or raw_member.get("responsibility")),
-                    "capability_tags": _clean_list_of_text(raw_member.get("capability_tags") or raw_member.get("capabilities")),
-                    "ephemeral": bool(raw_member.get("ephemeral") or raw_member.get("transient") or False),
-                    "attached_skills": attached_skills,
-                    "context_pack_id": context_pack_id,
-                }
-            )
-
-        return {
-            "conversation_id": conversation.id if conversation else None,
-            "snapshot_node_id": runtime_snapshot.get("node_id"),
-            "snapshot_node_type": runtime_snapshot.get("node_type"),
-            "snapshot_source_key": runtime_source_key,
-            "snapshot_source_path": runtime_source_path or None,
-            "items": runtime_items,
-            "skill_packages": _skill_packages_for_items(runtime_items),
-            "active_count": sum(1 for item in runtime_items if item["runtime_status"] in {"running", "queued"}),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-    if not conversation:
-        inferred_items = []
-        for agent_id in sorted(step_activity_by_agent.keys()):
-            status_counts = step_activity_by_agent.get(agent_id, {})
-            runtime_status = _runtime_status_from_counts(status_counts)
-            inferred_items.append(
-                {
-                    "agent_id": agent_id,
-                    "name": agent_id,
-                    "runtime_instance_id": None,
-                    "role_label": None,
-                    "template_id": None,
-                    "provider": None,
-                    "model": None,
-                    "enabled": True,
-                    "order_index": None,
-                    "runtime_status": runtime_status,
-                    "status_counts": status_counts,
-                    "responsibilities": [],
-                    "capability_tags": [],
-                    "ephemeral": False,
-                    "source": "inferred_from_steps",
-                    "source_key": _preferred_step_source_key(step_activity_sources_by_agent.get(agent_id)),
-                    "attached_skills": [],
-                    "context_pack_id": None,
-                }
-            )
-        return {
-            "conversation_id": None,
-            "snapshot_node_id": None,
-            "snapshot_node_type": None,
-            "snapshot_source_key": None,
-            "snapshot_source_path": None,
-            "items": inferred_items,
-            "skill_packages": [],
-            "active_count": sum(1 for item in inferred_items if item["runtime_status"] in {"running", "queued"}),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-    memberships = session.exec(
-        select(ConversationAgent)
-        .where(ConversationAgent.conversation_id == conversation.id)
-        .order_by(ConversationAgent.order_index.asc(), ConversationAgent.created_at.asc(), ConversationAgent.id.asc())
-    ).all()
-    agent_ids = [row.agent_id for row in memberships]
-    agents = session.exec(select(Agent).where(Agent.id.in_(agent_ids))).all() if agent_ids else []
-    agents_by_id = {agent.id: agent for agent in agents}
-
-    items: list[dict[str, Any]] = []
-    for membership in memberships:
-        agent = agents_by_id.get(membership.agent_id)
-        overrides = _jload(membership.overrides_json, {})
-        if not isinstance(overrides, dict):
-            overrides = {}
-
-        status_counts = step_activity_by_agent.get(membership.agent_id, {})
-        if not status_counts and agent:
-            status_counts = step_activity_by_agent.get(agent.name, {})
-        runtime_status = _runtime_status_from_counts(status_counts)
-
-        raw_responsibilities = overrides.get("responsibilities") or overrides.get("responsibility") or []
-        responsibilities: list[str] = []
-        if isinstance(raw_responsibilities, str):
-            clean = raw_responsibilities.strip()
-            if clean:
-                responsibilities = [clean]
-        elif isinstance(raw_responsibilities, list):
-            responsibilities = [str(item).strip() for item in raw_responsibilities if str(item).strip()]
-
-        role_label = str(
-            overrides.get("role_label")
-            or overrides.get("role")
-            or overrides.get("title")
-            or agent.name
-            or ""
-        ).strip() or None
-        capability_tags = _clean_list_of_text(overrides.get("capability_tags") or overrides.get("capabilities"))
-        if not capability_tags and agent:
-            capability_tags = _clean_list_of_text(_jload(getattr(agent, "tools_json", "[]"), []))
-
-        items.append(
-            {
-                "membership_id": membership.id,
-                "agent_id": membership.agent_id,
-                "name": agent.name if agent else membership.agent_id,
-                "runtime_instance_id": None,
-                "role_label": role_label,
-                "template_id": str(overrides.get("template_id") or overrides.get("agent_template_id") or "").strip() or None,
-                "provider": str(overrides.get("provider") or overrides.get("llm_provider") or "").strip() or None,
-                "enabled": bool(membership.enabled),
-                "order_index": int(membership.order_index),
-                "runtime_status": runtime_status,
-                "status_counts": status_counts,
-                "responsibilities": responsibilities,
-                "capability_tags": capability_tags,
-                "ephemeral": bool(overrides.get("ephemeral") or False),
-                "description": agent.description if agent else "",
-                "model": agent.model if agent else "",
-                "visibility": agent.visibility if agent else "",
-                "source": "conversation_membership",
-                "source_key": "conversation_agents",
-                "attached_skills": extract_attached_skills(overrides, skill_lookup=skill_registry),
-                "context_pack_id": str(
-                    overrides.get("context_pack_id")
-                    or overrides.get("contextPackId")
-                    or ""
-                ).strip() or None,
-            }
-        )
-
-    return {
-        "conversation_id": conversation.id,
-        "snapshot_node_id": None,
-        "snapshot_node_type": None,
-        "snapshot_source_key": None,
-        "snapshot_source_path": None,
-        "items": items,
-        "skill_packages": _skill_packages_for_items(items),
-        "active_count": sum(1 for item in items if item["runtime_status"] in {"running", "queued"}),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    return build_conversation_team_projection(session, thread_id=thread_id, nodes=nodes)
 
 
 def _context_decisions_summary(
@@ -1014,6 +486,30 @@ def _evidence_summary(
     }
 
 
+def _runtime_authority_projection(
+    *,
+    nodes: list[Node],
+    edges: list[Edge],
+    run_id: str | None,
+    agent_team: dict[str, Any] | None = None,
+    run_skill_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    scoped = resolve_run_scoped_nodes(nodes=nodes, edges=edges, run_id=run_id)
+    scoped_nodes = list(scoped.get("nodes") or [])
+    summary = run_skill_summary or {}
+    return derive_runtime_authority(
+        nodes=scoped_nodes,
+        agent_team=agent_team,
+        skill_packages=list(summary.get("skill_packages") or []),
+        runtime_agents=list(summary.get("runtime_agents") or []),
+        usage_events=list(summary.get("skill_usage") or []),
+        context_packs=list(summary.get("context_packs") or []),
+        context_source_default="goc",
+        plan_source_default="local",
+        mode_default="goc",
+    )
+
+
 def build_run_studio_summary(
     session: Session,
     *,
@@ -1033,6 +529,25 @@ def build_run_studio_summary(
         edges=edges,
         run_id=current_run_id,
     )
+    runtime_authority = _runtime_authority_projection(
+        nodes=nodes,
+        edges=edges,
+        run_id=current_run_id,
+        agent_team=agent_team,
+        run_skill_summary=run_skill_summary,
+    )
+    run_skill_summary = apply_runtime_authority(run_skill_summary, runtime_authority)
+
+    now_state = dict(now_panel.get("state") or {})
+    apply_runtime_authority(now_state, runtime_authority)
+    now_panel["state"] = now_state
+
+    current_run_panel = dict(now_panel.get("current_run") or {})
+    apply_runtime_authority(current_run_panel, runtime_authority)
+    now_panel["current_run"] = current_run_panel
+
+    agent_team = apply_runtime_authority(agent_team, runtime_authority)
+
     context_decisions = _context_decisions_summary(
         session,
         thread_id=thread.id,
@@ -1042,7 +557,27 @@ def build_run_studio_summary(
     )
     evidence = _evidence_summary(nodes=nodes, edges=edges, active_ids=active_ids)
 
-    return {
+    current_run_skills = apply_runtime_authority(
+        {
+            "run_id": run_skill_summary.get("run_id"),
+            "attached_skills": run_skill_summary.get("attached_skills", []),
+            "runtime_agents": run_skill_summary.get("runtime_agents", []),
+            "skill_packages": run_skill_summary.get("skill_packages", []),
+            "context_packs": run_skill_summary.get("context_packs", []),
+            "skill_usage": run_skill_summary.get("skill_usage", []),
+            "lineage": run_skill_summary.get("lineage", {}),
+            "counts": run_skill_summary.get("counts", {}),
+            "updated_at": run_skill_summary.get("updated_at"),
+            "planning_boundary": run_skill_summary.get("planning_boundary"),
+        },
+        runtime_authority,
+    )
+    planning_boundary = build_planning_boundary_projection(
+        run_id=current_run_id,
+        runtime_authority=runtime_authority,
+    )
+
+    out = {
         "thread": {
             "id": thread.id,
             "title": thread.title,
@@ -1059,23 +594,15 @@ def build_run_studio_summary(
         "context_decisions_counts": context_decisions.get("counts", {}),
         "evidence_counts": evidence.get("counts", {}),
         "skill_counts": run_skill_summary.get("counts", {}),
-        "current_run_skills": {
-            "run_id": run_skill_summary.get("run_id"),
-            "attached_skills": run_skill_summary.get("attached_skills", []),
-            "runtime_agents": run_skill_summary.get("runtime_agents", []),
-            "skill_packages": run_skill_summary.get("skill_packages", []),
-            "context_packs": run_skill_summary.get("context_packs", []),
-            "skill_usage": run_skill_summary.get("skill_usage", []),
-            "lineage": run_skill_summary.get("lineage", {}),
-            "counts": run_skill_summary.get("counts", {}),
-            "updated_at": run_skill_summary.get("updated_at"),
-        },
+        "current_run_skills": current_run_skills,
+        "planning_boundary": planning_boundary,
         "graph_counts": {
             "nodes": len(nodes),
             "edges": len(edges),
         },
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    return apply_runtime_authority(out, runtime_authority)
 
 
 def build_run_studio_agent_team(
@@ -1083,8 +610,15 @@ def build_run_studio_agent_team(
     *,
     thread: Thread,
 ) -> dict[str, Any]:
-    nodes, _ = load_thread_graph(session, thread.id)
-    return _agent_team_summary(session, thread_id=thread.id, nodes=nodes)
+    nodes, edges = load_thread_graph(session, thread.id)
+    team = _agent_team_summary(session, thread_id=thread.id, nodes=nodes)
+    authority = _runtime_authority_projection(
+        nodes=nodes,
+        edges=edges,
+        run_id=None,
+        agent_team=team,
+    )
+    return apply_runtime_authority(team, authority)
 
 
 def build_run_studio_context_decisions(

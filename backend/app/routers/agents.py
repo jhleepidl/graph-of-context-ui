@@ -22,6 +22,7 @@ from app.schemas import (
     ConversationEnsureRequest,
 )
 from app.services.agent_defaults import ensure_default_agents
+from app.services.runtime_authority import apply_runtime_authority
 from app.tenant import require_thread_access
 
 router = APIRouter(prefix="/api", tags=["agents"])
@@ -349,7 +350,7 @@ def _conversation_payload(
             "updated_at": membership.updated_at,
             "agent": _agent_payload(agent, current_user_id=current_user_id, is_admin=is_admin),
         })
-    return {
+    out = {
         "id": conversation.id,
         "thread_id": conversation.thread_id,
         "owner_user_id": conversation.owner_user_id,
@@ -358,6 +359,19 @@ def _conversation_payload(
         "updated_at": conversation.updated_at,
         "agents": items,
     }
+    return apply_runtime_authority(
+        out,
+        {
+            "mode": "goc",
+            "plan_source": "local",
+            "context_source": "goc",
+            "agent_catalog_source": "goc",
+            "conversation_team_source": "goc",
+            "skill_catalog_source": "local",
+            "degraded_mode": False,
+            "fallback_reason": None,
+        },
+    )
 
 
 def _install_default_private_agents(
@@ -1205,3 +1219,28 @@ def delete_conversation_agent(thread_id: str, agent_id: str):
                 is_admin=is_admin,
             ),
         }
+
+
+@router.get("/conversations/{thread_id}/team")
+def get_conversation_team(thread_id: str):
+    return list_conversation_agents(thread_id)
+
+
+@router.post("/conversations/{thread_id}/team/members")
+def add_conversation_team_member(thread_id: str, body: ConversationAgentCreateRequest):
+    return add_conversation_agent(thread_id, body)
+
+
+@router.post("/conversations/{thread_id}/team/reorder")
+def reorder_conversation_team(thread_id: str, body: ConversationAgentReorderRequest):
+    return reorder_conversation_agents(thread_id, body)
+
+
+@router.patch("/conversations/{thread_id}/team/members/{agent_id}")
+def patch_conversation_team_member(thread_id: str, agent_id: str, body: ConversationAgentPatchRequest):
+    return patch_conversation_agent(thread_id, agent_id, body)
+
+
+@router.delete("/conversations/{thread_id}/team/members/{agent_id}")
+def delete_conversation_team_member(thread_id: str, agent_id: str):
+    return delete_conversation_agent(thread_id, agent_id)

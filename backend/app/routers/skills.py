@@ -51,6 +51,33 @@ def _load_nodes_for_registry(
     return list(reversed(session.exec(stmt).all()))
 
 
+def _skill_observability_meta(items: list[dict[str, Any]]) -> dict[str, Any]:
+    has_default_registry = False
+    has_runtime_projected = False
+    for item in items:
+        source = str(item.get("source") or "").strip()
+        if not source:
+            continue
+        if source.startswith("default_registry"):
+            has_default_registry = True
+        else:
+            has_runtime_projected = True
+
+    catalog_source = "local"
+    if has_default_registry and has_runtime_projected:
+        catalog_source = "mixed"
+    elif has_default_registry:
+        catalog_source = "goc"
+    elif has_runtime_projected:
+        catalog_source = "local"
+
+    return {
+        "skill_catalog_source": catalog_source,
+        "projection_kind": "skill_observability",
+        "authority_note": "GoC exposes skill observability; runtime remains primary authority for skill execution content.",
+    }
+
+
 @router.get("")
 def list_skills(
     thread_id: str | None = Query(default=None),
@@ -68,6 +95,7 @@ def list_skills(
             "items": items,
             "count": len(items),
             "thread_id": (thread_id or "").strip() or None,
+            "observability": _skill_observability_meta(items),
         }
 
 
@@ -84,8 +112,10 @@ def get_skill(
             max_nodes=max_nodes,
         )
         package = get_skill_package(skill_id, nodes=nodes, include_defaults=True)
+        item = package if isinstance(package, dict) else {}
         return {
             "ok": True,
             "item": package,
             "thread_id": (thread_id or "").strip() or None,
+            "observability": _skill_observability_meta([item] if item else []),
         }

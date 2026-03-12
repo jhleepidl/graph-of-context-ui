@@ -28,8 +28,16 @@ You can override with `VITE_API_BASE`.
 - When detail is already loaded, refresh keeps it updated without restoring eager multi-endpoint startup.
 - Summary data is sufficient to render core Run Studio cards before detail fetches complete.
 
+## Authority/Fallback UI
+- Run Studio surfaces canonical runtime authority metadata from backend projections:
+  - `mode`, `plan_source`, `context_source`, `agent_catalog_source`, `conversation_team_source`, `skill_catalog_source`
+  - `degraded_mode`, `fallback_reason`
+- `Now`, `Agent Team`, `Context Packs`, and `Skill Usage` panels show fallback/degraded state when runtime falls back from GoC-backed authority.
+- Planning is shown through a lightweight boundary projection (`planning_boundary.status = runtime_managed`) to keep future GoC planner integration explicit.
+
 ## UI Notes
 - Skill visibility and context pack visibility are preserved.
+- Skill panels remain observability-oriented: they do not imply full backend authority over runtime skill package content.
 - Graph/Execution/Advanced surfaces are unchanged.
 - Deep-link behavior for `?thread=<id>` stays deterministic (no silent fallback).
 - No-skill runs degrade gracefully: attached skills/context packs/usage panels show empty states.

@@ -24,16 +24,26 @@ function runtimeClass(status: string): string {
 
 export default function AgentTeamPanel({ team }: Props) {
   const items = team?.items || []
+  const authority = team?.runtime_authority
   const runtimeCount = items.filter((item) => String(item.source || '') === 'runtime_snapshot').length
   const threadTeamCount = items.filter((item) => String(item.source || '') === 'conversation_membership').length
   const inferredCount = items.filter((item) => String(item.source || '') === 'inferred_from_steps').length
   const rolesWithSkillsCount = items.filter((item) => (item.attached_skills || []).length > 0).length
+  const mode = String(authority?.mode || team?.mode || 'standalone')
+  const catalogSource = String(authority?.agent_catalog_source || team?.agent_catalog_source || 'local')
+  const teamSource = String(authority?.conversation_team_source || team?.conversation_team_source || 'local')
+  const degradedMode = Boolean(authority?.degraded_mode ?? team?.degraded_mode)
+  const fallbackReason = String(authority?.fallback_reason || team?.fallback_reason || '').trim()
 
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
         <h3>Agent Team</h3>
         <div className="runStudioMetaRow">
+          <span className="pill">mode: {mode}</span>
+          <span className="pill">catalog: {catalogSource}</span>
+          <span className="pill">team authority: {teamSource}</span>
+          {degradedMode && <span className="pill">degraded fallback</span>}
           <span className="pill">active: {team?.active_count ?? 0}</span>
           <span className="pill">runtime: {runtimeCount}</span>
           <span className="pill">thread team: {threadTeamCount}</span>
@@ -41,6 +51,11 @@ export default function AgentTeamPanel({ team }: Props) {
           <span className="pill">with skills: {rolesWithSkillsCount}</span>
         </div>
       </div>
+      {degradedMode && fallbackReason && (
+        <div className="runStudioWarning">
+          <b>Fallback reason:</b> {fallbackReason}
+        </div>
+      )}
 
       {items.length === 0 && (
         <div className="muted">No thread team is configured yet. Runtime members appear only after execution emits team snapshots or step agents.</div>

@@ -82,6 +82,8 @@ export default function RunStudioLayout({
   onPinNode,
 }: Props) {
   const memoryProjection = summary?.projections?.memory_context
+  const runtimeAuthority = summary?.runtime_authority
+  const planningBoundary = summary?.planning_boundary
   const effectiveTeam = selectEffectiveAgentTeam(summary, team)
   const decisionsLoaded = Boolean(detailLoaded?.contextDecisions || decisions)
   const evidenceLoaded = Boolean(detailLoaded?.evidence || evidence)
@@ -102,10 +104,20 @@ export default function RunStudioLayout({
         </div>
         {memoryProjection && (
           <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
+            <span className="pill">mode: {runtimeAuthority?.mode || summary?.mode || 'standalone'}</span>
+            <span className="pill">plan: {runtimeAuthority?.plan_source || summary?.plan_source || 'local'}</span>
+            <span className="pill">context: {runtimeAuthority?.context_source || summary?.context_source || 'local'}</span>
+            <span className="pill">team: {runtimeAuthority?.conversation_team_source || summary?.conversation_team_source || 'local'}</span>
+            <span className="pill">skills: {runtimeAuthority?.skill_catalog_source || summary?.skill_catalog_source || 'local'}</span>
+            {runtimeAuthority?.degraded_mode && <span className="pill">degraded fallback</span>}
+            {planningBoundary?.status && <span className="pill">planning: {planningBoundary.status}</span>}
             <span className="pill">core: {memoryProjection.core_count ?? 0}</span>
             <span className="pill">supporting: {memoryProjection.supporting_count ?? 0}</span>
             <span className="pill">execution/debug: {memoryProjection.execution_count ?? 0}</span>
           </div>
+        )}
+        {runtimeAuthority?.degraded_mode && runtimeAuthority?.fallback_reason && (
+          <div className="runStudioWarning"><b>Fallback reason:</b> {runtimeAuthority.fallback_reason}</div>
         )}
         {error && <div className="runStudioWarning"><b>Load error:</b> {error}</div>}
       </div>
