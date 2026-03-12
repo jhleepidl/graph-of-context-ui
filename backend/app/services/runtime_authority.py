@@ -103,10 +103,18 @@ FALLBACK_REASON_KEYS = (
     "degradedReason",
     "degrade_reason",
     "degradeReason",
+    "degraded_message",
+    "degradedMessage",
+    "degrade_message",
+    "degradeMessage",
     "authority_fallback_reason",
     "authorityFallbackReason",
     "fallback_message",
     "fallbackMessage",
+)
+
+NESTED_FALLBACK_REASON_KEYS = (
+    *FALLBACK_REASON_KEYS,
     "reason",
     "message",
 )
@@ -217,7 +225,7 @@ def _extract_fallback_reason(value: Any) -> str | None:
     if isinstance(value, str):
         return _clean_text(value)
     if isinstance(value, dict):
-        reason = _pick(value, FALLBACK_REASON_KEYS)
+        reason = _pick(value, NESTED_FALLBACK_REASON_KEYS)
         return _clean_text(reason)
     return None
 
@@ -277,6 +285,8 @@ def _extract_partial_from_mapping(
     fallback_reason = _clean_text(_pick(mapping, FALLBACK_REASON_KEYS))
     if not fallback_reason and "fallback" in mapping:
         fallback_reason = _extract_fallback_reason(mapping.get("fallback"))
+    if not fallback_reason and "degraded" in mapping:
+        fallback_reason = _extract_fallback_reason(mapping.get("degraded"))
     if fallback_reason:
         out["fallback_reason"] = fallback_reason
 

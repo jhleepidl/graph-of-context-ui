@@ -73,12 +73,14 @@ Additional skill routes:
 - `GET /api/runs/{run_id}/context_packs`
 - `GET /api/threads/{thread_id}/skill_usage`
 
-Structured team aliases (incremental naming improvement, backward-compatible with `/agents` endpoints):
-- `GET /api/conversations/{thread_id}/team`
-- `POST /api/conversations/{thread_id}/team/members`
-- `POST /api/conversations/{thread_id}/team/reorder`
-- `PATCH /api/conversations/{thread_id}/team/members/{agent_id}`
-- `DELETE /api/conversations/{thread_id}/team/members/{agent_id}`
+Structured team endpoints (canonical thread-based semantics):
+- `GET /api/threads/{thread_id}/team`
+- `POST /api/threads/{thread_id}/team/members`
+- `POST /api/threads/{thread_id}/team/reorder`
+- `PATCH /api/threads/{thread_id}/team/members/{agent_id}`
+- `DELETE /api/threads/{thread_id}/team/members/{agent_id}`
+
+Compatibility aliases are still available under `/api/conversations/{thread_id}/team...` for backward compatibility.
 
 ## Auth Headers
 - `X-Admin-Key: <GOC_ADMIN_KEY>`

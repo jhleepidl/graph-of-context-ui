@@ -1221,26 +1221,52 @@ def delete_conversation_agent(thread_id: str, agent_id: str):
         }
 
 
+@router.get("/threads/{thread_id}/team")
+def list_thread_team(thread_id: str):
+    return list_conversation_agents(thread_id)
+
+
+@router.post("/threads/{thread_id}/team/members")
+def add_thread_team_member(thread_id: str, body: ConversationAgentCreateRequest):
+    return add_conversation_agent(thread_id, body)
+
+
+@router.post("/threads/{thread_id}/team/reorder")
+def reorder_thread_team(thread_id: str, body: ConversationAgentReorderRequest):
+    return reorder_conversation_agents(thread_id, body)
+
+
+@router.patch("/threads/{thread_id}/team/members/{agent_id}")
+def patch_thread_team_member(thread_id: str, agent_id: str, body: ConversationAgentPatchRequest):
+    return patch_conversation_agent(thread_id, agent_id, body)
+
+
+@router.delete("/threads/{thread_id}/team/members/{agent_id}")
+def delete_thread_team_member(thread_id: str, agent_id: str):
+    return delete_conversation_agent(thread_id, agent_id)
+
+
+# Compatibility aliases (thread-based semantics; keep old paths working).
 @router.get("/conversations/{thread_id}/team")
 def get_conversation_team(thread_id: str):
-    return list_conversation_agents(thread_id)
+    return list_thread_team(thread_id)
 
 
 @router.post("/conversations/{thread_id}/team/members")
 def add_conversation_team_member(thread_id: str, body: ConversationAgentCreateRequest):
-    return add_conversation_agent(thread_id, body)
+    return add_thread_team_member(thread_id, body)
 
 
 @router.post("/conversations/{thread_id}/team/reorder")
 def reorder_conversation_team(thread_id: str, body: ConversationAgentReorderRequest):
-    return reorder_conversation_agents(thread_id, body)
+    return reorder_thread_team(thread_id, body)
 
 
 @router.patch("/conversations/{thread_id}/team/members/{agent_id}")
 def patch_conversation_team_member(thread_id: str, agent_id: str, body: ConversationAgentPatchRequest):
-    return patch_conversation_agent(thread_id, agent_id, body)
+    return patch_thread_team_member(thread_id, agent_id, body)
 
 
 @router.delete("/conversations/{thread_id}/team/members/{agent_id}")
 def delete_conversation_team_member(thread_id: str, agent_id: str):
-    return delete_conversation_agent(thread_id, agent_id)
+    return delete_thread_team_member(thread_id, agent_id)

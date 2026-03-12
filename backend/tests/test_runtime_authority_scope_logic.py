@@ -14,7 +14,10 @@ from app.services.run_skill_summary import (
     build_thread_skill_usage_summary,
 )
 from app.services.run_studio import build_run_studio_agent_team, build_run_studio_summary
-from app.services.runtime_authority import derive_runtime_authority
+from app.services.runtime_authority import (
+    derive_runtime_authority,
+    extract_runtime_authority_from_container,
+)
 from app.services.runtime_scope import resolve_current_runtime_scope
 
 
@@ -44,6 +47,54 @@ def make_node(
 
 
 class RuntimeAuthorityAndScopeTests(unittest.TestCase):
+    def test_container_message_or_reason_only_does_not_mark_degraded(self) -> None:
+        message_only = extract_runtime_authority_from_container({"message": "hello"})
+        reason_only = extract_runtime_authority_from_container({"reason": "completed"})
+        self.assertNotIn("fallback_reason", message_only)
+        self.assertNotIn("fallback_reason", reason_only)
+        self.assertNotIn("degraded_mode", message_only)
+        self.assertNotIn("degraded_mode", reason_only)
+
+    def test_nodes_with_normal_message_or_reason_fields_do_not_degrade(self) -> None:
+        nodes = [
+            make_node(
+                "run-normal-message",
+                "Run",
+                payload={"message": "completed successfully"},
+            ),
+            make_node(
+                "step-normal-reason",
+                "Step",
+                payload={"reason": "tool call finished"},
+            ),
+        ]
+        authority = derive_runtime_authority(nodes=nodes, context_source_default="goc")
+        self.assertFalse(bool(authority.get("degraded_mode")))
+        self.assertIsNone(authority.get("fallback_reason"))
+
+    def test_explicit_fallback_and_degraded_fields_mark_degraded(self) -> None:
+        fallback_reason = derive_runtime_authority(
+            nodes=[make_node("run-fallback-reason", "Run", payload={"fallback_reason": "GoC unavailable"})],
+        )
+        degraded_reason = derive_runtime_authority(
+            nodes=[make_node("run-degraded-reason", "Run", payload={"degraded_reason": "remote authority unavailable"})],
+        )
+        fallback_block = derive_runtime_authority(
+            nodes=[make_node("run-fallback-block", "Run", payload={"fallback": {"reason": "timeout"}})],
+        )
+        degraded_block = derive_runtime_authority(
+            nodes=[make_node("run-degraded-block", "Run", payload={"degraded": {"message": "switched to local mode"}})],
+        )
+
+        self.assertTrue(bool(fallback_reason.get("degraded_mode")))
+        self.assertEqual(fallback_reason.get("fallback_reason"), "GoC unavailable")
+        self.assertTrue(bool(degraded_reason.get("degraded_mode")))
+        self.assertEqual(degraded_reason.get("fallback_reason"), "remote authority unavailable")
+        self.assertTrue(bool(fallback_block.get("degraded_mode")))
+        self.assertEqual(fallback_block.get("fallback_reason"), "timeout")
+        self.assertTrue(bool(degraded_block.get("degraded_mode")))
+        self.assertEqual(degraded_block.get("fallback_reason"), "switched to local mode")
+
     def test_runtime_authority_normalizes_modern_payload(self) -> None:
         nodes = [
             make_node(
