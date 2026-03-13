@@ -23,9 +23,10 @@ postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
 
 ### Service Ownership
 - `app/services/run_studio.py`: Run Studio screen-level summary assembly + capability composition.
+- `app/services/resolved_runtime.py`: shared runtime-facing projection layer for scoped authority, team, capability, and planning-boundary resolution.
 - `app/services/runtime_snapshot.py`: canonical runtime/team snapshot extraction + normalization.
 - `app/services/runtime_scope.py`: shared current-run / active runtime scope resolution (single source of truth).
-- `app/services/runtime_authority.py`: authority/source/fallback metadata normalization and backward-compatible extraction.
+- `app/services/runtime_authority.py`: ddalggak -> GoC authority contract normalization, canonical precedence, and backward-compatible extraction.
 - `app/services/conversation_team.py`: structured conversation team projection (runtime snapshot, membership, inference fallback).
 - `app/services/skill_projections.py`: runtime attached-skill and skill-usage extraction.
 - `app/services/context_packs.py`: context pack shaping (shared/role/skill scope).
@@ -64,7 +65,27 @@ Authority/fallback projection fields are exposed across summary and run-scoped d
 - `degraded_mode`
 - `fallback_reason`
 
-These fields are derived from explicit runtime payload metadata when present, with backward-compatible inference for older payload shapes.
+These fields form the canonical ddalggak -> GoC runtime authority contract. GoC consumes exact canonical fields first, then falls back to backward-compatible inference for older payload shapes.
+
+Canonical contract expectations:
+- `mode`: `standalone | goc`
+- `plan_source`: `local | goc | local_fallback`
+- `context_source`: `local | goc`
+- `agent_catalog_source`: `local | goc`
+- `conversation_team_source`: `local | goc`
+- `skill_catalog_source`: `local | goc | mixed`
+- `degraded_mode`: `boolean`
+- `fallback_reason`: `string | null`
+
+Contract precedence:
+- canonical `runtime_authority` / `runtimeAuthority` payload blocks win over legacy sibling fields
+- canonical exact field names win over inferred legacy aliases when both are present
+- later legacy node data can fill gaps, but it does not override canonical contract fields already observed
+
+Degraded behavior:
+- `plan_source=local_fallback` or an explicit `fallback_reason` surfaces `degraded_mode=true`
+- ordinary `message` / `reason` fields are not treated as degraded signals
+- resolved runtime projections keep summary, team, skill, context-pack, and planning-boundary views aligned to the same authority truth
 
 Additional skill routes:
 - `GET /api/skills`
@@ -91,6 +112,7 @@ Compatibility aliases are still available under `/api/conversations/{thread_id}/
 - Existing routes and graph model compatibility are preserved.
 - Runtime snapshot extraction precedence and normalization now live in `runtime_snapshot.py`.
 - Current run resolution is centralized in `runtime_scope.py`; run-studio and skill/context summaries now share the same inference path.
+- Canonical runtime authority contract interpretation is centralized in `runtime_authority.py` and consumed through `resolved_runtime.py`.
 - GoC is authoritative for graph-backed context and structured agent/team management once connected.
 - Skill package execution/content authority remains mostly runtime-side; GoC currently focuses on skill observability/projection.
 - See operator behavior details in [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md).

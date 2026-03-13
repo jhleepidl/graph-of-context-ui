@@ -19,6 +19,7 @@ from app.services.runtime_authority import (
     extract_runtime_authority_from_container,
 )
 from app.services.runtime_scope import resolve_current_runtime_scope
+from tests.runtime_contract_fixtures import standalone_runtime_contract_scenario
 
 
 @dataclass
@@ -71,6 +72,25 @@ class RuntimeAuthorityAndScopeTests(unittest.TestCase):
         authority = derive_runtime_authority(nodes=nodes, context_source_default="goc")
         self.assertFalse(bool(authority.get("degraded_mode")))
         self.assertIsNone(authority.get("fallback_reason"))
+
+    def test_canonical_standalone_contract_ignores_normal_message_and_reason_fields(self) -> None:
+        scenario = standalone_runtime_contract_scenario()
+        run_payload = json.loads(scenario.nodes[0].payload_json)
+        step_payload = json.loads(scenario.nodes[1].payload_json)
+        run_payload["message"] = "runtime completed normally"
+        step_payload["reason"] = "tool call finished"
+
+        nodes = [
+            make_node("run-standalone-contract", "Run", payload=run_payload, created_at=scenario.nodes[0].created_at),
+            make_node("step-standalone-contract", "Step", payload=step_payload, created_at=scenario.nodes[1].created_at),
+        ]
+        authority = derive_runtime_authority(
+            nodes=nodes,
+            context_source_default="goc",
+            plan_source_default="goc",
+            mode_default="goc",
+        )
+        self.assertEqual(authority, scenario.authority)
 
     def test_explicit_fallback_and_degraded_fields_mark_degraded(self) -> None:
         fallback_reason = derive_runtime_authority(

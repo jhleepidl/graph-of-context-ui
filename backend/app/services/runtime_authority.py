@@ -11,6 +11,7 @@ from app.services.runtime_snapshot import (
 )
 
 
+# Canonical ddalggak -> GoC interoperability contract.
 RUNTIME_AUTHORITY_FIELDS = (
     "mode",
     "plan_source",
@@ -22,13 +23,18 @@ RUNTIME_AUTHORITY_FIELDS = (
     "fallback_reason",
 )
 
-AUTHORITY_BLOCK_KEYS = (
+CANONICAL_AUTHORITY_BLOCK_KEYS = (
     "runtime_authority",
     "runtimeAuthority",
+)
+
+LEGACY_AUTHORITY_BLOCK_KEYS = (
     "authority",
     "authority_state",
     "authorityState",
 )
+
+AUTHORITY_BLOCK_KEYS = CANONICAL_AUTHORITY_BLOCK_KEYS + LEGACY_AUTHORITY_BLOCK_KEYS
 
 MODE_KEYS = (
     "mode",
@@ -243,6 +249,62 @@ def default_runtime_authority() -> dict[str, Any]:
     }
 
 
+def _extract_canonical_contract_from_mapping(mapping: dict[str, Any]) -> tuple[dict[str, Any], set[str]]:
+    if not isinstance(mapping, dict):
+        return {}, set()
+
+    out: dict[str, Any] = {}
+    explicit_fields: set[str] = set()
+
+    if "mode" in mapping:
+        mode = _normalize_mode(mapping.get("mode"))
+        if mode:
+            out["mode"] = mode
+            explicit_fields.add("mode")
+
+    if "plan_source" in mapping:
+        plan_source = _normalize_plan_source(mapping.get("plan_source"))
+        if plan_source:
+            out["plan_source"] = plan_source
+            explicit_fields.add("plan_source")
+
+    if "context_source" in mapping:
+        context_source = _normalize_local_goc_source(mapping.get("context_source"))
+        if context_source:
+            out["context_source"] = context_source
+            explicit_fields.add("context_source")
+
+    if "agent_catalog_source" in mapping:
+        agent_catalog_source = _normalize_local_goc_source(mapping.get("agent_catalog_source"))
+        if agent_catalog_source:
+            out["agent_catalog_source"] = agent_catalog_source
+            explicit_fields.add("agent_catalog_source")
+
+    if "conversation_team_source" in mapping:
+        conversation_team_source = _normalize_local_goc_source(mapping.get("conversation_team_source"))
+        if conversation_team_source:
+            out["conversation_team_source"] = conversation_team_source
+            explicit_fields.add("conversation_team_source")
+
+    if "skill_catalog_source" in mapping:
+        skill_catalog_source = _normalize_skill_source(mapping.get("skill_catalog_source"))
+        if skill_catalog_source:
+            out["skill_catalog_source"] = skill_catalog_source
+            explicit_fields.add("skill_catalog_source")
+
+    if "degraded_mode" in mapping:
+        degraded_mode = _coerce_bool(mapping.get("degraded_mode"))
+        if degraded_mode is not None:
+            out["degraded_mode"] = degraded_mode
+            explicit_fields.add("degraded_mode")
+
+    if "fallback_reason" in mapping:
+        out["fallback_reason"] = _clean_text(mapping.get("fallback_reason"))
+        explicit_fields.add("fallback_reason")
+
+    return out, explicit_fields
+
+
 def _extract_partial_from_mapping(
     mapping: dict[str, Any],
     *,
@@ -293,29 +355,73 @@ def _extract_partial_from_mapping(
     return out
 
 
-def extract_runtime_authority_from_container(container: dict[str, Any]) -> dict[str, Any]:
+def _extract_runtime_authority_details_from_container(
+    container: dict[str, Any],
+) -> tuple[dict[str, Any], set[str], set[str]]:
     if not isinstance(container, dict):
-        return {}
+        return {}, set(), set()
 
     merged: dict[str, Any] = {}
-    for block_key in AUTHORITY_BLOCK_KEYS:
+    explicit_fields: set[str] = set()
+    canonical_fields: set[str] = set()
+
+    for block_key in LEGACY_AUTHORITY_BLOCK_KEYS:
         if block_key not in container:
             continue
         block = _jload(container.get(block_key))
         if isinstance(block, dict):
-            merged.update(_extract_partial_from_mapping(block, allow_mode_without_hints=True))
+            partial = _extract_partial_from_mapping(block, allow_mode_without_hints=True)
+            if partial:
+                merged.update(partial)
+                explicit_fields.update(partial.keys())
 
-    merged.update(_extract_partial_from_mapping(container, allow_mode_without_hints=False))
+    top_level_legacy = _extract_partial_from_mapping(container, allow_mode_without_hints=False)
+    if top_level_legacy:
+        merged.update(top_level_legacy)
+        explicit_fields.update(top_level_legacy.keys())
+
+    top_level_canonical, top_level_canonical_fields = _extract_canonical_contract_from_mapping(container)
+    if top_level_canonical_fields:
+        merged.update(top_level_canonical)
+        explicit_fields.update(top_level_canonical_fields)
+        canonical_fields.update(top_level_canonical_fields)
+
+    for block_key in CANONICAL_AUTHORITY_BLOCK_KEYS:
+        if block_key not in container:
+            continue
+        block = _jload(container.get(block_key))
+        if not isinstance(block, dict):
+            continue
+
+        partial = _extract_partial_from_mapping(block, allow_mode_without_hints=True)
+        if partial:
+            merged.update(partial)
+            explicit_fields.update(partial.keys())
+
+        canonical_block, canonical_block_fields = _extract_canonical_contract_from_mapping(block)
+        if canonical_block_fields:
+            merged.update(canonical_block)
+            explicit_fields.update(canonical_block_fields)
+            canonical_fields.update(canonical_block_fields)
+
+    return merged, explicit_fields, canonical_fields
+
+
+def extract_runtime_authority_from_container(container: dict[str, Any]) -> dict[str, Any]:
+    merged, _explicit_fields, _canonical_fields = _extract_runtime_authority_details_from_container(container)
     return merged
 
 
-def extract_runtime_authority_from_nodes(
+def _extract_runtime_authority_details_from_nodes(
     nodes: Iterable[Any],
     *,
     include_node_types: set[str] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], set[str]]:
     allowed_types = include_node_types or {"Run", "Step"}
-    merged: dict[str, Any] = {}
+    legacy_values: dict[str, Any] = {}
+    legacy_fields: set[str] = set()
+    canonical_values: dict[str, Any] = {}
+    canonical_fields: set[str] = set()
 
     sorted_nodes = sorted(
         [node for node in nodes if str(getattr(node, "type", "")) in allowed_types],
@@ -325,9 +431,34 @@ def extract_runtime_authority_from_nodes(
     for node in sorted_nodes:
         payload = _node_payload(node)
         for _prefix, container in _iter_payload_containers(payload):
-            partial = extract_runtime_authority_from_container(container)
-            if partial:
-                merged.update(partial)
+            partial, explicit_fields, container_canonical_fields = _extract_runtime_authority_details_from_container(container)
+            if not explicit_fields:
+                continue
+
+            for field in explicit_fields:
+                if field in container_canonical_fields:
+                    canonical_values[field] = partial.get(field)
+                    canonical_fields.add(field)
+                    continue
+                if field in canonical_fields:
+                    continue
+                legacy_values[field] = partial.get(field)
+                legacy_fields.add(field)
+
+    merged = dict(legacy_values)
+    merged.update(canonical_values)
+    return merged, legacy_fields | canonical_fields
+
+
+def extract_runtime_authority_from_nodes(
+    nodes: Iterable[Any],
+    *,
+    include_node_types: set[str] | None = None,
+) -> dict[str, Any]:
+    merged, _explicit_fields = _extract_runtime_authority_details_from_nodes(
+        nodes,
+        include_node_types=include_node_types,
+    )
     return merged
 
 
@@ -401,8 +532,7 @@ def derive_runtime_authority(
     plan_source_default: str | None = None,
     mode_default: str | None = None,
 ) -> dict[str, Any]:
-    explicit = extract_runtime_authority_from_nodes(nodes)
-    explicit_fields = set(explicit.keys())
+    explicit, explicit_fields = _extract_runtime_authority_details_from_nodes(nodes)
     authority = default_runtime_authority()
     authority.update(explicit)
 

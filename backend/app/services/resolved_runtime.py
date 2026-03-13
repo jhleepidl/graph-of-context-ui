@@ -759,6 +759,7 @@ def resolve_runtime_projection(
             nodes=list(team_nodes) if team_nodes is not None else nodes_list,
         )
 
+    # All runtime-facing projections should consume the same normalized ddalggak -> GoC authority contract here.
     authority = derive_runtime_authority(
         nodes=scope_state.nodes,
         agent_team=team_state.as_payload() if team_state else None,
