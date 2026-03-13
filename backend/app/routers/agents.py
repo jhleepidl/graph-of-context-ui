@@ -326,6 +326,32 @@ def _conversation_memberships(session: Session, conversation_id: str) -> list[Co
     ).all()
 
 
+def _conversation_team_payload(
+    conversation: Conversation,
+    *,
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    enabled_members = [item for item in items if bool(item.get("enabled"))]
+    disabled_members = [item for item in items if not bool(item.get("enabled"))]
+    return {
+        "thread_id": conversation.thread_id,
+        "conversation_id": conversation.id,
+        # Canonical team routes expose explicit persisted conversation membership only.
+        "membership_kind": "explicit",
+        "members": items,
+        "enabled_members": enabled_members,
+        "disabled_members": disabled_members,
+        "counts": {
+            "explicit_memberships": len(items),
+            "enabled_members": len(enabled_members),
+            "disabled_members": len(disabled_members),
+        },
+        "baseline_agent_ids": None,
+        "baseline_agents": None,
+        "baseline_policy": {"mode": "not_modeled"},
+    }
+
+
 def _conversation_payload(
     conversation: Conversation,
     *,
@@ -350,6 +376,7 @@ def _conversation_payload(
             "updated_at": membership.updated_at,
             "agent": _agent_payload(agent, current_user_id=current_user_id, is_admin=is_admin),
         })
+    team = _conversation_team_payload(conversation, items=items)
     out = {
         "id": conversation.id,
         "thread_id": conversation.thread_id,
@@ -357,6 +384,7 @@ def _conversation_payload(
         "service_id": conversation.service_id,
         "created_at": conversation.created_at,
         "updated_at": conversation.updated_at,
+        "team": team,
         "agents": items,
     }
     return apply_runtime_authority(
@@ -1223,50 +1251,60 @@ def delete_conversation_agent(thread_id: str, agent_id: str):
 
 @router.get("/threads/{thread_id}/team")
 def list_thread_team(thread_id: str):
+    """Canonical thread-scoped explicit team membership endpoint."""
     return list_conversation_agents(thread_id)
 
 
 @router.post("/threads/{thread_id}/team/members")
 def add_thread_team_member(thread_id: str, body: ConversationAgentCreateRequest):
+    """Canonical thread-scoped explicit team membership mutation endpoint."""
     return add_conversation_agent(thread_id, body)
 
 
 @router.post("/threads/{thread_id}/team/reorder")
 def reorder_thread_team(thread_id: str, body: ConversationAgentReorderRequest):
+    """Canonical thread-scoped explicit team membership mutation endpoint."""
     return reorder_conversation_agents(thread_id, body)
 
 
 @router.patch("/threads/{thread_id}/team/members/{agent_id}")
 def patch_thread_team_member(thread_id: str, agent_id: str, body: ConversationAgentPatchRequest):
+    """Canonical thread-scoped explicit team membership mutation endpoint."""
     return patch_conversation_agent(thread_id, agent_id, body)
 
 
 @router.delete("/threads/{thread_id}/team/members/{agent_id}")
 def delete_thread_team_member(thread_id: str, agent_id: str):
+    """Canonical thread-scoped explicit team membership mutation endpoint."""
     return delete_conversation_agent(thread_id, agent_id)
 
 
 # Compatibility aliases (thread-based semantics; keep old paths working).
 @router.get("/conversations/{thread_id}/team")
 def get_conversation_team(thread_id: str):
+    """Compatibility alias for older conversation/team clients."""
     return list_thread_team(thread_id)
 
 
 @router.post("/conversations/{thread_id}/team/members")
 def add_conversation_team_member(thread_id: str, body: ConversationAgentCreateRequest):
+    """Compatibility alias for older conversation/team clients."""
     return add_thread_team_member(thread_id, body)
 
 
 @router.post("/conversations/{thread_id}/team/reorder")
 def reorder_conversation_team(thread_id: str, body: ConversationAgentReorderRequest):
+    """Compatibility alias for older conversation/team clients."""
     return reorder_thread_team(thread_id, body)
 
 
 @router.patch("/conversations/{thread_id}/team/members/{agent_id}")
 def patch_conversation_team_member(thread_id: str, agent_id: str, body: ConversationAgentPatchRequest):
+    """Compatibility alias for older conversation/team clients."""
     return patch_thread_team_member(thread_id, agent_id, body)
 
 
 @router.delete("/conversations/{thread_id}/team/members/{agent_id}")
 def delete_conversation_team_member(thread_id: str, agent_id: str):
+    """Compatibility alias for older conversation/team clients."""
     return delete_thread_team_member(thread_id, agent_id)

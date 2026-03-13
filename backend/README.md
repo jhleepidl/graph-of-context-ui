@@ -101,7 +101,13 @@ Structured team endpoints (canonical thread-based semantics):
 - `PATCH /api/threads/{thread_id}/team/members/{agent_id}`
 - `DELETE /api/threads/{thread_id}/team/members/{agent_id}`
 
-Compatibility aliases are still available under `/api/conversations/{thread_id}/team...` for backward compatibility.
+Team route semantics:
+- `/api/threads/{thread_id}/team...` is the canonical structured team API.
+- `/api/conversations/{thread_id}/team...` remains available as a compatibility alias only.
+- Team payloads represent explicit persisted conversation/thread membership. They do not claim to be the full runtime active team or runtime baseline/default policy.
+- `conversation.team` is the canonical structured membership block. `conversation.agents` remains a backward-compatible alias of the same explicit membership entries.
+- `conversation.team.enabled_members` and `conversation.team.disabled_members` split the persisted membership list by the stored `enabled` flag.
+- `conversation.team.baseline_policy.mode=not_modeled` means the backend is not asserting baseline/default agent availability for that thread. Missing baseline/default agents are not treated as membership errors unless a future policy layer models them explicitly.
 
 ## Auth Headers
 - `X-Admin-Key: <GOC_ADMIN_KEY>`
