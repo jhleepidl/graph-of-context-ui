@@ -272,6 +272,7 @@ def extract_runtime_agents_with_skills(
     skill_lookup: dict[str, dict[str, Any]] | None = None,
     source: str = "runtime_snapshot",
 ) -> dict[str, Any]:
+    # Keep this as a payload normalizer; resolved_runtime composes authority and scoped summaries.
     snapshot = extract_runtime_snapshot_with_members(nodes)
     if not snapshot:
         return {

@@ -11,17 +11,14 @@ from app.services.conversation_team import build_conversation_team_projection
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
 from app.services.graph_projections import build_logical_projections
-from app.services.planning_boundary import build_planning_boundary_projection
-from app.services.runtime_authority import apply_runtime_authority, derive_runtime_authority
+from app.services.resolved_runtime import resolve_runtime_projection, resolve_runtime_scope_state
 from app.services.runtime_snapshot import (
     created_sort_key as _created_sort_key,
     extract_runtime_team_snapshot as _extract_runtime_team_snapshot,
     node_payload as _node_payload,
     normalize_status as _normalize_status,
 )
-from app.services.runtime_scope import resolve_current_runtime_scope, resolve_run_scoped_nodes
 from app.services.run_skill_summary import (
-    build_run_skill_summary,
     build_thread_context_pack_summary,
     build_thread_skill_usage_summary,
 )
@@ -37,6 +34,7 @@ def _jload(raw: str | None, default: Any) -> Any:
         return json.loads(raw or "")
     except Exception:
         return default
+
 
 def _short_text(value: str, max_len: int = 220) -> str:
     compact = " ".join(str(value or "").split())
@@ -85,7 +83,7 @@ def _latest_user_message(nodes: list[Node]) -> Node | None:
 
 
 def _current_run_scope(nodes: list[Node], edges: list[Edge]) -> dict[str, Any]:
-    return resolve_current_runtime_scope(nodes, edges)
+    return resolve_runtime_scope_state(nodes=nodes, edges=edges).scope
 
 
 def _current_step(steps: list[Node]) -> tuple[Node | None, str]:
@@ -485,31 +483,6 @@ def _evidence_summary(
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-
-def _runtime_authority_projection(
-    *,
-    nodes: list[Node],
-    edges: list[Edge],
-    run_id: str | None,
-    agent_team: dict[str, Any] | None = None,
-    run_skill_summary: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    scoped = resolve_run_scoped_nodes(nodes=nodes, edges=edges, run_id=run_id)
-    scoped_nodes = list(scoped.get("nodes") or [])
-    summary = run_skill_summary or {}
-    return derive_runtime_authority(
-        nodes=scoped_nodes,
-        agent_team=agent_team,
-        skill_packages=list(summary.get("skill_packages") or []),
-        runtime_agents=list(summary.get("runtime_agents") or []),
-        usage_events=list(summary.get("skill_usage") or []),
-        context_packs=list(summary.get("context_packs") or []),
-        context_source_default="goc",
-        plan_source_default="local",
-        mode_default="goc",
-    )
-
-
 def build_run_studio_summary(
     session: Session,
     *,
@@ -522,31 +495,30 @@ def build_run_studio_summary(
 
     projections = build_logical_projections(nodes, edges, active_node_ids=active_ids)
     now_panel = _now_panel_summary(thread=thread, nodes=nodes, edges=edges, active_ids=active_ids)
-    agent_team = _agent_team_summary(session, thread_id=thread.id, nodes=nodes)
     current_run_id = str((now_panel.get("state") or {}).get("current_run_id") or "").strip() or None
-    run_skill_summary = build_run_skill_summary(
+    runtime_projection = resolve_runtime_projection(
         nodes=nodes,
         edges=edges,
         run_id=current_run_id,
+        session=session,
+        thread_id=thread.id,
+        team_nodes=nodes,
+        include_conversation_team=True,
+        context_source_default="goc",
+        plan_source_default="local",
+        mode_default="goc",
     )
-    runtime_authority = _runtime_authority_projection(
-        nodes=nodes,
-        edges=edges,
-        run_id=current_run_id,
-        agent_team=agent_team,
-        run_skill_summary=run_skill_summary,
-    )
-    run_skill_summary = apply_runtime_authority(run_skill_summary, runtime_authority)
+    run_skill_summary = runtime_projection.capability_payload()
 
     now_state = dict(now_panel.get("state") or {})
-    apply_runtime_authority(now_state, runtime_authority)
+    runtime_projection.apply_authority(now_state)
     now_panel["state"] = now_state
 
     current_run_panel = dict(now_panel.get("current_run") or {})
-    apply_runtime_authority(current_run_panel, runtime_authority)
+    runtime_projection.apply_authority(current_run_panel)
     now_panel["current_run"] = current_run_panel
 
-    agent_team = apply_runtime_authority(agent_team, runtime_authority)
+    agent_team = runtime_projection.conversation_team_payload()
 
     context_decisions = _context_decisions_summary(
         session,
@@ -557,25 +529,8 @@ def build_run_studio_summary(
     )
     evidence = _evidence_summary(nodes=nodes, edges=edges, active_ids=active_ids)
 
-    current_run_skills = apply_runtime_authority(
-        {
-            "run_id": run_skill_summary.get("run_id"),
-            "attached_skills": run_skill_summary.get("attached_skills", []),
-            "runtime_agents": run_skill_summary.get("runtime_agents", []),
-            "skill_packages": run_skill_summary.get("skill_packages", []),
-            "context_packs": run_skill_summary.get("context_packs", []),
-            "skill_usage": run_skill_summary.get("skill_usage", []),
-            "lineage": run_skill_summary.get("lineage", {}),
-            "counts": run_skill_summary.get("counts", {}),
-            "updated_at": run_skill_summary.get("updated_at"),
-            "planning_boundary": run_skill_summary.get("planning_boundary"),
-        },
-        runtime_authority,
-    )
-    planning_boundary = build_planning_boundary_projection(
-        run_id=current_run_id,
-        runtime_authority=runtime_authority,
-    )
+    current_run_skills = dict(run_skill_summary)
+    planning_boundary = dict(runtime_projection.planning_boundary)
 
     out = {
         "thread": {
@@ -602,7 +557,7 @@ def build_run_studio_summary(
         },
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    return apply_runtime_authority(out, runtime_authority)
+    return runtime_projection.apply_authority(out)
 
 
 def build_run_studio_agent_team(
@@ -611,14 +566,18 @@ def build_run_studio_agent_team(
     thread: Thread,
 ) -> dict[str, Any]:
     nodes, edges = load_thread_graph(session, thread.id)
-    team = _agent_team_summary(session, thread_id=thread.id, nodes=nodes)
-    authority = _runtime_authority_projection(
+    runtime_projection = resolve_runtime_projection(
         nodes=nodes,
         edges=edges,
-        run_id=None,
-        agent_team=team,
+        session=session,
+        thread_id=thread.id,
+        team_nodes=nodes,
+        include_conversation_team=True,
+        context_source_default="goc",
+        plan_source_default="local",
+        mode_default="goc",
     )
-    return apply_runtime_authority(team, authority)
+    return runtime_projection.conversation_team_payload()
 
 
 def build_run_studio_context_decisions(

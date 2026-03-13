@@ -344,6 +344,7 @@ def extract_runtime_team_snapshot(
     *,
     include_node_types: set[str] | None = None,
 ) -> dict[str, Any] | None:
+    # This stays focused on snapshot discovery; resolved_runtime handles scoped authority/projection assembly.
     allowed_types = include_node_types or {"Run", "Step"}
     candidates: list[dict[str, Any]] = []
 

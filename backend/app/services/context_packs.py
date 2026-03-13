@@ -330,6 +330,7 @@ def extract_context_pack_summaries(
     *,
     max_items: int = 160,
 ) -> list[dict[str, Any]]:
+    # Keep this as a low-level extractor; resolved_runtime owns scoped capability interpretation.
     rows: list[dict[str, Any]] = []
 
     for node in sorted([item for item in nodes if str(getattr(item, "type", "")) in {"Run", "Step"}], key=_created_sort_key):
