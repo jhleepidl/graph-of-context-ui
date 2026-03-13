@@ -104,10 +104,22 @@ Structured team endpoints (canonical thread-based semantics):
 Team route semantics:
 - `/api/threads/{thread_id}/team...` is the canonical structured team API.
 - `/api/conversations/{thread_id}/team...` remains available as a compatibility alias only.
+- Passive team reads do not bootstrap default agents and do not create explicit membership.
 - Team payloads represent explicit persisted conversation/thread membership. They do not claim to be the full runtime active team or runtime baseline/default policy.
 - `conversation.team` is the canonical structured membership block. `conversation.agents` remains a backward-compatible alias of the same explicit membership entries.
 - `conversation.team.enabled_members` and `conversation.team.disabled_members` split the persisted membership list by the stored `enabled` flag.
 - `conversation.team.baseline_policy.mode=not_modeled` means the backend is not asserting baseline/default agent availability for that thread. Missing baseline/default agents are not treated as membership errors unless a future policy layer models them explicitly.
+
+Conversation ensure/bootstrap semantics:
+- `POST /api/conversations/ensure` is safe by default: it ensures the conversation row exists and returns the current explicit membership view.
+- `bootstrap_defaults=true` installs private copies of the public default agents for the conversation owner, but it still does not create explicit membership by itself.
+- `add_to_conversation=true` is the extra opt-in that seeds explicit conversation membership from those bootstrapped private copies. It requires `bootstrap_defaults=true`.
+- `POST /api/agents/bootstrap_defaults` remains the explicit install/bootstrap route. Its `add_to_conversation` flag is an explicit membership mutation, not passive read behavior.
+
+Logical agent lineage for integration consumers:
+- Public default agents are the canonical templates: `is_system_default=true`, `system_key` is set, `service_id=public`, `owner_user_id=system`.
+- Installed private copies derived from those defaults keep `source_agent_id=<public_default_agent_id>` and have `is_system_default=false`.
+- Consumers that want to dedupe logical roles across public defaults and installed private copies should treat `source_agent_id` as the lineage pointer when present, then fall back to the agent's own `id` for standalone/private-only agents.
 
 ## Auth Headers
 - `X-Admin-Key: <GOC_ADMIN_KEY>`

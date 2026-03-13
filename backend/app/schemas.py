@@ -262,12 +262,22 @@ class AgentArchiveRequest(BaseModel):
 
 class AgentBootstrapDefaultsRequest(BaseModel):
     thread_id: Optional[str] = None
-    add_to_conversation: bool = False
+    add_to_conversation: bool = Field(
+        default=False,
+        description="When true, add installed default private copies as explicit conversation membership.",
+    )
 
 
 class ConversationEnsureRequest(BaseModel):
     thread_id: str
-    bootstrap_defaults: bool = True
+    bootstrap_defaults: bool = Field(
+        default=False,
+        description="Install default/private copies for the conversation owner without creating explicit membership.",
+    )
+    add_to_conversation: bool = Field(
+        default=False,
+        description="Seed explicit conversation membership from the bootstrapped default copies.",
+    )
 
 
 class ConversationAgentCreateRequest(BaseModel):

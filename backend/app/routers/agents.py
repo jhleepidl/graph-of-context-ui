@@ -854,6 +854,7 @@ def list_default_agents():
 
 @router.post("/agents/bootstrap_defaults")
 def bootstrap_default_agents(body: AgentBootstrapDefaultsRequest):
+    """Explicit default-agent install path; adding conversation membership is opt-in."""
     principal = get_current_principal()
     is_admin = principal.role == "admin"
     current_user_id = get_current_user_id(required=not is_admin)
@@ -922,9 +923,12 @@ def bootstrap_default_agents(body: AgentBootstrapDefaultsRequest):
 
 @router.post("/conversations/ensure")
 def ensure_conversation(body: ConversationEnsureRequest):
+    """Ensure the conversation exists; bootstrap/install and membership seeding stay explicit."""
     thread_id = (body.thread_id or "").strip()
     if not thread_id:
         raise HTTPException(400, "thread_id is required")
+    if body.add_to_conversation and not body.bootstrap_defaults:
+        raise HTTPException(400, "add_to_conversation requires bootstrap_defaults=true")
 
     principal = get_current_principal()
     is_admin = principal.role == "admin"
@@ -932,6 +936,11 @@ def ensure_conversation(body: ConversationEnsureRequest):
     service_id = _current_service_id()
 
     with Session(engine) as session:
+        conversation_exists = session.exec(
+            select(Conversation.id)
+            .where(Conversation.thread_id == thread_id)
+            .limit(1)
+        ).first() is not None
         _, conversation = _ensure_conversation(
             session,
             thread_id=thread_id,
@@ -939,6 +948,8 @@ def ensure_conversation(body: ConversationEnsureRequest):
             service_id=service_id,
             is_admin=is_admin,
         )
+        memberships_before = len(_conversation_memberships(session, conversation.id))
+        installed_items: list[Agent] = []
         if body.bootstrap_defaults:
             installed_items = _install_default_private_agents(
                 session,
@@ -946,12 +957,13 @@ def ensure_conversation(body: ConversationEnsureRequest):
                 actor_user_id=current_user_id,
                 service_id=service_id,
             )
-            _add_missing_conversation_memberships(
-                session,
-                conversation=conversation,
-                agents=installed_items,
-                only_if_empty=True,
-            )
+            if body.add_to_conversation:
+                _add_missing_conversation_memberships(
+                    session,
+                    conversation=conversation,
+                    agents=installed_items,
+                    only_if_empty=True,
+                )
         conversation.updated_at = utcnow()
         session.add(conversation)
         session.commit()
@@ -962,6 +974,13 @@ def ensure_conversation(body: ConversationEnsureRequest):
         agents = session.exec(select(Agent).where(Agent.id.in_(agent_ids))).all() if agent_ids else []
         return {
             "ok": True,
+            "ensure": {
+                "conversation_created": not conversation_exists,
+                "bootstrap_defaults_requested": bool(body.bootstrap_defaults),
+                "add_to_conversation_requested": bool(body.add_to_conversation),
+                "bootstrapped_defaults_count": len(installed_items),
+                "explicit_membership_seeded": len(memberships) > memberships_before,
+            },
             "conversation": _conversation_payload(
                 conversation,
                 memberships=memberships,
@@ -1251,7 +1270,7 @@ def delete_conversation_agent(thread_id: str, agent_id: str):
 
 @router.get("/threads/{thread_id}/team")
 def list_thread_team(thread_id: str):
-    """Canonical thread-scoped explicit team membership endpoint."""
+    """Canonical thread-scoped explicit team membership read; passive reads do not bootstrap."""
     return list_conversation_agents(thread_id)
 
 
