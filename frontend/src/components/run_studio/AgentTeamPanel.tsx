@@ -1,16 +1,20 @@
 import React from 'react'
-import { type RunStudioAgentTeam } from './types'
+import {
+  selectDominantSkills,
+  selectTeamViewFlags,
+} from './selectors'
+import {
+  type CollaborationProjection,
+  type OrchestrationProjection,
+  type RunStudioAgentTeam,
+  type TeamViewProjection,
+} from './types'
 
 type Props = {
-  team: RunStudioAgentTeam | null
-}
-
-function sourceLabel(source: string): string {
-  const clean = source.trim().toLowerCase()
-  if (clean === 'runtime_snapshot') return 'runtime team'
-  if (clean === 'conversation_membership') return 'thread team'
-  if (clean === 'inferred_from_steps') return 'inferred from steps'
-  return clean || 'unknown'
+  teamView: TeamViewProjection | null
+  legacyTeam: RunStudioAgentTeam | null
+  orchestration: OrchestrationProjection | null
+  collaboration: CollaborationProjection | null
 }
 
 function runtimeClass(status: string): string {
@@ -22,35 +26,48 @@ function runtimeClass(status: string): string {
   return 'runStudioStatus--idle'
 }
 
-export default function AgentTeamPanel({ team }: Props) {
-  const items = team?.items || []
-  const authority = team?.runtime_authority
-  const runtimeCount = items.filter((item) => String(item.source || '') === 'runtime_snapshot').length
-  const threadTeamCount = items.filter((item) => String(item.source || '') === 'conversation_membership').length
-  const inferredCount = items.filter((item) => String(item.source || '') === 'inferred_from_steps').length
-  const rolesWithSkillsCount = items.filter((item) => (item.attached_skills || []).length > 0).length
-  const mode = String(authority?.mode || team?.mode || 'standalone')
-  const catalogSource = String(authority?.agent_catalog_source || team?.agent_catalog_source || 'local')
-  const teamSource = String(authority?.conversation_team_source || team?.conversation_team_source || 'local')
-  const degradedMode = Boolean(authority?.degraded_mode ?? team?.degraded_mode)
-  const fallbackReason = String(authority?.fallback_reason || team?.fallback_reason || '').trim()
+export default function AgentTeamPanel({
+  teamView,
+  legacyTeam,
+  orchestration,
+  collaboration,
+}: Props) {
+  const items = teamView?.items || []
+  const authority = legacyTeam?.runtime_authority
+  const runtimeCount = teamView?.count ?? items.length
+  const presetCount = teamView?.preset_count ?? items.filter((item) => item.preset_id).length
+  const synthesizedCount = teamView?.synthesized_count ?? items.filter((item) => item.synthesized).length
+  const parallelGroupCount = orchestration?.parallel_group_count ?? orchestration?.parallel_groups?.length ?? 0
+  const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
+  const supervisorEnabled = Boolean(
+    orchestration?.supervisor_mode ||
+    orchestration?.supervisor_edges?.length ||
+    orchestration?.supervisor_runtime?.mode ||
+    orchestration?.supervisor_runtime?.instance_id,
+  )
+  const { reviewerPresent, synthesizerPresent } = selectTeamViewFlags(teamView)
+  const degradedMode = Boolean(authority?.degraded_mode ?? legacyTeam?.degraded_mode)
+  const fallbackReason = String(authority?.fallback_reason || legacyTeam?.fallback_reason || '').trim()
+  const runtimeSnapshotCount = (legacyTeam?.items || []).filter((item) => item.source === 'runtime_snapshot').length
+  const threadTeamCount = (legacyTeam?.items || []).filter((item) => item.source === 'conversation_membership').length
+  const inferredCount = (legacyTeam?.items || []).filter((item) => item.source === 'inferred_from_steps').length
 
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
-        <h3>Agent Team</h3>
+        <h3>Team View</h3>
         <div className="runStudioMetaRow">
-          <span className="pill">mode: {mode}</span>
-          <span className="pill">catalog: {catalogSource}</span>
-          <span className="pill">team authority: {teamSource}</span>
-          {degradedMode && <span className="pill">degraded fallback</span>}
-          <span className="pill">active: {team?.active_count ?? 0}</span>
           <span className="pill">runtime: {runtimeCount}</span>
-          <span className="pill">thread team: {threadTeamCount}</span>
-          <span className="pill">inferred: {inferredCount}</span>
-          <span className="pill">with skills: {rolesWithSkillsCount}</span>
+          <span className="pill">preset-backed: {presetCount}</span>
+          <span className="pill">synthesized: {synthesizedCount}</span>
+          <span className="pill">parallel groups: {parallelGroupCount}</span>
+          <span className="pill">collaboration cells: {collaborationCount}</span>
+          {reviewerPresent && <span className="pill">reviewer present</span>}
+          {synthesizerPresent && <span className="pill">synthesizer present</span>}
+          {supervisorEnabled && <span className="pill">supervisor enabled</span>}
         </div>
       </div>
+
       {degradedMode && fallbackReason && (
         <div className="runStudioWarning">
           <b>Fallback reason:</b> {fallbackReason}
@@ -58,68 +75,60 @@ export default function AgentTeamPanel({ team }: Props) {
       )}
 
       {items.length === 0 && (
-        <div className="muted">No thread team is configured yet. Runtime members appear only after execution emits team snapshots or step agents.</div>
+        <div className="muted">
+          No runtime team projection is visible yet. Legacy team detail will appear after execution emits runtime members.
+        </div>
       )}
-      {items.length > 0 && runtimeCount === 0 && (
-        <div className="muted" style={{ marginBottom: 8 }}>
-          Runtime team snapshot not detected yet. This list currently reflects thread team configuration and/or inferred step agents.
+
+      {items.length > 0 && (
+        <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+          {runtimeSnapshotCount > 0 && <span className="pill">runtime snapshot: {runtimeSnapshotCount}</span>}
+          {threadTeamCount > 0 && <span className="pill">thread team fallback: {threadTeamCount}</span>}
+          {inferredCount > 0 && <span className="pill">inferred fallback: {inferredCount}</span>}
         </div>
       )}
 
       <div className="runStudioList">
         {items.map((item, index) => {
+          const dominantSkills = selectDominantSkills(item)
+          const fallbackSkillIds = (item.attached_skill_ids || []).slice(0, 3)
+          const skillChips = dominantSkills.length > 0
+            ? dominantSkills.map((skill) => skill.skill_name || skill.skill_id)
+            : fallbackSkillIds
+          const roleBits = [item.role_label, item.role_id].filter(Boolean)
+          const slotBits = [item.slot_label, item.slot_id].filter(Boolean)
           const status = String(item.runtime_status || 'idle')
-          const source = String(item.source || 'unknown')
+
           return (
-            <article key={`${item.agent_id}:${index}`} className="runStudioListItem">
+            <article
+              key={`${item.runtime_instance_id || item.agent_id || item.display_label || 'runtime-agent'}:${index}`}
+              className="runStudioListItem"
+            >
               <div className="row" style={{ marginBottom: 6 }}>
-                <b>{item.name || item.role_label || item.agent_id}</b>
+                <b>{item.display_label || item.role_label || item.agent_id || 'runtime agent'}</b>
                 <span className={`pill runStudioStatus ${runtimeClass(status)}`}>{status}</span>
-                <span className="pill">{sourceLabel(source)}</span>
-                {!item.enabled && <span className="pill">disabled</span>}
-                {typeof item.order_index === 'number' && <span className="pill">#{item.order_index + 1}</span>}
-                {item.ephemeral && <span className="pill">ephemeral</span>}
+                {item.preset_id && <span className="pill">preset: {item.preset_id}</span>}
+                {!item.preset_id && item.synthesized && <span className="pill">synthesized</span>}
+                {item.authority_profile_id && <span className="pill">authority: {item.authority_profile_id}</span>}
               </div>
-              <div className="muted">agent_id: {item.agent_id}</div>
-              {item.source_key && <div className="muted">source_key: {item.source_key}</div>}
-              {item.source_path && item.source_path !== item.source_key && (
-                <div className="muted">source_path: {item.source_path}</div>
-              )}
-              {item.runtime_instance_id && <div className="muted">runtime_instance: {item.runtime_instance_id}</div>}
-              {item.role_label && <div className="muted">role: {item.role_label}</div>}
-              {(item.template_id || item.provider || item.model) && (
+
+              {roleBits.length > 0 && <div className="muted">role: {roleBits.join(' / ')}</div>}
+              {slotBits.length > 0 && <div className="muted">slot: {slotBits.join(' / ')}</div>}
+              {(item.provider || item.model) && (
                 <div className="muted">
-                  template: {item.template_id || '-'} | provider: {item.provider || '-'} | model: {item.model || '-'}
+                  model: {item.provider || '-'} / {item.model || '-'}
                 </div>
               )}
               {item.context_pack_id && <div className="muted">context pack: {item.context_pack_id}</div>}
-              {item.attached_skills && item.attached_skills.length > 0 && (
-                <div className="runStudioList" style={{ marginTop: 6 }}>
-                  {item.attached_skills.slice(0, 6).map((skill) => (
-                    <div key={skill.skill_id} className="runStudioInlineSubItem">
-                      <div className="row" style={{ marginBottom: 4 }}>
-                        <span className="pill">{skill.skill_name || skill.skill_id}</span>
-                        <span className="pill">load: {skill.load_level || 'metadata_only'}</span>
-                        {skill.selected_by && <span className="pill">by: {skill.selected_by}</span>}
-                        {skill.status && <span className="pill">{skill.status}</span>}
-                      </div>
-                      {skill.selection_reason && <div className="muted">{skill.selection_reason}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-              {item.description && <div className="muted">{item.description}</div>}
-              {item.capability_tags && item.capability_tags.length > 0 && (
-                <div className="runStudioMetaRow">
-                  {item.capability_tags.slice(0, 5).map((tag) => (
-                    <span key={tag} className="pill">{tag}</span>
-                  ))}
-                </div>
-              )}
-              {item.responsibilities && item.responsibilities.length > 0 && (
-                <div className="runStudioMetaRow">
-                  {item.responsibilities.slice(0, 4).map((role) => (
-                    <span key={role} className="pill">{role}</span>
+              {item.runtime_instance_id && <div className="muted">runtime instance: {item.runtime_instance_id}</div>}
+              {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
+
+              {skillChips.length > 0 && (
+                <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
+                  {skillChips.map((skill) => (
+                    <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:${skill}`} className="pill">
+                      {skill}
+                    </span>
                   ))}
                 </div>
               )}

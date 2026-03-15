@@ -1,0 +1,82 @@
+import React from 'react'
+import {
+  type CheckpointProjection,
+  type OrchestrationProjection,
+} from './types'
+
+type Props = {
+  orchestration: OrchestrationProjection | null
+  checkpoints: CheckpointProjection | null
+}
+
+export default function OrchestrationPanel({ orchestration, checkpoints }: Props) {
+  const parallelGroups = orchestration?.parallel_groups || []
+  const sequentialAfter = orchestration?.sequential_after || {}
+  const supervisorEdges = orchestration?.supervisor_edges || []
+  const checkpointCount = Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
+  const pendingCheckpoints = (checkpoints?.items || []).filter((item) => String(item.status || 'pending') !== 'done').length
+
+  return (
+    <section className="card runStudioPanel">
+      <div className="runStudioPanelHeader">
+        <h3>Orchestration</h3>
+        <div className="runStudioMetaRow">
+          <span className="pill">mode: {orchestration?.mode || 'runtime_managed'}</span>
+          <span className="pill">parallel groups: {orchestration?.parallel_group_count ?? parallelGroups.length}</span>
+          <span className="pill">sequential deps: {orchestration?.sequential_dependency_count ?? Object.keys(sequentialAfter).length}</span>
+          <span className="pill">supervisor edges: {orchestration?.supervisor_edge_count ?? supervisorEdges.length}</span>
+          <span className="pill">checkpoints: {checkpointCount}</span>
+          {pendingCheckpoints > 0 && <span className="pill">pending: {pendingCheckpoints}</span>}
+        </div>
+      </div>
+
+      <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+        {orchestration?.supervisor_mode && <span className="pill">supervisor mode: {orchestration.supervisor_mode}</span>}
+        {orchestration?.supervisor_runtime?.instance_id && (
+          <span className="pill">supervisor: {String(orchestration.supervisor_runtime.instance_id)}</span>
+        )}
+      </div>
+
+      <div className="runStudioList">
+        {parallelGroups.map((group, index) => (
+          <article key={`parallel:${group.group_id || index}`} className="runStudioListItem">
+            <div className="row" style={{ marginBottom: 4 }}>
+              <span className="pill">{group.group_id || `group-${index + 1}`}</span>
+              <span className="pill">parallel</span>
+            </div>
+            <div className="muted">
+              members: {(group.member_instance_ids || []).join(' | ') || 'not specified'}
+            </div>
+          </article>
+        ))}
+
+        {Object.entries(sequentialAfter).map(([target, deps]) => (
+          <article key={`sequential:${target}`} className="runStudioListItem">
+            <div className="row" style={{ marginBottom: 4 }}>
+              <span className="pill">{target}</span>
+              <span className="pill">sequential after</span>
+            </div>
+            <div className="muted">{deps.join(' | ') || 'no dependencies listed'}</div>
+          </article>
+        ))}
+
+        {supervisorEdges.map((edge, index) => (
+          <article key={`supervisor:${index}`} className="runStudioListItem">
+            <div className="row" style={{ marginBottom: 4 }}>
+              <span className="pill">supervisor edge</span>
+              {edge.from && <span className="pill">from: {String(edge.from)}</span>}
+              {edge.to && <span className="pill">to: {String(edge.to)}</span>}
+            </div>
+            {(edge.type || edge.kind || edge.label) && (
+              <div className="muted">{String(edge.type || edge.kind || edge.label)}</div>
+            )}
+          </article>
+        ))}
+
+        {parallelGroups.length === 0 && Object.keys(sequentialAfter).length === 0 && supervisorEdges.length === 0 && (
+          <div className="muted">No explicit orchestration graph was emitted. Legacy runs still render as runtime-managed execution.</div>
+        )}
+      </div>
+    </section>
+  )
+}

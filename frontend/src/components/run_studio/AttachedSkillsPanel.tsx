@@ -12,12 +12,13 @@ export default function AttachedSkillsPanel({ summary, team }: Props) {
   const currentRunSkills = summary?.current_run_skills
   const aggregatedSkills = currentRunSkills?.attached_skills || []
   const roleSkillLinks = currentRunSkills?.lineage?.role_skill_links || []
+  const runtimeAgents = currentRunSkills?.runtime_agents || []
 
   const fallbackRoleSkills = (effectiveTeam?.items || [])
     .flatMap((item) =>
       (item.attached_skills || []).map((skill) => ({
         runtime_instance_id: item.runtime_instance_id || null,
-        role_label: item.role_label || item.name || item.agent_id,
+        role_label: item.display_label || item.role_label || item.name || item.agent_id,
         skill_id: skill.skill_id,
         skill_name: skill.skill_name || skill.skill_id,
         load_level: skill.load_level || 'metadata_only',
@@ -26,7 +27,21 @@ export default function AttachedSkillsPanel({ summary, team }: Props) {
       })),
     )
 
-  const effectiveRoleLinks = roleSkillLinks.length > 0 ? roleSkillLinks : fallbackRoleSkills
+  const runtimeAgentFallbackRoleSkills = runtimeAgents.flatMap((item) =>
+    (item.attached_skills || []).map((skill) => ({
+      runtime_instance_id: item.runtime_instance_id || item.instance_id || null,
+      role_label: item.display_label || item.role_label || item.name || item.agent_id || 'runtime role',
+      skill_id: skill.skill_id,
+      skill_name: skill.skill_name || skill.skill_id,
+      load_level: skill.load_level || 'metadata_only',
+      selected_by: skill.selected_by || null,
+      selection_reason: skill.selection_reason || null,
+    })),
+  )
+
+  const effectiveRoleLinks = roleSkillLinks.length > 0
+    ? roleSkillLinks
+    : (fallbackRoleSkills.length > 0 ? fallbackRoleSkills : runtimeAgentFallbackRoleSkills)
 
   return (
     <section className="card runStudioPanel">

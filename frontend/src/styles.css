@@ -1080,6 +1080,17 @@ button.tiny.isActive {
   border-color: #d1d5db;
 }
 
+@media (max-width: 980px) {
+  .runStudioGrid--top,
+  .runStudioGrid--bottom {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .runStudioNowGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .runStudioAdvancedGrid {
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(420px, 1fr);

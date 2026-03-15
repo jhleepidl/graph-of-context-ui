@@ -25,21 +25,178 @@ export type AttachedSkillSummary = {
   role_count?: number
 }
 
+export type TaskInterpretation = {
+  summary?: string | null
+  items?: string[]
+  [key: string]: unknown
+}
+
+export type CapabilitySlotSpec = {
+  slot_id?: string | null
+  role_id?: string | null
+  display_label?: string | null
+  label?: string | null
+  name?: string | null
+  preset_id?: string | null
+  synthesized?: boolean
+  selection_reason?: string | null
+  capabilities?: string[]
+  [key: string]: unknown
+}
+
+export type SupervisorRuntime = {
+  mode?: string | null
+  kind?: string | null
+  strategy?: string | null
+  instance_id?: string | null
+  [key: string]: unknown
+}
+
+export type CollaborationCell = {
+  cell_id?: string | null
+  kind?: string | null
+  display_label?: string | null
+  member_instance_ids?: string[]
+  member_labels?: string[]
+  decision_mode?: string | null
+  selection_reason?: string | null
+  max_rounds?: number | null
+  topology?: string | null
+  termination_rule?: string | null
+  [key: string]: unknown
+}
+
+export type AuthorityGraphEntry = {
+  authority_id?: string | null
+  runtime_instance_id?: string | null
+  authority_profile_id?: string | null
+  managed_by?: string | null
+  scope?: string | null
+  allowed_actions?: string[]
+  restricted_actions?: string[]
+  approval_required_for?: string[]
+  [key: string]: unknown
+}
+
+export type ExecutionCheckpoint = {
+  checkpoint_id?: string | null
+  kind?: string | null
+  label?: string | null
+  stage?: string | null
+  status?: string | null
+  requires_human?: boolean
+  requires_approval?: boolean
+  blocking?: boolean
+  selection_reason?: string | null
+  [key: string]: unknown
+}
+
 export type RuntimeAgentWithSkills = {
   runtime_instance_id?: string | null
+  instance_id?: string | null
   role_label?: string | null
+  role_id?: string | null
+  slot_id?: string | null
+  slot_label?: string | null
   template_id?: string | null
+  preset_id?: string | null
+  authority_profile_id?: string | null
   provider?: string | null
   model?: string | null
   runtime_status?: string | null
   attached_skills?: AttachedSkillSummary[]
+  attached_skill_ids?: string[]
   context_pack_id?: string | null
   source?: string | null
   source_key?: string | null
   source_path?: string | null
   agent_id?: string | null
   name?: string | null
+  display_label?: string | null
+  selection_reason?: string | null
+  synthesized?: boolean
   enabled?: boolean
+}
+
+export type RuntimeAgentInstanceV2 = RuntimeAgentWithSkills & {
+  display_label?: string | null
+  role_label?: string | null
+  role_id?: string | null
+  slot_id?: string | null
+  slot_label?: string | null
+  preset_id?: string | null
+  synthesized?: boolean
+  selection_reason?: string | null
+  context_pack_id?: string | null
+  authority_profile_id?: string | null
+}
+
+export type TeamViewProjection = {
+  items?: RuntimeAgentInstanceV2[]
+  count?: number
+  preset_count?: number
+  synthesized_count?: number
+}
+
+export type WhyThisTeamProjection = {
+  selection_explanations?: Array<Record<string, unknown>>
+  slot_reasons?: Array<{
+    slot_id?: string | null
+    role_id?: string | null
+    display_label?: string | null
+    reason?: string | null
+  }>
+  agent_reasons?: Array<{
+    runtime_instance_id?: string | null
+    display_label?: string | null
+    reason?: string | null
+  }>
+  conversation_preferences?: Record<string, unknown> | null
+  preset_count?: number
+  synthesized_count?: number
+}
+
+export type OrchestrationProjection = {
+  mode?: string | null
+  parallel_groups?: Array<{
+    group_id?: string | null
+    member_instance_ids?: string[]
+    [key: string]: unknown
+  }>
+  sequential_after?: Record<string, string[]>
+  supervisor_runtime?: SupervisorRuntime
+  supervisor_mode?: string | null
+  supervisor_edges?: Array<Record<string, unknown>>
+  parallel_group_count?: number
+  sequential_dependency_count?: number
+  supervisor_edge_count?: number
+}
+
+export type CollaborationProjection = {
+  items?: CollaborationCell[]
+  counts?: Record<string, number>
+  count?: number
+}
+
+export type AuthorityProjection = {
+  items?: Array<{
+    runtime_instance_id?: string | null
+    display_label?: string | null
+    authority_profile_id?: string | null
+    managed_by?: string | null
+    allowed_actions?: string[]
+    restricted_actions?: string[]
+    approval_required_for?: string[]
+    graph_entry_count?: number
+  }>
+  graph?: AuthorityGraphEntry[]
+  count?: number
+  graph_count?: number
+}
+
+export type CheckpointProjection = {
+  items?: ExecutionCheckpoint[]
+  counts?: Record<string, number>
 }
 
 export type ContextPackSummary = {
@@ -95,6 +252,12 @@ export type PlanningBoundaryProjection = {
   mode?: string | null
   degraded_mode?: boolean
   fallback_reason?: string | null
+  stages?: Array<{
+    stage?: string | null
+    status?: string | null
+    managed_by?: string | null
+  }>
+  ready_for_goc_control_plane?: boolean
   ready_for_goc_planner?: boolean
   future_capabilities?: string[]
 }
@@ -272,10 +435,17 @@ export type RunStudioSummary = {
   current_run_skills?: {
     run_id?: string | null
     attached_skills?: AttachedSkillSummary[]
-    runtime_agents?: RuntimeAgentWithSkills[]
+    runtime_agents?: RuntimeAgentInstanceV2[]
     skill_packages?: SkillPackage[]
     context_packs?: ContextPackSummary[]
     skill_usage?: SkillUsageEventSummary[]
+    task_interpretation?: TaskInterpretation | null
+    team_view?: TeamViewProjection
+    why_this_team?: WhyThisTeamProjection
+    orchestration?: OrchestrationProjection
+    collaboration?: CollaborationProjection
+    authority?: AuthorityProjection
+    checkpoints?: CheckpointProjection
     lineage?: {
       role_skill_links?: Array<{
         runtime_instance_id?: string | null
@@ -317,6 +487,12 @@ export type RunStudioSummary = {
     degraded_mode?: boolean
     fallback_reason?: string | null
   }
+  team_view?: TeamViewProjection
+  why_this_team?: WhyThisTeamProjection
+  orchestration?: OrchestrationProjection
+  collaboration?: CollaborationProjection
+  authority?: AuthorityProjection
+  checkpoints?: CheckpointProjection
   planning_boundary?: PlanningBoundaryProjection
   runtime_authority?: RuntimeAuthorityProjection
   mode?: 'standalone' | 'goc'
@@ -337,7 +513,7 @@ export type RunStudioAgentTeam = {
   snapshot_node_type?: string | null
   snapshot_source_key?: string | null
   snapshot_source_path?: string | null
-  items?: Array<{
+  items?: Array<RuntimeAgentWithSkills & {
     membership_id?: string
     agent_id: string
     runtime_instance_id?: string | null

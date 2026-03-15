@@ -1,9 +1,20 @@
 import React from 'react'
-import { type RunStudioAgentTeam, type RunStudioSummary } from './types'
+import {
+  type CheckpointProjection,
+  type CollaborationProjection,
+  type OrchestrationProjection,
+  type RunStudioAgentTeam,
+  type RunStudioSummary,
+  type TeamViewProjection,
+} from './types'
 
 type Props = {
   summary: RunStudioSummary | null
   team?: RunStudioAgentTeam | null
+  teamView?: TeamViewProjection | null
+  orchestration?: OrchestrationProjection | null
+  collaboration?: CollaborationProjection | null
+  checkpoints?: CheckpointProjection | null
 }
 
 function statusClass(status: string): string {
@@ -15,7 +26,14 @@ function statusClass(status: string): string {
   return 'runStudioStatus--idle'
 }
 
-export default function NowPanel({ summary, team }: Props) {
+export default function NowPanel({
+  summary,
+  team,
+  teamView,
+  orchestration,
+  collaboration,
+  checkpoints,
+}: Props) {
   const now = summary?.now
   const task = now?.task
   const state = now?.state
@@ -42,28 +60,37 @@ export default function NowPanel({ summary, team }: Props) {
   const skillSource = String(
     authority?.skill_catalog_source || state?.skill_catalog_source || summary?.skill_catalog_source || 'local',
   )
-  const teamItems = team?.items || []
-  const runtimeTeamCount = teamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
+  const legacyTeamItems = team?.items || []
+  const runtimeTeamCount = teamView?.count ?? legacyTeamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
+  const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
+  const checkpointCount = Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
+  const supervisorEnabled = Boolean(
+    orchestration?.supervisor_mode ||
+    orchestration?.supervisor_runtime?.mode ||
+    orchestration?.supervisor_runtime?.instance_id ||
+    orchestration?.supervisor_edges?.length,
+  )
 
   let executionHint = 'No execution step detected yet'
   if (pendingApproval) {
     executionHint = 'Waiting for approval before execution continues'
   } else if (currentRunInactive) {
-    executionHint = 'Latest run is inactive/superseded; no active execution step detected'
+    executionHint = 'Latest run is inactive or superseded; no active execution step detected'
   } else if (stepCount === 0 && staleQueuedStepCount > 0) {
     executionHint = 'No current execution step detected. Older queued work exists in prior runs'
   } else if (stepCount === 0 && status === 'queued') {
     executionHint = 'Run is queued, but no execution step has started yet'
   } else if (stepCount === 0 && runtimeTeamCount > 0) {
-    executionHint = 'Team updated, but no execution step detected yet'
-  } else if (stepCount === 0 && teamItems.length > 0) {
-    executionHint = 'Thread team configured, but no execution step detected yet'
+    executionHint = 'Team assembled, but execution has not started yet'
   } else if (status === 'running' || status === 'queued') {
     executionHint = 'Execution started'
   } else if (status === 'done' && stepCount > 0) {
     executionHint = 'Execution completed'
   } else if (stepCount > 0) {
     executionHint = 'Execution steps detected'
+  }
+  if (supervisorEnabled) {
+    executionHint += ' with supervisor coordination'
   }
   if (degradedMode) {
     executionHint = `Degraded fallback active${fallbackReason ? `: ${fallbackReason}` : ''}`
@@ -76,7 +103,11 @@ export default function NowPanel({ summary, team }: Props) {
         <div className="row" style={{ marginBottom: 0 }}>
           <span className={`pill runStudioStatus ${statusClass(status)}`}>run: {status}</span>
           {blocked && <span className="pill runStudioStatus runStudioStatus--blocked">blocked</span>}
-          {pendingApproval && <span className="pill runStudioStatus runStudioStatus--queued">pending approval{pendingApprovalCount > 1 ? ` (${pendingApprovalCount})` : ''}</span>}
+          {pendingApproval && (
+            <span className="pill runStudioStatus runStudioStatus--queued">
+              pending approval{pendingApprovalCount > 1 ? ` (${pendingApprovalCount})` : ''}
+            </span>
+          )}
         </div>
       </div>
 
@@ -116,6 +147,13 @@ export default function NowPanel({ summary, team }: Props) {
         <span className="pill">context: {contextSource}</span>
         <span className="pill">team: {teamSource}</span>
         <span className="pill">skills: {skillSource}</span>
+        <span className="pill">runtime team: {runtimeTeamCount}</span>
+        <span className="pill">collaboration: {collaborationCount}</span>
+        <span className="pill">checkpoints: {checkpointCount}</span>
+        {orchestration?.parallel_group_count ? (
+          <span className="pill">parallel groups: {orchestration.parallel_group_count}</span>
+        ) : null}
+        {supervisorEnabled && <span className="pill">supervisor enabled</span>}
         {degradedMode && <span className="pill">degraded fallback</span>}
         <span className="pill">active context: {state?.active_context_count ?? 0}</span>
         {currentRunId && <span className="pill">current run: {currentRunId.slice(0, 8)}</span>}

@@ -1,6 +1,11 @@
 import React from 'react'
 import NowPanel from './NowPanel'
 import AgentTeamPanel from './AgentTeamPanel'
+import WhyThisTeamPanel from './WhyThisTeamPanel'
+import OrchestrationPanel from './OrchestrationPanel'
+import CollaborationPanel from './CollaborationPanel'
+import AuthorityPanel from './AuthorityPanel'
+import CheckpointPanel from './CheckpointPanel'
 import AttachedSkillsPanel from './AttachedSkillsPanel'
 import ContextPackPanel from './ContextPackPanel'
 import ContextDecisionPanel from './ContextDecisionPanel'
@@ -16,7 +21,15 @@ import {
   type RunStudioSkillUsage,
   type RunStudioSummary,
 } from './types'
-import { selectEffectiveAgentTeam } from './selectors'
+import {
+  selectEffectiveAgentTeam,
+  selectEffectiveAuthority,
+  selectEffectiveCheckpoints,
+  selectEffectiveCollaboration,
+  selectEffectiveOrchestration,
+  selectEffectiveTeamView,
+  selectEffectiveWhyThisTeam,
+} from './selectors'
 
 type DetailState = {
   agentTeam?: boolean
@@ -85,6 +98,12 @@ export default function RunStudioLayout({
   const runtimeAuthority = summary?.runtime_authority
   const planningBoundary = summary?.planning_boundary
   const effectiveTeam = selectEffectiveAgentTeam(summary, team)
+  const teamView = selectEffectiveTeamView(summary, team)
+  const whyThisTeam = selectEffectiveWhyThisTeam(summary, team)
+  const orchestration = selectEffectiveOrchestration(summary)
+  const collaboration = selectEffectiveCollaboration(summary)
+  const authorityProjection = selectEffectiveAuthority(summary, team)
+  const checkpoints = selectEffectiveCheckpoints(summary)
   const decisionsLoaded = Boolean(detailLoaded?.contextDecisions || decisions)
   const evidenceLoaded = Boolean(detailLoaded?.evidence || evidence)
 
@@ -111,6 +130,7 @@ export default function RunStudioLayout({
             <span className="pill">skills: {runtimeAuthority?.skill_catalog_source || summary?.skill_catalog_source || 'local'}</span>
             {runtimeAuthority?.degraded_mode && <span className="pill">degraded fallback</span>}
             {planningBoundary?.status && <span className="pill">planning: {planningBoundary.status}</span>}
+            {planningBoundary?.ready_for_goc_control_plane && <span className="pill">goc control-plane ready</span>}
             <span className="pill">core: {memoryProjection.core_count ?? 0}</span>
             <span className="pill">supporting: {memoryProjection.supporting_count ?? 0}</span>
             <span className="pill">execution/debug: {memoryProjection.execution_count ?? 0}</span>
@@ -123,13 +143,25 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--top">
-        <NowPanel summary={summary} team={effectiveTeam} />
-        {effectiveTeam ? (
-          <AgentTeamPanel team={effectiveTeam} />
+        <NowPanel
+          summary={summary}
+          team={effectiveTeam}
+          teamView={teamView}
+          orchestration={orchestration}
+          collaboration={collaboration}
+          checkpoints={checkpoints}
+        />
+        {teamView || effectiveTeam ? (
+          <AgentTeamPanel
+            teamView={teamView}
+            legacyTeam={effectiveTeam}
+            orchestration={orchestration}
+            collaboration={collaboration}
+          />
         ) : (
           <section className="card runStudioPanel">
             <div className="runStudioPanelHeader">
-              <h3>Agent Team</h3>
+              <h3>Team View</h3>
             </div>
             <div className="muted" style={{ marginBottom: 8 }}>
               Runtime team detail is available on demand.
@@ -142,13 +174,34 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
+        <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
+        <OrchestrationPanel orchestration={orchestration} checkpoints={checkpoints} />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <CollaborationPanel collaboration={collaboration} />
+        <AuthorityPanel authority={authorityProjection} runtimeAuthority={runtimeAuthority} />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <CheckpointPanel checkpoints={checkpoints} />
         <AttachedSkillsPanel summary={summary} team={effectiveTeam} />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
         <ContextPackPanel
           contextPacks={contextPacks}
           summary={summary}
           onLoadDetail={onLoadContextPacks}
           detailLoading={Boolean(detailLoading?.contextPacks)}
           detailLoaded={Boolean(detailLoaded?.contextPacks)}
+        />
+        <SkillUsagePanel
+          skillUsage={skillUsage}
+          summary={summary}
+          onLoadDetail={onLoadSkillUsage}
+          detailLoading={Boolean(detailLoading?.skillUsage)}
+          detailLoaded={Boolean(detailLoaded?.skillUsage)}
         />
       </div>
 
@@ -206,13 +259,6 @@ export default function RunStudioLayout({
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <SkillUsagePanel
-          skillUsage={skillUsage}
-          summary={summary}
-          onLoadDetail={onLoadSkillUsage}
-          detailLoading={Boolean(detailLoading?.skillUsage)}
-          detailLoaded={Boolean(detailLoaded?.skillUsage)}
-        />
         {decisionsLoaded ? (
           <MissingContextPanel
             decisions={decisions}
@@ -236,9 +282,7 @@ export default function RunStudioLayout({
             </button>
           </section>
         )}
-      </div>
 
-      <div className="runStudioGrid" style={{ gridTemplateColumns: '1fr' }}>
         <AdvancedToolsPanel
           onOpenGraph={onOpenGraph}
           onOpenRawTrace={onOpenRawTrace}
