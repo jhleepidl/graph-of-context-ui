@@ -161,6 +161,12 @@ class ResolvedRuntimeLogicTests(unittest.TestCase):
         )
         self.assertTrue(bool(capability_summary.get("degraded_mode")))
         self.assertEqual(capability_summary.get("fallback_reason"), "planner temporarily unavailable")
+        self.assertIn("team_view", capability_summary)
+        self.assertIn("why_this_team", capability_summary)
+        self.assertIn("orchestration", capability_summary)
+        self.assertIn("collaboration", capability_summary)
+        self.assertIn("authority", capability_summary)
+        self.assertIn("checkpoints", capability_summary)
 
         direct_capability_summary = build_run_skill_summary(nodes=nodes, edges=[])
         direct_context_pack_summary = build_thread_context_pack_summary(nodes=nodes, edges=[])

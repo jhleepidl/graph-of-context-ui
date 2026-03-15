@@ -10,10 +10,16 @@ from sqlmodel import Session, select
 from app.models import Agent, Conversation, ConversationAgent
 from app.services.context_packs import extract_context_pack_summaries
 from app.services.planning_boundary import build_planning_boundary_projection
-from app.services.runtime_authority import apply_runtime_authority, derive_runtime_authority
+from app.services.runtime_authority import (
+    apply_runtime_authority,
+    build_runtime_authority_projection,
+    derive_runtime_authority,
+    extract_authority_profile_id,
+)
 from app.services.runtime_scope import resolve_run_scoped_nodes
 from app.services.runtime_snapshot import (
     clean_list_of_text as _clean_list_of_text,
+    clean_text as _snapshot_clean_text,
     created_sort_key as _created_sort_key,
     extract_runtime_team_snapshot,
     node_payload as _node_payload,
@@ -175,6 +181,279 @@ def aggregate_attached_skills(runtime_agents: list[dict[str, Any]]) -> list[dict
     )
 
 
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        clean = value.strip().lower()
+        if clean in {"1", "true", "yes", "y", "on"}:
+            return True
+        if clean in {"0", "false", "no", "n", "off"}:
+            return False
+    return False
+
+
+def _slot_indexes(runtime_snapshot: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    slots = list(((runtime_snapshot or {}).get("team_plan") or {}).get("slots") or [])
+    slot_by_id: dict[str, dict[str, Any]] = {}
+    slot_by_role_id: dict[str, dict[str, Any]] = {}
+    for slot in slots:
+        if not isinstance(slot, dict):
+            continue
+        slot_id = _snapshot_clean_text(slot.get("slot_id") or slot.get("slotId") or slot.get("id"))
+        role_id = _snapshot_clean_text(slot.get("role_id") or slot.get("roleId"))
+        if slot_id:
+            slot_by_id[slot_id] = slot
+        if role_id:
+            slot_by_role_id[role_id] = slot
+    return slot_by_id, slot_by_role_id
+
+
+def build_team_view_projection(
+    *,
+    runtime_agents: list[dict[str, Any]],
+    runtime_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    slot_by_id, slot_by_role_id = _slot_indexes(runtime_snapshot)
+    items: list[dict[str, Any]] = []
+
+    for agent in runtime_agents:
+        slot = slot_by_id.get(str(agent.get("slot_id") or "").strip()) or slot_by_role_id.get(str(agent.get("role_id") or "").strip())
+        display_label = _clean_text(
+            agent.get("display_label")
+            or agent.get("name")
+            or (slot or {}).get("display_label")
+            or (slot or {}).get("displayLabel")
+            or agent.get("role_label")
+            or agent.get("runtime_instance_id")
+            or agent.get("agent_id")
+        )
+        selection_reason = _clean_text(
+            agent.get("selection_reason")
+            or (slot or {}).get("selection_reason")
+            or (slot or {}).get("selectionReason")
+            or (slot or {}).get("reason")
+        )
+        preset_id = _clean_text(agent.get("preset_id") or (slot or {}).get("preset_id") or (slot or {}).get("presetId"))
+        attached_skill_ids = sorted(
+            {
+                str(skill_id).strip()
+                for skill_id in list(agent.get("attached_skill_ids") or [])
+                if str(skill_id).strip()
+            }
+            | {
+                str(item.get("skill_id") or "").strip()
+                for item in list(agent.get("attached_skills") or [])
+                if str(item.get("skill_id") or "").strip()
+            }
+        )
+        items.append(
+            {
+                "runtime_instance_id": agent.get("runtime_instance_id") or agent.get("instance_id"),
+                "display_label": display_label,
+                "slot_id": agent.get("slot_id") or (slot or {}).get("slot_id") or (slot or {}).get("slotId"),
+                "slot_label": _clean_text(
+                    (slot or {}).get("display_label")
+                    or (slot or {}).get("displayLabel")
+                    or (slot or {}).get("label")
+                    or (slot or {}).get("name")
+                ),
+                "role_id": agent.get("role_id") or (slot or {}).get("role_id") or (slot or {}).get("roleId"),
+                "role_label": agent.get("role_label") or (slot or {}).get("role_label") or (slot or {}).get("label"),
+                "preset_id": preset_id,
+                "synthesized": _boolish(agent.get("synthesized")),
+                "selection_reason": selection_reason,
+                "attached_skill_ids": attached_skill_ids,
+                "context_pack_id": agent.get("context_pack_id"),
+                "runtime_status": agent.get("runtime_status"),
+                "authority_profile_id": extract_authority_profile_id(agent),
+            }
+        )
+
+    synthesized_count = sum(1 for item in items if bool(item.get("synthesized")))
+    preset_count = sum(1 for item in items if str(item.get("preset_id") or "").strip())
+    return {
+        "items": items,
+        "count": len(items),
+        "preset_count": preset_count,
+        "synthesized_count": synthesized_count,
+    }
+
+
+def build_why_this_team_projection(
+    *,
+    team_view: dict[str, Any],
+    runtime_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    snapshot = runtime_snapshot or {}
+    slot_reasons: list[dict[str, Any]] = []
+    for slot in list(((snapshot.get("team_plan") or {}).get("slots") or [])):
+        if not isinstance(slot, dict):
+            continue
+        reason = _clean_text(slot.get("selection_reason") or slot.get("selectionReason") or slot.get("reason"))
+        if not reason:
+            continue
+        slot_reasons.append(
+            {
+                "slot_id": slot.get("slot_id") or slot.get("slotId") or slot.get("id"),
+                "role_id": slot.get("role_id") or slot.get("roleId"),
+                "display_label": slot.get("display_label") or slot.get("displayLabel") or slot.get("label") or slot.get("name"),
+                "reason": reason,
+            }
+        )
+
+    agent_reasons = [
+        {
+            "runtime_instance_id": item.get("runtime_instance_id"),
+            "display_label": item.get("display_label"),
+            "reason": item.get("selection_reason"),
+        }
+        for item in list(team_view.get("items") or [])
+        if _clean_text(item.get("selection_reason"))
+    ]
+    explanations = list(snapshot.get("selection_explanations") or [])
+    return {
+        "selection_explanations": explanations,
+        "slot_reasons": slot_reasons,
+        "agent_reasons": agent_reasons,
+        "conversation_preferences": snapshot.get("conversation_preferences"),
+        "preset_count": int(team_view.get("preset_count") or 0),
+        "synthesized_count": int(team_view.get("synthesized_count") or 0),
+    }
+
+
+def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    snapshot = runtime_snapshot or {}
+    team_plan = snapshot.get("team_plan") or {}
+    supervisor_runtime = team_plan.get("supervisor_runtime") or {}
+    execution_graph = snapshot.get("execution_graph") or {}
+    parallel_groups = list(execution_graph.get("parallel_groups") or [])
+    sequential_after = dict(execution_graph.get("sequential_after") or {})
+    supervisor_edges = list(execution_graph.get("supervisor_edges") or [])
+    mode = _clean_text(
+        team_plan.get("mode")
+        or execution_graph.get("mode")
+        or supervisor_runtime.get("mode")
+        or supervisor_runtime.get("kind")
+        or supervisor_runtime.get("strategy")
+    )
+    if not mode:
+        if parallel_groups:
+            mode = "parallel"
+        elif sequential_after:
+            mode = "sequential"
+        else:
+            mode = "runtime_managed"
+
+    return {
+        "mode": mode,
+        "parallel_groups": parallel_groups,
+        "sequential_after": sequential_after,
+        "supervisor_runtime": supervisor_runtime,
+        "supervisor_mode": _clean_text(
+            supervisor_runtime.get("mode") or supervisor_runtime.get("kind") or supervisor_runtime.get("strategy")
+        ),
+        "supervisor_edges": supervisor_edges,
+        "parallel_group_count": len(parallel_groups),
+        "sequential_dependency_count": len(sequential_after),
+        "supervisor_edge_count": len(supervisor_edges),
+    }
+
+
+def build_collaboration_projection(
+    *,
+    runtime_snapshot: dict[str, Any] | None,
+    team_view: dict[str, Any],
+) -> dict[str, Any]:
+    snapshot = runtime_snapshot or {}
+    labels_by_instance = {
+        str(item.get("runtime_instance_id") or ""): item.get("display_label")
+        for item in list(team_view.get("items") or [])
+        if isinstance(item, dict) and str(item.get("runtime_instance_id") or "").strip()
+    }
+    items: list[dict[str, Any]] = []
+    counts: dict[str, int] = {}
+
+    for raw in list(snapshot.get("collaboration_cells") or []):
+        if not isinstance(raw, dict):
+            continue
+        kind = _clean_text(raw.get("kind") or raw.get("type") or raw.get("mode")) or "collaboration"
+        member_instance_ids = _clean_list_of_text(
+            raw.get("member_instance_ids")
+            or raw.get("memberInstanceIds")
+            or raw.get("runtime_instance_ids")
+            or raw.get("runtimeInstanceIds")
+            or raw.get("members")
+            or raw.get("participants"),
+            limit=24,
+        )
+        items.append(
+            {
+                "cell_id": raw.get("cell_id") or raw.get("id"),
+                "kind": kind,
+                "display_label": raw.get("display_label") or raw.get("displayLabel") or raw.get("label") or raw.get("name"),
+                "member_instance_ids": member_instance_ids,
+                "member_labels": [labels_by_instance.get(member_id) for member_id in member_instance_ids if labels_by_instance.get(member_id)],
+                "decision_mode": _clean_text(raw.get("decision_mode") or raw.get("decisionMode")),
+                "selection_reason": _clean_text(raw.get("selection_reason") or raw.get("selectionReason") or raw.get("reason")),
+            }
+        )
+        counts[kind] = counts.get(kind, 0) + 1
+
+    return {
+        "items": items,
+        "counts": counts,
+        "count": len(items),
+    }
+
+
+def build_checkpoints_projection(runtime_snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    snapshot = runtime_snapshot or {}
+    items: list[dict[str, Any]] = []
+    human_interrupts = 0
+    approvals_required = 0
+    blocking = 0
+
+    for raw in list(snapshot.get("checkpoints") or []):
+        if not isinstance(raw, dict):
+            continue
+        kind = _clean_text(raw.get("kind") or raw.get("type") or raw.get("mode")) or "checkpoint"
+        needs_human = _boolish(raw.get("requires_human") or raw.get("requiresHuman") or raw.get("human_interrupt"))
+        approval = _boolish(raw.get("requires_approval") or raw.get("requiresApproval") or raw.get("approval_required"))
+        is_blocking = _boolish(raw.get("blocking") or raw.get("is_blocking") or raw.get("isBlocking"))
+        if needs_human:
+            human_interrupts += 1
+        if approval:
+            approvals_required += 1
+        if is_blocking:
+            blocking += 1
+        items.append(
+            {
+                "checkpoint_id": raw.get("checkpoint_id") or raw.get("id"),
+                "kind": kind,
+                "label": raw.get("label") or raw.get("title") or raw.get("name"),
+                "stage": _clean_text(raw.get("stage")),
+                "status": _clean_text(raw.get("status")) or "pending",
+                "requires_human": needs_human,
+                "requires_approval": approval,
+                "blocking": is_blocking,
+                "selection_reason": _clean_text(raw.get("selection_reason") or raw.get("reason")),
+            }
+        )
+
+    return {
+        "items": items,
+        "counts": {
+            "total": len(items),
+            "human_interrupts": human_interrupts,
+            "approval_required": approvals_required,
+            "blocking": blocking,
+        },
+    }
+
+
 def build_skill_lineage_projection(
     *,
     runtime_agents: list[dict[str, Any]],
@@ -299,6 +578,13 @@ class ResolvedRunCapabilities:
     context_packs: list[dict[str, Any]]
     skill_usage: list[dict[str, Any]]
     lineage: dict[str, Any]
+    task_interpretation: dict[str, Any] | None
+    team_view: dict[str, Any]
+    why_this_team: dict[str, Any]
+    orchestration: dict[str, Any]
+    collaboration: dict[str, Any]
+    authority_projection: dict[str, Any]
+    checkpoints_projection: dict[str, Any]
     counts: dict[str, int]
     updated_at: str
 
@@ -311,6 +597,13 @@ class ResolvedRunCapabilities:
             "context_packs": list(self.context_packs),
             "skill_usage": list(self.skill_usage),
             "lineage": dict(self.lineage),
+            "task_interpretation": dict(self.task_interpretation) if self.task_interpretation else None,
+            "team_view": dict(self.team_view),
+            "why_this_team": dict(self.why_this_team),
+            "orchestration": dict(self.orchestration),
+            "collaboration": dict(self.collaboration),
+            "authority": dict(self.authority_projection),
+            "checkpoints": dict(self.checkpoints_projection),
             "counts": dict(self.counts),
             "updated_at": self.updated_at,
         }
@@ -365,12 +658,62 @@ class ResolvedRuntimeProjection:
                     "skill_evidence_links": 0,
                 },
             },
+            "task_interpretation": None,
+            "team_view": {
+                "items": [],
+                "count": 0,
+                "preset_count": 0,
+                "synthesized_count": 0,
+            },
+            "why_this_team": {
+                "selection_explanations": [],
+                "slot_reasons": [],
+                "agent_reasons": [],
+                "conversation_preferences": None,
+                "preset_count": 0,
+                "synthesized_count": 0,
+            },
+            "orchestration": {
+                "mode": "runtime_managed",
+                "parallel_groups": [],
+                "sequential_after": {},
+                "supervisor_runtime": {},
+                "supervisor_mode": None,
+                "supervisor_edges": [],
+                "parallel_group_count": 0,
+                "sequential_dependency_count": 0,
+                "supervisor_edge_count": 0,
+            },
+            "collaboration": {
+                "items": [],
+                "counts": {},
+                "count": 0,
+            },
+            "authority": {
+                "items": [],
+                "graph": [],
+                "count": 0,
+                "graph_count": 0,
+            },
+            "checkpoints": {
+                "items": [],
+                "counts": {
+                    "total": 0,
+                    "human_interrupts": 0,
+                    "approval_required": 0,
+                    "blocking": 0,
+                },
+            },
             "counts": {
                 "runtime_agents": 0,
                 "attached_skills": 0,
                 "skill_packages": 0,
                 "context_packs": 0,
                 "skill_usage": 0,
+                "team_view": 0,
+                "collaboration": 0,
+                "authority": 0,
+                "checkpoints": 0,
             },
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -449,7 +792,7 @@ def resolve_conversation_team(
     skill_registry = build_skill_registry(nodes=nodes_list, include_defaults=True)
 
     runtime_snapshot = extract_runtime_team_snapshot(nodes_list)
-    if runtime_snapshot:
+    if runtime_snapshot and list(runtime_snapshot.get("members") or []):
         runtime_source_path = str(runtime_snapshot.get("source_key") or "")
         runtime_source_key = _normalize_runtime_source_key(runtime_source_path)
         runtime_items: list[dict[str, Any]] = []
@@ -487,15 +830,29 @@ def resolve_conversation_team(
                 {
                     "agent_id": agent_id or runtime_instance_id or template_id or "unknown-runtime-agent",
                     "runtime_instance_id": runtime_instance_id,
+                    "instance_id": runtime_instance_id,
                     "name": _clean_text(
                         raw_member.get("name")
+                        or raw_member.get("display_label")
+                        or raw_member.get("displayLabel")
                         or raw_member.get("display_name")
                         or raw_member.get("label")
                         or agent_id
                         or runtime_instance_id
                     ),
+                    "display_label": _clean_text(
+                        raw_member.get("display_label")
+                        or raw_member.get("displayLabel")
+                        or raw_member.get("display_name")
+                        or raw_member.get("label")
+                        or raw_member.get("name")
+                    ),
+                    "slot_id": _clean_text(raw_member.get("slot_id") or raw_member.get("slotId")),
+                    "role_id": _clean_text(raw_member.get("role_id") or raw_member.get("roleId")),
                     "role_label": _clean_text(raw_member.get("role_label") or raw_member.get("role") or raw_member.get("title")),
                     "template_id": template_id,
+                    "preset_id": _clean_text(raw_member.get("preset_id") or raw_member.get("presetId")),
+                    "authority_profile_id": extract_authority_profile_id(raw_member),
                     "provider": _clean_text(raw_member.get("provider") or raw_member.get("llm_provider") or llm_info.get("provider")),
                     "model": _clean_text(raw_member.get("model") or raw_member.get("model_name") or llm_info.get("model")),
                     "runtime_status": (
@@ -517,7 +874,14 @@ def resolve_conversation_team(
                     "responsibilities": _clean_list_of_text(raw_member.get("responsibilities") or raw_member.get("responsibility")),
                     "capability_tags": _clean_list_of_text(raw_member.get("capability_tags") or raw_member.get("capabilities")),
                     "ephemeral": bool(raw_member.get("ephemeral") or raw_member.get("transient") or False),
+                    "synthesized": _boolish(raw_member.get("synthesized")),
+                    "selection_reason": _clean_text(raw_member.get("selection_reason") or raw_member.get("selectionReason")),
                     "attached_skills": attached_skills,
+                    "attached_skill_ids": [
+                        str(item.get("skill_id") or "").strip()
+                        for item in attached_skills
+                        if str(item.get("skill_id") or "").strip()
+                    ],
                     "context_pack_id": context_pack_id,
                 }
             )
@@ -666,11 +1030,21 @@ def resolve_run_capabilities(
     scoped_nodes = list(scope_state.nodes)
 
     registry = build_skill_registry(nodes=nodes_list, include_defaults=True)
+    runtime_snapshot = extract_runtime_team_snapshot(scoped_nodes) or {}
     runtime_projection = extract_runtime_agents_with_skills(scoped_nodes, skill_lookup=registry)
     runtime_agents = list(runtime_projection.get("items") or [])
     context_packs = extract_context_pack_summaries(scoped_nodes)
     usage_events = extract_skill_usage_events(scoped_nodes, skill_lookup=registry)
     attached_skill_summaries = aggregate_attached_skills(runtime_agents)
+    team_view = build_team_view_projection(runtime_agents=runtime_agents, runtime_snapshot=runtime_snapshot)
+    why_this_team = build_why_this_team_projection(team_view=team_view, runtime_snapshot=runtime_snapshot)
+    orchestration = build_orchestration_projection(runtime_snapshot)
+    collaboration = build_collaboration_projection(runtime_snapshot=runtime_snapshot, team_view=team_view)
+    authority_projection = build_runtime_authority_projection(
+        runtime_agents=runtime_agents,
+        authority_graph=list(runtime_snapshot.get("authority_graph") or []),
+    )
+    checkpoints_projection = build_checkpoints_projection(runtime_snapshot)
 
     referenced_skill_ids: set[str] = set()
     for item in attached_skill_summaries:
@@ -709,12 +1083,23 @@ def resolve_run_capabilities(
         context_packs=context_packs,
         skill_usage=usage_events,
         lineage=lineage,
+        task_interpretation=runtime_snapshot.get("task_interpretation"),
+        team_view=team_view,
+        why_this_team=why_this_team,
+        orchestration=orchestration,
+        collaboration=collaboration,
+        authority_projection=authority_projection,
+        checkpoints_projection=checkpoints_projection,
         counts={
             "runtime_agents": len(runtime_agents),
             "attached_skills": len(attached_skill_summaries),
             "skill_packages": len(skill_packages),
             "context_packs": len(context_packs),
             "skill_usage": len(usage_events),
+            "team_view": int(team_view.get("count") or 0),
+            "collaboration": int(collaboration.get("count") or 0),
+            "authority": int(authority_projection.get("count") or 0),
+            "checkpoints": int((checkpoints_projection.get("counts") or {}).get("total") or 0),
         },
         updated_at=updated_at,
     )
@@ -774,6 +1159,8 @@ def resolve_runtime_projection(
     planning_boundary = build_planning_boundary_projection(
         run_id=scope_state.run_id,
         runtime_authority=authority,
+        runtime_snapshot=extract_runtime_team_snapshot(scope_state.nodes) or {},
+        capabilities=capability_state.as_payload() if capability_state else None,
     )
     return ResolvedRuntimeProjection(
         scope=scope_state,

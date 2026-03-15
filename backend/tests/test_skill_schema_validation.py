@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlmodel import SQLModel, Session, create_engine
 
+from app.schemas import RunCapabilityProjection
 from app.models import ContextSet, Node, Thread
 from app.services import run_studio as run_studio_service
 from app.services import runtime_snapshot as runtime_snapshot_service
@@ -100,6 +101,45 @@ class SkillSchemaValidationTests(unittest.TestCase):
 
         self.assertEqual(writer.get("attached_skills"), [])
         self.assertEqual(writer.get("runtime_status"), "running")
+
+    def test_runtime_team_items_accept_team_plan_v2_agent_fields(self) -> None:
+        nodes = [
+            make_node(
+                "run-runtime-team-v2",
+                "Run",
+                payload={
+                    "runtime_team_snapshot": {
+                        "runtime_agents": [
+                            {
+                                "instance_id": "rt-v2-1",
+                                "slot_id": "slot-1",
+                                "role_id": "role-1",
+                                "display_label": "Analyst",
+                                "preset_id": "preset.analyst",
+                                "synthesized": False,
+                                "selection_reason": "Preset covers research",
+                                "attached_skill_ids": ["skill.claim_evidence_audit.v1"],
+                                "context_pack_id": "cp-v2-1",
+                                "authority_profile_id": "authority.read_only",
+                            }
+                        ]
+                    }
+                },
+            )
+        ]
+
+        projection = extract_runtime_agents_with_skills(nodes)
+        item = (projection.get("items") or [])[0]
+        self.assertEqual(item.get("runtime_instance_id"), "rt-v2-1")
+        self.assertEqual(item.get("slot_id"), "slot-1")
+        self.assertEqual(item.get("role_id"), "role-1")
+        self.assertEqual(item.get("display_label"), "Analyst")
+        self.assertEqual(item.get("preset_id"), "preset.analyst")
+        self.assertFalse(bool(item.get("synthesized")))
+        self.assertEqual(item.get("selection_reason"), "Preset covers research")
+        self.assertEqual(item.get("attached_skill_ids"), ["skill.claim_evidence_audit.v1"])
+        self.assertEqual(item.get("context_pack_id"), "cp-v2-1")
+        self.assertEqual(item.get("authority_profile_id"), "authority.read_only")
 
     def test_context_pack_summaries_include_skill_levels_and_degrade_gracefully(self) -> None:
         base = datetime(2026, 3, 11, 0, 0, tzinfo=timezone.utc)
@@ -254,11 +294,14 @@ class SkillSchemaValidationTests(unittest.TestCase):
         ]
 
         run_summary = build_run_skill_summary(nodes=nodes_with_skills, edges=[], run_id="run-schema-main")
+        validated = RunCapabilityProjection.model_validate(run_summary)
         self.assertEqual(run_summary.get("run_id"), "run-schema-main")
+        self.assertEqual(validated.run_id, "run-schema-main")
         self.assertGreaterEqual(len(run_summary.get("runtime_agents") or []), 1)
         self.assertGreaterEqual(len(run_summary.get("attached_skills") or []), 1)
         self.assertGreaterEqual(len(run_summary.get("context_packs") or []), 1)
         self.assertGreaterEqual(len(run_summary.get("skill_usage") or []), 1)
+        self.assertIsNotNone(validated.team_view)
 
         packs_detail = build_thread_context_pack_summary(nodes=nodes_with_skills, edges=[], run_id="run-schema-main")
         usage_detail = build_thread_skill_usage_summary(nodes=nodes_with_skills, edges=[], run_id="run-schema-main")

@@ -38,6 +38,8 @@ class RuntimeContractRoundtripTests(unittest.TestCase):
         self.assertEqual((summary.get("planning_boundary") or {}).get("mode"), expected.get("mode"))
         self.assertEqual((summary.get("planning_boundary") or {}).get("degraded_mode"), expected.get("degraded_mode"))
         self.assertEqual((summary.get("planning_boundary") or {}).get("fallback_reason"), expected.get("fallback_reason"))
+        self.assertTrue(bool((summary.get("planning_boundary") or {}).get("ready_for_goc_control_plane")))
+        self.assertIn("stages", summary.get("planning_boundary") or {})
 
     def test_standalone_contract_roundtrip_projects_consistently(self) -> None:
         scenario = standalone_runtime_contract_scenario()

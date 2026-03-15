@@ -295,3 +295,84 @@ class ConversationAgentPatchRequest(BaseModel):
 
 class ConversationAgentReorderRequest(BaseModel):
     agent_ids: List[str]
+
+
+class RuntimeTeamViewItem(BaseModel):
+    runtime_instance_id: Optional[str] = None
+    display_label: Optional[str] = None
+    slot_id: Optional[str] = None
+    slot_label: Optional[str] = None
+    role_id: Optional[str] = None
+    role_label: Optional[str] = None
+    preset_id: Optional[str] = None
+    synthesized: bool = False
+    selection_reason: Optional[str] = None
+    attached_skill_ids: List[str] = Field(default_factory=list)
+    context_pack_id: Optional[str] = None
+    runtime_status: Optional[str] = None
+    authority_profile_id: Optional[str] = None
+
+
+class RuntimeTeamViewProjection(BaseModel):
+    items: List[RuntimeTeamViewItem] = Field(default_factory=list)
+    count: int = 0
+    preset_count: int = 0
+    synthesized_count: int = 0
+
+
+class WhyThisTeamProjection(BaseModel):
+    selection_explanations: List[dict[str, Any]] = Field(default_factory=list)
+    slot_reasons: List[dict[str, Any]] = Field(default_factory=list)
+    agent_reasons: List[dict[str, Any]] = Field(default_factory=list)
+    conversation_preferences: Optional[dict[str, Any]] = None
+    preset_count: int = 0
+    synthesized_count: int = 0
+
+
+class OrchestrationProjection(BaseModel):
+    mode: str = "runtime_managed"
+    parallel_groups: List[dict[str, Any]] = Field(default_factory=list)
+    sequential_after: dict[str, List[str]] = Field(default_factory=dict)
+    supervisor_runtime: dict[str, Any] = Field(default_factory=dict)
+    supervisor_mode: Optional[str] = None
+    supervisor_edges: List[dict[str, Any]] = Field(default_factory=list)
+    parallel_group_count: int = 0
+    sequential_dependency_count: int = 0
+    supervisor_edge_count: int = 0
+
+
+class CollaborationProjection(BaseModel):
+    items: List[dict[str, Any]] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+    count: int = 0
+
+
+class RuntimeAuthorityProjection(BaseModel):
+    items: List[dict[str, Any]] = Field(default_factory=list)
+    graph: List[dict[str, Any]] = Field(default_factory=list)
+    count: int = 0
+    graph_count: int = 0
+
+
+class CheckpointsProjection(BaseModel):
+    items: List[dict[str, Any]] = Field(default_factory=list)
+    counts: dict[str, int] = Field(default_factory=dict)
+
+
+class RunCapabilityProjection(BaseModel):
+    run_id: Optional[str] = None
+    runtime_agents: List[dict[str, Any]] = Field(default_factory=list)
+    attached_skills: List[dict[str, Any]] = Field(default_factory=list)
+    skill_packages: List[dict[str, Any]] = Field(default_factory=list)
+    context_packs: List[dict[str, Any]] = Field(default_factory=list)
+    skill_usage: List[dict[str, Any]] = Field(default_factory=list)
+    lineage: dict[str, Any] = Field(default_factory=dict)
+    task_interpretation: Optional[dict[str, Any]] = None
+    team_view: RuntimeTeamViewProjection = Field(default_factory=RuntimeTeamViewProjection)
+    why_this_team: WhyThisTeamProjection = Field(default_factory=WhyThisTeamProjection)
+    orchestration: OrchestrationProjection = Field(default_factory=OrchestrationProjection)
+    collaboration: CollaborationProjection = Field(default_factory=CollaborationProjection)
+    authority: RuntimeAuthorityProjection = Field(default_factory=RuntimeAuthorityProjection)
+    checkpoints: CheckpointsProjection = Field(default_factory=CheckpointsProjection)
+    counts: dict[str, int] = Field(default_factory=dict)
+    planning_boundary: Optional[dict[str, Any]] = None

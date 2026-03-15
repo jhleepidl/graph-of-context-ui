@@ -4,10 +4,14 @@ import json
 from typing import Any, Iterable
 
 from app.services.runtime_snapshot import (
+    clean_list_of_text as _clean_list_of_text,
+    clean_text as _snapshot_clean_text,
     created_sort_key as _created_sort_key,
     has_non_empty_value as _has_non_empty_value,
     iter_payload_containers as _iter_payload_containers,
     node_payload as _node_payload,
+    normalize_record_list as _normalize_record_list,
+    parse_jsonish as _parse_jsonish,
 )
 
 
@@ -133,6 +137,14 @@ AUTHORITY_HINT_KEYS = set(
     + SKILL_CATALOG_SOURCE_KEYS
     + DEGRADED_MODE_KEYS
     + FALLBACK_REASON_KEYS
+)
+AUTHORITY_GRAPH_KEYS = (
+    "authority_graph",
+    "authorityGraph",
+)
+AUTHORITY_PROFILE_ID_KEYS = (
+    "authority_profile_id",
+    "authorityProfileId",
 )
 
 
@@ -518,6 +530,143 @@ def infer_skill_catalog_source(
     if has_goc_catalog:
         return "goc"
     return None
+
+
+def extract_authority_profile_id(mapping: dict[str, Any] | None) -> str | None:
+    if not isinstance(mapping, dict):
+        return None
+    return _clean_text(_pick(mapping, AUTHORITY_PROFILE_ID_KEYS))
+
+
+def normalize_authority_graph(value: Any) -> list[dict[str, Any]]:
+    raw = _parse_jsonish(value)
+    items = _normalize_record_list(
+        raw,
+        id_field="authority_id",
+        hint_keys=(
+            "authority_id",
+            "id",
+            "instance_id",
+            "runtime_instance_id",
+            "authority_profile_id",
+            "authorityProfileId",
+            "subject_id",
+            "subjectId",
+            "source",
+            "target",
+            "managed_by",
+            "managedBy",
+        ),
+        max_items=96,
+    )
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        entry = dict(item)
+        authority_id = _clean_text(entry.get("authority_id") or entry.get("id")) or f"authority-{index + 1}"
+        runtime_instance_id = _clean_text(
+            entry.get("runtime_instance_id")
+            or entry.get("instance_id")
+            or entry.get("subject_instance_id")
+            or entry.get("subjectInstanceId")
+            or entry.get("subject_id")
+            or entry.get("subjectId")
+        )
+        authority_profile_id = extract_authority_profile_id(entry)
+        allowed = _clean_list_of_text(
+            entry.get("allowed_actions")
+            or entry.get("allowedActions")
+            or entry.get("permissions")
+            or entry.get("grants"),
+            limit=24,
+        )
+        restricted = _clean_list_of_text(
+            entry.get("restricted_actions")
+            or entry.get("restrictedActions")
+            or entry.get("restrictions")
+            or entry.get("denies")
+            or entry.get("blocked_actions")
+            or entry.get("blockedActions"),
+            limit=24,
+        )
+        approvals = _clean_list_of_text(
+            entry.get("approval_required_for")
+            or entry.get("approvalRequiredFor")
+            or entry.get("approval_actions")
+            or entry.get("approvalActions"),
+            limit=24,
+        )
+        normalized.append(
+            {
+                **entry,
+                "authority_id": authority_id,
+                "runtime_instance_id": runtime_instance_id,
+                "authority_profile_id": authority_profile_id,
+                "managed_by": _clean_text(entry.get("managed_by") or entry.get("managedBy") or entry.get("owner")),
+                "scope": _clean_text(entry.get("scope") or entry.get("kind") or entry.get("type")),
+                "allowed_actions": allowed,
+                "restricted_actions": restricted,
+                "approval_required_for": approvals,
+            }
+        )
+    return normalized
+
+
+def build_runtime_authority_projection(
+    *,
+    runtime_agents: list[dict[str, Any]] | None = None,
+    authority_graph: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    agents = [dict(item) for item in (runtime_agents or []) if isinstance(item, dict)]
+    normalized_graph = normalize_authority_graph(authority_graph or [])
+
+    graph_by_instance: dict[str, list[dict[str, Any]]] = {}
+    graph_by_profile: dict[str, list[dict[str, Any]]] = {}
+    for entry in normalized_graph:
+        runtime_instance_id = _clean_text(entry.get("runtime_instance_id"))
+        authority_profile_id = _clean_text(entry.get("authority_profile_id"))
+        if runtime_instance_id:
+            graph_by_instance.setdefault(runtime_instance_id, []).append(entry)
+        if authority_profile_id:
+            graph_by_profile.setdefault(authority_profile_id, []).append(entry)
+
+    items: list[dict[str, Any]] = []
+    for agent in agents:
+        runtime_instance_id = _clean_text(agent.get("runtime_instance_id") or agent.get("instance_id"))
+        authority_profile_id = extract_authority_profile_id(agent)
+        linked_entries = list(graph_by_instance.get(runtime_instance_id or "", []))
+        if authority_profile_id:
+            linked_entries.extend(graph_by_profile.get(authority_profile_id, []))
+
+        allowed: list[str] = []
+        restricted: list[str] = []
+        approvals: list[str] = []
+        managed_by = _clean_text(agent.get("managed_by") or agent.get("managedBy"))
+        for entry in linked_entries:
+            allowed.extend(_clean_list_of_text(entry.get("allowed_actions"), limit=24))
+            restricted.extend(_clean_list_of_text(entry.get("restricted_actions"), limit=24))
+            approvals.extend(_clean_list_of_text(entry.get("approval_required_for"), limit=24))
+            managed_by = managed_by or _clean_text(entry.get("managed_by"))
+
+        items.append(
+            {
+                "runtime_instance_id": runtime_instance_id,
+                "display_label": agent.get("display_label") or agent.get("name") or agent.get("role_label"),
+                "authority_profile_id": authority_profile_id,
+                "managed_by": managed_by,
+                "allowed_actions": sorted(set(allowed)),
+                "restricted_actions": sorted(set(restricted)),
+                "approval_required_for": sorted(set(approvals)),
+                "graph_entry_count": len(linked_entries),
+            }
+        )
+
+    return {
+        "items": items,
+        "graph": normalized_graph,
+        "count": len(items),
+        "graph_count": len(normalized_graph),
+    }
 
 
 def derive_runtime_authority(

@@ -531,6 +531,12 @@ def build_run_studio_summary(
 
     current_run_skills = dict(run_skill_summary)
     planning_boundary = dict(runtime_projection.planning_boundary)
+    team_view = dict(run_skill_summary.get("team_view") or {})
+    why_this_team = dict(run_skill_summary.get("why_this_team") or {})
+    orchestration = dict(run_skill_summary.get("orchestration") or {})
+    collaboration = dict(run_skill_summary.get("collaboration") or {})
+    authority_projection = dict(run_skill_summary.get("authority") or {})
+    checkpoints = dict(run_skill_summary.get("checkpoints") or {})
 
     out = {
         "thread": {
@@ -550,6 +556,12 @@ def build_run_studio_summary(
         "evidence_counts": evidence.get("counts", {}),
         "skill_counts": run_skill_summary.get("counts", {}),
         "current_run_skills": current_run_skills,
+        "team_view": team_view,
+        "why_this_team": why_this_team,
+        "orchestration": orchestration,
+        "collaboration": collaboration,
+        "authority": authority_projection,
+        "checkpoints": checkpoints,
         "planning_boundary": planning_boundary,
         "graph_counts": {
             "nodes": len(nodes),

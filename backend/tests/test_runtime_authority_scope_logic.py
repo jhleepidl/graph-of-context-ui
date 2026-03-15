@@ -15,6 +15,7 @@ from app.services.run_skill_summary import (
 )
 from app.services.run_studio import build_run_studio_agent_team, build_run_studio_summary
 from app.services.runtime_authority import (
+    build_runtime_authority_projection,
     derive_runtime_authority,
     extract_runtime_authority_from_container,
 )
@@ -169,6 +170,47 @@ class RuntimeAuthorityAndScopeTests(unittest.TestCase):
         self.assertEqual(authority["skill_catalog_source"], "local")
         self.assertTrue(bool(authority["degraded_mode"]))
         self.assertIn("timeout", str(authority["fallback_reason"] or ""))
+
+    def test_runtime_authority_projection_understands_authority_graph_profiles(self) -> None:
+        projection = build_runtime_authority_projection(
+            runtime_agents=[
+                {
+                    "runtime_instance_id": "rt-1",
+                    "display_label": "Analyst",
+                    "authority_profile_id": "authority.read_only",
+                },
+                {
+                    "runtime_instance_id": "rt-2",
+                    "display_label": "Reviewer",
+                    "authority_profile_id": "authority.review",
+                },
+            ],
+            authority_graph=[
+                {
+                    "authority_id": "auth-1",
+                    "runtime_instance_id": "rt-1",
+                    "authority_profile_id": "authority.read_only",
+                    "allowed_actions": ["research"],
+                    "restricted_actions": ["publish"],
+                    "approval_required_for": ["publish"],
+                },
+                {
+                    "authority_id": "auth-2",
+                    "runtime_instance_id": "rt-2",
+                    "authority_profile_id": "authority.review",
+                    "allowed_actions": ["critique"],
+                },
+            ],
+        )
+
+        self.assertEqual(projection.get("graph_count"), 2)
+        analyst = next(item for item in projection.get("items") or [] if item.get("runtime_instance_id") == "rt-1")
+        reviewer = next(item for item in projection.get("items") or [] if item.get("runtime_instance_id") == "rt-2")
+        self.assertEqual(analyst.get("authority_profile_id"), "authority.read_only")
+        self.assertIn("research", analyst.get("allowed_actions") or [])
+        self.assertIn("publish", analyst.get("restricted_actions") or [])
+        self.assertIn("publish", analyst.get("approval_required_for") or [])
+        self.assertEqual(reviewer.get("allowed_actions"), ["critique"])
 
     def test_shared_current_run_resolution_applies_to_skill_and_context_summaries(self) -> None:
         base = datetime(2026, 3, 11, 0, 0, tzinfo=timezone.utc)

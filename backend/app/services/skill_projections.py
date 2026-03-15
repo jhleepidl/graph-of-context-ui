@@ -16,6 +16,8 @@ from app.services.runtime_snapshot import (
 SKILL_ATTACHMENT_KEYS = (
     "attached_skills",
     "attachedSkills",
+    "attached_skill_ids",
+    "attachedSkillIds",
     "skills",
     "skill_ids",
     "skillIds",
@@ -317,14 +319,37 @@ def extract_runtime_agents_with_skills(
         items.append(
             {
                 "runtime_instance_id": runtime_instance_id,
+                "instance_id": runtime_instance_id,
                 "agent_id": agent_id or runtime_instance_id or template_id or "unknown-runtime-agent",
+                "slot_id": _clean_text(raw_member.get("slot_id") or raw_member.get("slotId")),
+                "role_id": _clean_text(raw_member.get("role_id") or raw_member.get("roleId")),
                 "role_label": _clean_text(raw_member.get("role_label") or raw_member.get("role") or raw_member.get("title")),
-                "name": _clean_text(raw_member.get("name") or raw_member.get("display_name") or raw_member.get("label")),
+                "display_label": _clean_text(
+                    raw_member.get("display_label")
+                    or raw_member.get("displayLabel")
+                    or raw_member.get("display_name")
+                    or raw_member.get("label")
+                    or raw_member.get("name")
+                ),
+                "name": _clean_text(
+                    raw_member.get("name")
+                    or raw_member.get("display_name")
+                    or raw_member.get("display_label")
+                    or raw_member.get("displayLabel")
+                    or raw_member.get("label")
+                ),
                 "template_id": template_id,
+                "preset_id": _clean_text(raw_member.get("preset_id") or raw_member.get("presetId")),
+                "authority_profile_id": _clean_text(
+                    raw_member.get("authority_profile_id") or raw_member.get("authorityProfileId")
+                ),
                 "provider": _clean_text(raw_member.get("provider") or raw_member.get("llm_provider") or llm_info.get("provider")),
                 "model": _clean_text(raw_member.get("model") or raw_member.get("model_name") or llm_info.get("model")),
                 "runtime_status": _normalize_status(raw_member.get("runtime_status") or raw_member.get("status") or raw_member.get("state")),
+                "synthesized": bool(raw_member.get("synthesized") or False),
+                "selection_reason": _clean_text(raw_member.get("selection_reason") or raw_member.get("selectionReason")),
                 "attached_skills": attached_skills,
+                "attached_skill_ids": [str(item.get("skill_id") or "") for item in attached_skills if str(item.get("skill_id") or "").strip()],
                 "context_pack_id": context_pack_id,
                 "source": source,
                 "source_key": runtime_source_key,

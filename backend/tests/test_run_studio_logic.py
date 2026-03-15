@@ -318,6 +318,73 @@ class RunStudioLogicTests(unittest.TestCase):
             self.assertEqual(item["source_path"], "runtime.runtime_team_snapshot.runtime_agents")
             self.assertEqual(summary.get("snapshot_source_key"), "runtime_team_snapshot.runtime_agents")
 
+    def test_run_studio_summary_exposes_team_plan_v2_runtime_projections(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+
+        with Session(engine) as session:
+            thread = Thread(id="thread-v2", service_id="svc", title="V2")
+            context_set = ContextSet(id="ctx-v2", thread_id=thread.id, name="default", active_node_ids_json="[]")
+            run_node = Node(
+                id="run-v2",
+                thread_id=thread.id,
+                type="Run",
+                text="run",
+                payload_json=json.dumps(
+                    {
+                        "runtime_team_snapshot": {
+                            "task_interpretation": {"summary": "Research and review"},
+                            "team_plan": {
+                                "mode": "parallel",
+                                "slots": [
+                                    {"slot_id": "slot-1", "role_id": "role-1", "display_label": "Analyst"},
+                                    {"slot_id": "slot-2", "role_id": "role-2", "display_label": "Reviewer"},
+                                ],
+                                "supervisor_runtime": {"mode": "oversight"},
+                            },
+                            "runtime_agents": [
+                                {"instance_id": "rt-1", "slot_id": "slot-1", "role_id": "role-1", "display_label": "Analyst"},
+                                {"instance_id": "rt-2", "slot_id": "slot-2", "role_id": "role-2", "display_label": "Reviewer", "synthesized": True},
+                            ],
+                            "collaboration_cells": [{"cell_id": "cell-1", "kind": "debate", "members": ["rt-1", "rt-2"]}],
+                            "authority_graph": [{"authority_id": "auth-1", "runtime_instance_id": "rt-1", "authority_profile_id": "authority.read_only"}],
+                            "checkpoints": [{"checkpoint_id": "checkpoint-1", "kind": "approval", "requires_approval": True}],
+                            "execution_graph": {"parallel_groups": [["rt-1", "rt-2"]]},
+                            "selection_explanations": [{"slot_id": "slot-1", "text": "Analyst covers the research phase"}],
+                        }
+                    }
+                ),
+                created_at=base,
+            )
+            step_node = Node(
+                id="step-v2",
+                thread_id=thread.id,
+                type="Step",
+                text="step",
+                payload_json=json.dumps({"run_id": "run-v2", "status": "running", "agent_id": "rt-1"}),
+                created_at=base + timedelta(seconds=1),
+            )
+            session.add(thread)
+            session.add(context_set)
+            session.add(run_node)
+            session.add(step_node)
+            session.commit()
+
+            summary = build_run_studio_summary(session, thread=thread, context_set_id=context_set.id)
+
+        self.assertIn("team_view", summary)
+        self.assertIn("why_this_team", summary)
+        self.assertIn("orchestration", summary)
+        self.assertIn("collaboration", summary)
+        self.assertIn("authority", summary)
+        self.assertIn("checkpoints", summary)
+        self.assertEqual((summary.get("team_view") or {}).get("count"), 2)
+        self.assertEqual((summary.get("orchestration") or {}).get("mode"), "parallel")
+        self.assertEqual((summary.get("collaboration") or {}).get("count"), 1)
+        self.assertEqual((summary.get("authority") or {}).get("graph_count"), 1)
+        self.assertEqual((summary.get("checkpoints") or {}).get("counts", {}).get("approval_required"), 1)
+
     def test_evidence_ranking_prioritizes_supported_selected_claims(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
         decision = make_node(
