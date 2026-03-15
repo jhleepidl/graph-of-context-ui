@@ -335,7 +335,10 @@ class OrchestrationProjection(BaseModel):
     sequential_after: dict[str, List[str]] = Field(default_factory=dict)
     supervisor_runtime: dict[str, Any] = Field(default_factory=dict)
     supervisor_mode: Optional[str] = None
+    supervisor_enabled: bool = False
     supervisor_edges: List[dict[str, Any]] = Field(default_factory=list)
+    checkpoint_count: int = 0
+    checkpoint_status_counts: dict[str, int] = Field(default_factory=dict)
     parallel_group_count: int = 0
     sequential_dependency_count: int = 0
     supervisor_edge_count: int = 0

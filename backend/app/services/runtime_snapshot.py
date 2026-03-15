@@ -166,6 +166,23 @@ def coerce_int(value: Any) -> int | None:
     return None
 
 
+def preserve_structured_value(value: Any) -> Any:
+    raw = parse_jsonish(value)
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, list):
+        return list(raw)
+    if isinstance(raw, tuple):
+        return list(raw)
+    if isinstance(raw, set):
+        return list(raw)
+    if isinstance(raw, str):
+        return clean_text(raw)
+    return raw
+
+
 def parse_jsonish(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return value
@@ -342,7 +359,7 @@ def normalize_collaboration_cells(value: Any) -> list[dict[str, Any]]:
         )
         topology = clean_text(first_present(entry, ("topology", "collaboration_topology", "topology_mode")))
         max_rounds = coerce_int(first_present(entry, ("max_rounds", "maxRounds", "rounds")))
-        termination = clean_text(
+        termination = preserve_structured_value(
             first_present(entry, ("termination", "termination_rule", "terminationRule", "stop_rule", "stopRule"))
         )
         report_back_to_instance_id = clean_text(
@@ -368,9 +385,9 @@ def normalize_collaboration_cells(value: Any) -> list[dict[str, Any]]:
             entry["topology"] = topology
         if max_rounds is not None:
             entry["max_rounds"] = max_rounds
-        if termination:
+        if has_non_empty_value(termination):
             entry["termination"] = termination
-            if not clean_text(entry.get("termination_rule")):
+            if not has_non_empty_value(entry.get("termination_rule")):
                 entry["termination_rule"] = termination
         if report_back_to_instance_id:
             entry["report_back_to_instance_id"] = report_back_to_instance_id
@@ -528,10 +545,10 @@ def normalize_checkpoints(value: Any) -> list[dict[str, Any]]:
             first_present(entry, ("trigger_after_instances", "triggerAfterInstances", "after_instances", "afterInstances")),
             limit=24,
         )
-        supervisor_decision = clean_text(
+        supervisor_decision = preserve_structured_value(
             first_present(entry, ("supervisor_decision", "supervisorDecision", "decision"))
         )
-        completion_signal = clean_text(
+        completion_signal = preserve_structured_value(
             first_present(entry, ("completion_signal", "completionSignal", "completion"))
         )
         blocking = coerce_bool(first_present(entry, ("blocking", "is_blocking", "isBlocking")))
@@ -553,9 +570,9 @@ def normalize_checkpoints(value: Any) -> list[dict[str, Any]]:
                 entry["requires_approval"] = approval_required
         if trigger_after_instances:
             entry["trigger_after_instances"] = trigger_after_instances
-        if supervisor_decision:
+        if has_non_empty_value(supervisor_decision):
             entry["supervisor_decision"] = supervisor_decision
-        if completion_signal:
+        if has_non_empty_value(completion_signal):
             entry["completion_signal"] = completion_signal
         if blocking is not None:
             entry["blocking"] = blocking

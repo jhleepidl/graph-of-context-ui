@@ -216,6 +216,99 @@ def _intish(value: Any) -> int | None:
     return None
 
 
+def _structured_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        clean = value.strip()
+        if not clean:
+            return None
+        if clean.startswith("{") or clean.startswith("["):
+            parsed = _jload(clean, None)
+            if parsed is not None:
+                value = parsed
+            else:
+                return clean
+        else:
+            return clean
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, tuple):
+        return list(value)
+    return value
+
+
+def _scalar_summary(value: Any) -> str | None:
+    if isinstance(value, str):
+        return _clean_text(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return None
+
+
+def _structured_summary(value: Any) -> str | None:
+    normalized = _structured_value(value)
+    scalar = _scalar_summary(normalized)
+    if scalar is not None:
+        return scalar
+
+    if isinstance(normalized, list):
+        parts: list[str] = []
+        for item in normalized[:3]:
+            item_summary = _structured_summary(item)
+            if item_summary:
+                parts.append(item_summary)
+        if parts:
+            return ", ".join(parts) + ("..." if len(normalized) > 3 else "")
+        return f"{len(normalized)} items" if normalized else None
+
+    if isinstance(normalized, dict):
+        for key in ("summary", "label", "name", "title", "description", "message"):
+            summary = _scalar_summary(normalized.get(key))
+            if summary:
+                return summary
+
+        parts: list[str] = []
+        for key in ("condition", "decision", "signal", "mode", "status", "type", "kind", "rule", "event", "action"):
+            if key not in normalized:
+                continue
+            item_summary = _structured_summary(normalized.get(key))
+            if item_summary:
+                parts.append(f"{key}: {item_summary}")
+            if len(parts) >= 3:
+                break
+
+        if parts:
+            return " | ".join(parts)
+
+        for key, raw in normalized.items():
+            item_summary = _scalar_summary(raw)
+            if item_summary is None and isinstance(raw, (dict, list, tuple)):
+                item_summary = _structured_summary(raw)
+            if item_summary:
+                parts.append(f"{key}: {item_summary}")
+            if len(parts) >= 3:
+                break
+
+        return " | ".join(parts) if parts else None
+
+    return None
+
+
+def _team_view_labels_by_instance(team_view: dict[str, Any] | None) -> dict[str, str]:
+    return {
+        str(item.get("runtime_instance_id") or ""): str(item.get("display_label") or "")
+        for item in list((team_view or {}).get("items") or [])
+        if isinstance(item, dict)
+        and str(item.get("runtime_instance_id") or "").strip()
+        and str(item.get("display_label") or "").strip()
+    }
+
+
 def _slot_indexes(runtime_snapshot: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     slots = list(((runtime_snapshot or {}).get("team_plan") or {}).get("slots") or [])
     slot_by_id: dict[str, dict[str, Any]] = {}
@@ -345,15 +438,20 @@ def build_why_this_team_projection(
     }
 
 
-def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> dict[str, Any]:
+def build_orchestration_projection(
+    runtime_snapshot: dict[str, Any] | None,
+    *,
+    team_view: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     snapshot = runtime_snapshot or {}
+    labels_by_instance = _team_view_labels_by_instance(team_view)
     team_plan = snapshot.get("team_plan") or {}
     raw_supervisor_runtime = team_plan.get("supervisor_runtime") or {}
     supervisor_runtime = dict(raw_supervisor_runtime) if isinstance(raw_supervisor_runtime, dict) else {}
     execution_graph = snapshot.get("execution_graph") or {}
-    parallel_groups = list(execution_graph.get("parallel_groups") or [])
+    raw_parallel_groups = list(execution_graph.get("parallel_groups") or [])
     sequential_after = dict(execution_graph.get("sequential_after") or {})
-    supervisor_edges = list(execution_graph.get("supervisor_edges") or [])
+    raw_supervisor_edges = list(execution_graph.get("supervisor_edges") or [])
     interaction_mode = _clean_text(
         _first_present_value(
             supervisor_runtime,
@@ -364,7 +462,7 @@ def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> d
     supervisor_enabled = (
         _boolish(_first_present_value(supervisor_runtime, ("enabled", "is_enabled", "isEnabled")))
         if has_explicit_enabled
-        else bool(interaction_mode or supervisor_runtime.get("instance_id") or supervisor_edges)
+        else bool(interaction_mode or supervisor_runtime.get("instance_id") or raw_supervisor_edges)
     )
     instance_id = _clean_text(
         _first_present_value(
@@ -397,7 +495,7 @@ def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> d
         or interaction_mode
     )
     if not mode:
-        if parallel_groups:
+        if raw_parallel_groups:
             mode = "parallel"
         elif sequential_after:
             mode = "sequential"
@@ -409,6 +507,61 @@ def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> d
     for checkpoint in checkpoints:
         status = _clean_text(checkpoint.get("status")) or "pending"
         checkpoint_status_counts[status] = checkpoint_status_counts.get(status, 0) + 1
+
+    parallel_groups: list[dict[str, Any]] = []
+    for index, raw_group in enumerate(raw_parallel_groups):
+        if not isinstance(raw_group, dict):
+            continue
+        member_instance_ids = _clean_list_of_text(raw_group.get("member_instance_ids"), limit=24)
+        member_labels = _clean_list_of_text(raw_group.get("member_labels"), limit=24)
+        if not member_labels:
+            member_labels = [labels_by_instance.get(member_id) for member_id in member_instance_ids if labels_by_instance.get(member_id)]
+        parallel_groups.append(
+            {
+                **raw_group,
+                "group_id": raw_group.get("group_id") or raw_group.get("id") or f"group-{index + 1}",
+                "member_instance_ids": member_instance_ids,
+                "member_labels": member_labels,
+                "label": _clean_text(
+                    raw_group.get("label")
+                    or raw_group.get("display_label")
+                    or raw_group.get("displayLabel")
+                    or raw_group.get("name")
+                ),
+            }
+        )
+
+    supervisor_edges: list[dict[str, Any]] = []
+    for raw_edge in raw_supervisor_edges:
+        if not isinstance(raw_edge, dict):
+            continue
+        from_id = _clean_text(
+            raw_edge.get("from")
+            or raw_edge.get("source")
+            or raw_edge.get("supervisor_id")
+            or raw_edge.get("supervisorId")
+        )
+        to_id = _clean_text(
+            raw_edge.get("to")
+            or raw_edge.get("target")
+            or raw_edge.get("runtime_instance_id")
+            or raw_edge.get("runtimeInstanceId")
+        )
+        from_label = labels_by_instance.get(from_id or "")
+        to_label = labels_by_instance.get(to_id or "")
+        edge_summary = None
+        if from_id and to_id:
+            edge_summary = f"{from_label or from_id} -> {to_label or to_id}"
+        supervisor_edges.append(
+            {
+                **raw_edge,
+                "from": from_id,
+                "to": to_id,
+                "from_label": from_label,
+                "to_label": to_label,
+                "edge_summary": edge_summary,
+            }
+        )
 
     return {
         "mode": mode,
@@ -481,7 +634,7 @@ def build_collaboration_projection(
                 ),
             )
         )
-        termination = _clean_text(
+        termination = _structured_value(
             _first_present_value(raw, ("termination", "termination_rule", "terminationRule"))
         )
         items.append(
@@ -496,6 +649,7 @@ def build_collaboration_projection(
                 "max_rounds": _intish(_first_present_value(raw, ("max_rounds", "maxRounds", "rounds"))),
                 "termination": termination,
                 "termination_rule": termination,
+                "termination_summary": _structured_summary(termination),
                 "report_back_to_instance_id": report_back_to_instance_id,
                 "report_back_to_label": labels_by_instance.get(report_back_to_instance_id or ""),
                 "decision_mode": _clean_text(raw.get("decision_mode") or raw.get("decisionMode")),
@@ -511,8 +665,13 @@ def build_collaboration_projection(
     }
 
 
-def build_checkpoints_projection(runtime_snapshot: dict[str, Any] | None) -> dict[str, Any]:
+def build_checkpoints_projection(
+    runtime_snapshot: dict[str, Any] | None,
+    *,
+    team_view: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     snapshot = runtime_snapshot or {}
+    labels_by_instance = _team_view_labels_by_instance(team_view)
     items: list[dict[str, Any]] = []
     human_interrupts = 0
     approvals_required = 0
@@ -546,10 +705,11 @@ def build_checkpoints_projection(runtime_snapshot: dict[str, Any] | None) -> dic
             _first_present_value(raw, ("trigger_after_instances", "triggerAfterInstances", "after_instances", "afterInstances")),
             limit=24,
         )
-        supervisor_decision = _clean_text(
+        trigger_after_labels = [labels_by_instance.get(instance_id) for instance_id in trigger_after_instances if labels_by_instance.get(instance_id)]
+        supervisor_decision = _structured_value(
             _first_present_value(raw, ("supervisor_decision", "supervisorDecision", "decision"))
         )
-        completion_signal = _clean_text(
+        completion_signal = _structured_value(
             _first_present_value(raw, ("completion_signal", "completionSignal", "completion"))
         )
         if needs_human:
@@ -571,8 +731,11 @@ def build_checkpoints_projection(runtime_snapshot: dict[str, Any] | None) -> dic
                 "requires_approval": approval,
                 "blocking": is_blocking,
                 "trigger_after_instances": trigger_after_instances,
+                "trigger_after_labels": trigger_after_labels,
                 "supervisor_decision": supervisor_decision,
+                "supervisor_decision_summary": _structured_summary(supervisor_decision),
                 "completion_signal": completion_signal,
+                "completion_signal_summary": _structured_summary(completion_signal),
                 "selection_reason": _clean_text(raw.get("selection_reason") or raw.get("reason")),
             }
         )
@@ -1172,13 +1335,13 @@ def resolve_run_capabilities(
     attached_skill_summaries = aggregate_attached_skills(runtime_agents)
     team_view = build_team_view_projection(runtime_agents=runtime_agents, runtime_snapshot=runtime_snapshot)
     why_this_team = build_why_this_team_projection(team_view=team_view, runtime_snapshot=runtime_snapshot)
-    orchestration = build_orchestration_projection(runtime_snapshot)
+    orchestration = build_orchestration_projection(runtime_snapshot, team_view=team_view)
     collaboration = build_collaboration_projection(runtime_snapshot=runtime_snapshot, team_view=team_view)
     authority_projection = build_runtime_authority_projection(
         runtime_agents=runtime_agents,
         authority_graph=list(runtime_snapshot.get("authority_graph") or []),
     )
-    checkpoints_projection = build_checkpoints_projection(runtime_snapshot)
+    checkpoints_projection = build_checkpoints_projection(runtime_snapshot, team_view=team_view)
 
     referenced_skill_ids: set[str] = set()
     for item in attached_skill_summaries:

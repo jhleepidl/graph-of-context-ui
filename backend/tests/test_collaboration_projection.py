@@ -45,7 +45,7 @@ def make_payload() -> dict:
                         "member_instance_ids": ["rt-a"],
                         "topology": "self_loop",
                         "max_rounds": 2,
-                        "termination": "confidence_reached",
+                        "termination": {"condition": "confidence_reached"},
                         "report_back_to_instance_id": "sup-1",
                         "selection_reason": "Force self-check before finalizing",
                     },
@@ -55,7 +55,7 @@ def make_payload() -> dict:
                         "member_instance_ids": ["rt-a", "rt-b"],
                         "topology": "pairwise",
                         "max_rounds": 3,
-                        "termination": "majority_converged",
+                        "termination": {"condition": "majority_converged", "threshold": 2},
                         "decision_mode": "majority",
                     },
                     {
@@ -115,9 +115,12 @@ class CollaborationProjectionTests(unittest.TestCase):
         self.assertEqual(debate.get("member_labels"), ["Analyst", "Reviewer"])
         self.assertEqual(debate.get("topology"), "pairwise")
         self.assertEqual(debate.get("max_rounds"), 3)
-        self.assertEqual(debate.get("termination"), "majority_converged")
+        self.assertEqual(debate.get("termination"), {"condition": "majority_converged", "threshold": 2})
+        self.assertIn("condition: majority_converged", str(debate.get("termination_summary") or ""))
+        self.assertNotIn("{'", str(debate.get("termination_summary") or ""))
         reflection = next(item for item in items if item.get("kind") == "reflection")
         self.assertEqual(reflection.get("report_back_to_instance_id"), "sup-1")
+        self.assertEqual(reflection.get("termination"), {"condition": "confidence_reached"})
 
 
 if __name__ == "__main__":

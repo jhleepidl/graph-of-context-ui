@@ -359,7 +359,7 @@ class RunStudioLogicTests(unittest.TestCase):
                                     "member_instance_ids": ["rt-1", "rt-2"],
                                     "topology": "pairwise",
                                     "max_rounds": 3,
-                                    "termination": "majority_converged",
+                                    "termination": {"condition": "majority_converged", "threshold": 2},
                                 }
                             ],
                             "authority_graph": [
@@ -376,9 +376,16 @@ class RunStudioLogicTests(unittest.TestCase):
                                     "kind": "approval",
                                     "approval_required": True,
                                     "human_interrupt_allowed": True,
+                                    "supervisor_decision": {"mode": "await_user", "condition": "final_review_ready"},
+                                    "completion_signal": {"signal": "final_answer_ready"},
                                 }
                             ],
-                            "execution_graph": {"parallel_groups": [["rt-1", "rt-2"]]},
+                            "execution_graph": {
+                                "parallel_groups": [
+                                    {"group_id": "group-1", "label": "research pair", "member_instance_ids": ["rt-1", "rt-2"]}
+                                ],
+                                "supervisor_edges": [{"from": "sup-1", "to": "rt-1"}],
+                            },
                             "selection_explanations": [{"slot_id": "slot-1", "text": "Analyst covers the research phase"}],
                         }
                     }
@@ -410,12 +417,20 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertEqual((summary.get("team_view") or {}).get("count"), 2)
         self.assertEqual((summary.get("orchestration") or {}).get("mode"), "parallel")
         self.assertEqual((summary.get("orchestration") or {}).get("supervisor_mode"), "interrupt_on_completion")
+        self.assertEqual((summary.get("orchestration") or {}).get("parallel_groups", [])[0].get("member_labels"), ["Analyst", "Reviewer"])
+        self.assertEqual((summary.get("orchestration") or {}).get("supervisor_edges", [])[0].get("edge_summary"), "sup-1 -> Analyst")
         self.assertEqual((summary.get("collaboration") or {}).get("count"), 1)
         self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("kind"), "debate")
         self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("topology"), "pairwise")
+        self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("termination"), {"condition": "majority_converged", "threshold": 2})
+        self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("termination_summary"), "condition: majority_converged")
         self.assertEqual((summary.get("authority") or {}).get("graph_count"), 1)
         self.assertIn("publish", (summary.get("authority") or {}).get("items", [])[0].get("denied_actions") or [])
         self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("human_interrupt_allowed"), True)
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("supervisor_decision"), {"mode": "await_user", "condition": "final_review_ready"})
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("supervisor_decision_summary"), "condition: final_review_ready | mode: await_user")
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("completion_signal"), {"signal": "final_answer_ready"})
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("completion_signal_summary"), "signal: final_answer_ready")
         self.assertEqual((summary.get("checkpoints") or {}).get("counts", {}).get("approval_required"), 1)
 
     def test_evidence_ranking_prioritizes_supported_selected_claims(self) -> None:

@@ -8,6 +8,19 @@ type Props = {
 export default function CollaborationPanel({ collaboration }: Props) {
   const items = collaboration?.items || []
   const counts = collaboration?.counts || {}
+  const structuredSummary = (summary: string | null | undefined, value: unknown) => {
+    const cleanSummary = typeof summary === 'string' ? summary.trim() : ''
+    if (cleanSummary) return cleanSummary
+    if (typeof value === 'string') return value.trim() || null
+    if (value && typeof value === 'object') {
+      try {
+        return JSON.stringify(value)
+      } catch {
+        return 'structured runtime rule'
+      }
+    }
+    return null
+  }
 
   return (
     <section className="card runStudioPanel">
@@ -40,7 +53,9 @@ export default function CollaborationPanel({ collaboration }: Props) {
             {(cell.topology || cell.termination_rule) && (
               <div className="muted">
                 {cell.topology ? `topology: ${cell.topology}` : 'topology: runtime-managed'}
-                {cell.termination || cell.termination_rule ? ` | terminate: ${cell.termination || cell.termination_rule}` : ''}
+                {structuredSummary(cell.termination_summary, cell.termination || cell.termination_rule)
+                  ? ` | terminate: ${structuredSummary(cell.termination_summary, cell.termination || cell.termination_rule)}`
+                  : ''}
               </div>
             )}
             {(cell.report_back_to_label || cell.report_back_to_instance_id) && (

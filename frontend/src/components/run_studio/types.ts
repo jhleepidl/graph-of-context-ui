@@ -25,6 +25,13 @@ export type AttachedSkillSummary = {
   role_count?: number
 }
 
+export type StructuredRuntimeValue =
+  | string
+  | number
+  | boolean
+  | Record<string, unknown>
+  | unknown[]
+
 export type TaskInterpretation = {
   summary?: string | null
   items?: string[]
@@ -69,8 +76,9 @@ export type CollaborationCell = {
   selection_reason?: string | null
   max_rounds?: number | null
   topology?: string | null
-  termination?: string | null
-  termination_rule?: string | null
+  termination?: StructuredRuntimeValue | null
+  termination_summary?: string | null
+  termination_rule?: StructuredRuntimeValue | null
   [key: string]: unknown
 }
 
@@ -100,8 +108,11 @@ export type ExecutionCheckpoint = {
   requires_approval?: boolean
   blocking?: boolean
   trigger_after_instances?: string[]
-  supervisor_decision?: string | null
-  completion_signal?: string | null
+  trigger_after_labels?: string[]
+  supervisor_decision?: StructuredRuntimeValue | null
+  supervisor_decision_summary?: string | null
+  completion_signal?: StructuredRuntimeValue | null
+  completion_signal_summary?: string | null
   selection_reason?: string | null
   [key: string]: unknown
 }
@@ -175,7 +186,9 @@ export type OrchestrationProjection = {
   mode?: string | null
   parallel_groups?: Array<{
     group_id?: string | null
+    label?: string | null
     member_instance_ids?: string[]
+    member_labels?: string[]
     [key: string]: unknown
   }>
   sequential_after?: Record<string, string[]>

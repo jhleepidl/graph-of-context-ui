@@ -11,6 +11,7 @@ import {
   type RunStudioSummary,
   type RuntimeAgentInstanceV2,
   type RuntimeAgentWithSkills,
+  type StructuredRuntimeValue,
   type TeamViewProjection,
   type WhyThisTeamProjection,
 } from './types'
@@ -60,6 +61,76 @@ function asBoolean(value: unknown): boolean {
     if (['0', 'false', 'no', 'n', 'off'].includes(clean)) return false
   }
   return false
+}
+
+function parseJsonish(value: unknown): unknown {
+  if (typeof value !== 'string') return value
+  const clean = value.trim()
+  if (!clean) return null
+  if (!clean.startsWith('{') && !clean.startsWith('[')) return value
+  try {
+    return JSON.parse(clean)
+  } catch {
+    return value
+  }
+}
+
+function normalizeStructuredValue(value: unknown): StructuredRuntimeValue | null {
+  const parsed = parseJsonish(value)
+  if (parsed == null) return null
+  if (typeof parsed === 'string') return cleanText(parsed)
+  if (typeof parsed === 'number' || typeof parsed === 'boolean') return parsed
+  if (Array.isArray(parsed)) return parsed
+  if (typeof parsed === 'object') return { ...(parsed as Record<string, unknown>) }
+  return null
+}
+
+function scalarSummary(value: unknown): string | null {
+  if (typeof value === 'string') return cleanText(value)
+  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : null
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return null
+}
+
+function structuredSummary(value: unknown): string | null {
+  const normalized = normalizeStructuredValue(value)
+  const scalar = scalarSummary(normalized)
+  if (scalar != null) return scalar
+
+  if (Array.isArray(normalized)) {
+    const parts = normalized
+      .slice(0, 3)
+      .map((item) => structuredSummary(item))
+      .filter((item): item is string => Boolean(item))
+    if (parts.length > 0) return `${parts.join(', ')}${normalized.length > 3 ? '...' : ''}`
+    return normalized.length > 0 ? `${normalized.length} items` : null
+  }
+
+  if (normalized && typeof normalized === 'object') {
+    const mapping = normalized as Record<string, unknown>
+    for (const key of ['summary', 'label', 'name', 'title', 'description', 'message']) {
+      const summary = scalarSummary(mapping[key])
+      if (summary) return summary
+    }
+
+    const parts: string[] = []
+    for (const key of ['condition', 'decision', 'signal', 'mode', 'status', 'type', 'kind', 'rule', 'event', 'action']) {
+      if (!(key in mapping)) continue
+      const summary = structuredSummary(mapping[key])
+      if (summary) parts.push(`${key}: ${summary}`)
+      if (parts.length >= 3) break
+    }
+    if (parts.length > 0) return parts.join(' | ')
+
+    for (const [key, raw] of Object.entries(mapping)) {
+      const summary = scalarSummary(raw) || structuredSummary(raw)
+      if (summary) parts.push(`${key}: ${summary}`)
+      if (parts.length >= 3) break
+    }
+    return parts.length > 0 ? parts.join(' | ') : null
+  }
+
+  return null
 }
 
 function skillLoadRank(loadLevel?: string | null): number {
@@ -249,7 +320,10 @@ function normalizeSupervisorRuntime(raw: OrchestrationProjection['supervisor_run
 
 function normalizeCollaborationCell(item: NonNullable<CollaborationProjection['items']>[number]) {
   const pattern = cleanText(item.pattern) || cleanText(item.kind) || 'collaboration'
-  const termination = cleanText(item.termination) || cleanText(item.termination_rule)
+  const termination = normalizeStructuredValue(item.termination ?? item.termination_rule)
+  const terminationSummary =
+    cleanText(item.termination_summary) ||
+    structuredSummary(termination)
   return {
     ...item,
     cell_id: cleanText(item.cell_id),
@@ -265,6 +339,7 @@ function normalizeCollaborationCell(item: NonNullable<CollaborationProjection['i
     max_rounds: item.max_rounds == null ? null : asNumber(item.max_rounds),
     topology: cleanText(item.topology),
     termination,
+    termination_summary: terminationSummary,
     termination_rule: termination,
   }
 }
@@ -300,6 +375,8 @@ function normalizeCheckpoint(item: ExecutionCheckpoint): ExecutionCheckpoint {
         : asBoolean(item.requires_approval)
       : asBoolean(item.approval_required)
 
+  const supervisorDecision = normalizeStructuredValue(item.supervisor_decision)
+  const completionSignal = normalizeStructuredValue(item.completion_signal)
   return {
     ...item,
     checkpoint_id: cleanText(item.checkpoint_id),
@@ -313,8 +390,15 @@ function normalizeCheckpoint(item: ExecutionCheckpoint): ExecutionCheckpoint {
     requires_approval: approvalRequired,
     blocking: item.blocking == null ? undefined : asBoolean(item.blocking),
     trigger_after_instances: stringList(item.trigger_after_instances),
-    supervisor_decision: cleanText(item.supervisor_decision),
-    completion_signal: cleanText(item.completion_signal),
+    trigger_after_labels: stringList(item.trigger_after_labels),
+    supervisor_decision: supervisorDecision,
+    supervisor_decision_summary:
+      cleanText(item.supervisor_decision_summary) ||
+      structuredSummary(supervisorDecision),
+    completion_signal: completionSignal,
+    completion_signal_summary:
+      cleanText(item.completion_signal_summary) ||
+      structuredSummary(completionSignal),
     selection_reason: cleanText(item.selection_reason),
   }
 }
@@ -391,8 +475,16 @@ export function selectEffectiveWhyThisTeam(
   }
 }
 
-export function selectEffectiveOrchestration(summary: RunStudioSummary | null): OrchestrationProjection | null {
+export function selectEffectiveOrchestration(
+  summary: RunStudioSummary | null,
+  teamView?: TeamViewProjection | null,
+): OrchestrationProjection | null {
   const rawProjection = summary?.orchestration || currentRunSkills(summary)?.orchestration || null
+  const labelsByInstance = new Map(
+    (teamView?.items || [])
+      .map((item) => [cleanText(item.runtime_instance_id), cleanText(item.display_label)])
+      .filter((item): item is [string, string] => Boolean(item[0] && item[1])),
+  )
   if (!rawProjection) {
     const supervisorRuntime = normalizeSupervisorRuntime({})
     return {
@@ -411,9 +503,38 @@ export function selectEffectiveOrchestration(summary: RunStudioSummary | null): 
     }
   }
 
-  const parallelGroups = rawProjection.parallel_groups || []
+  const parallelGroups = (rawProjection.parallel_groups || []).map((group, index) => {
+    const memberInstanceIds = stringList(group.member_instance_ids || group.members || group.agents)
+    const memberLabels = uniqueStrings([
+      ...stringList(group.member_labels || group.memberLabels),
+      ...memberInstanceIds.map((memberId) => labelsByInstance.get(memberId) || null),
+    ])
+    return {
+      ...group,
+      group_id: cleanText(group.group_id) || `group-${index + 1}`,
+      label: cleanText(group.label || group.display_label || group.name),
+      member_instance_ids: memberInstanceIds,
+      member_labels: memberLabels,
+    }
+  })
   const sequentialAfter = rawProjection.sequential_after || {}
-  const supervisorEdges = rawProjection.supervisor_edges || []
+  const supervisorEdges = (rawProjection.supervisor_edges || []).map((edge) => {
+    const fromId = cleanText(edge.from) || cleanText(edge.source) || cleanText(edge.supervisor_id)
+    const toId = cleanText(edge.to) || cleanText(edge.target) || cleanText(edge.runtime_instance_id)
+    const fromLabel = cleanText(edge.from_label) || (fromId ? labelsByInstance.get(fromId) || null : null)
+    const toLabel = cleanText(edge.to_label) || (toId ? labelsByInstance.get(toId) || null : null)
+    const edgeSummary =
+      cleanText(edge.edge_summary) ||
+      (fromId && toId ? `${fromLabel || fromId} -> ${toLabel || toId}` : null)
+    return {
+      ...edge,
+      from: fromId,
+      to: toId,
+      from_label: fromLabel,
+      to_label: toLabel,
+      edge_summary: edgeSummary,
+    }
+  })
   const supervisorRuntime = normalizeSupervisorRuntime(rawProjection.supervisor_runtime)
   const supervisorMode =
     cleanText(rawProjection.supervisor_mode) ||

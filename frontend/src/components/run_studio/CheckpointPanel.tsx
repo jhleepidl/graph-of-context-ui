@@ -17,6 +17,19 @@ function statusClass(status: string): string {
 export default function CheckpointPanel({ checkpoints }: Props) {
   const items = checkpoints?.items || []
   const counts = checkpoints?.counts || {}
+  const structuredSummary = (summary: string | null | undefined, value: unknown) => {
+    const cleanSummary = typeof summary === 'string' ? summary.trim() : ''
+    if (cleanSummary) return cleanSummary
+    if (typeof value === 'string') return value.trim() || null
+    if (value && typeof value === 'object') {
+      try {
+        return JSON.stringify(value)
+      } catch {
+        return 'structured runtime signal'
+      }
+    }
+    return null
+  }
 
   return (
     <section className="card runStudioPanel">
@@ -47,14 +60,22 @@ export default function CheckpointPanel({ checkpoints }: Props) {
                 {approvalRequired && <span className="pill">approval stop</span>}
                 {checkpoint.blocking && <span className="pill">blocking</span>}
               </div>
-              {(checkpoint.trigger_after_instances || []).length > 0 && (
-                <div className="muted">after: {(checkpoint.trigger_after_instances || []).join(' | ')}</div>
+              {(checkpoint.trigger_after_labels || checkpoint.trigger_after_instances || []).length > 0 && (
+                <div className="muted">
+                  after: {((checkpoint.trigger_after_labels && checkpoint.trigger_after_labels.length > 0)
+                    ? checkpoint.trigger_after_labels
+                    : checkpoint.trigger_after_instances || []).join(' | ')}
+                </div>
               )}
-              {checkpoint.supervisor_decision && (
-                <div className="muted">supervisor decision: {checkpoint.supervisor_decision}</div>
+              {structuredSummary(checkpoint.supervisor_decision_summary, checkpoint.supervisor_decision) && (
+                <div className="muted">
+                  supervisor decision: {structuredSummary(checkpoint.supervisor_decision_summary, checkpoint.supervisor_decision)}
+                </div>
               )}
-              {checkpoint.completion_signal && (
-                <div className="muted">completion signal: {checkpoint.completion_signal}</div>
+              {structuredSummary(checkpoint.completion_signal_summary, checkpoint.completion_signal) && (
+                <div className="muted">
+                  completion signal: {structuredSummary(checkpoint.completion_signal_summary, checkpoint.completion_signal)}
+                </div>
               )}
               {checkpoint.selection_reason && <div className="muted">reason: {checkpoint.selection_reason}</div>}
             </article>

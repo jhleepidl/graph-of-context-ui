@@ -2,14 +2,16 @@ import React from 'react'
 import {
   type CheckpointProjection,
   type OrchestrationProjection,
+  type TeamViewProjection,
 } from './types'
 
 type Props = {
   orchestration: OrchestrationProjection | null
   checkpoints: CheckpointProjection | null
+  teamView?: TeamViewProjection | null
 }
 
-export default function OrchestrationPanel({ orchestration, checkpoints }: Props) {
+export default function OrchestrationPanel({ orchestration, checkpoints, teamView }: Props) {
   const parallelGroups = orchestration?.parallel_groups || []
   const sequentialAfter = orchestration?.sequential_after || {}
   const supervisorEdges = orchestration?.supervisor_edges || []
@@ -27,6 +29,11 @@ export default function OrchestrationPanel({ orchestration, checkpoints }: Props
     supervisorInteractionMode ||
     orchestration?.supervisor_runtime?.instance_id ||
     supervisorEdges.length,
+  )
+  const labelsByInstance = new Map(
+    (teamView?.items || [])
+      .map((item) => [String(item.runtime_instance_id || '').trim(), String(item.display_label || '').trim()])
+      .filter((item): item is [string, string] => Boolean(item[0] && item[1])),
   )
 
   return (
@@ -66,11 +73,15 @@ export default function OrchestrationPanel({ orchestration, checkpoints }: Props
         {parallelGroups.map((group, index) => (
           <article key={`parallel:${group.group_id || index}`} className="runStudioListItem">
             <div className="row" style={{ marginBottom: 4 }}>
-              <span className="pill">{group.group_id || `group-${index + 1}`}</span>
+              <span className="pill">{group.label || group.group_id || `group-${index + 1}`}</span>
               <span className="pill">parallel</span>
             </div>
             <div className="muted">
-              members: {(group.member_instance_ids || []).join(' | ') || 'not specified'}
+              members: {((group.member_labels && group.member_labels.length > 0)
+                ? group.member_labels
+                : (group.member_instance_ids || [])
+                    .map((memberId) => labelsByInstance.get(memberId) || memberId)
+              ).join(' | ') || 'not specified'}
             </div>
           </article>
         ))}
@@ -92,6 +103,7 @@ export default function OrchestrationPanel({ orchestration, checkpoints }: Props
               {edge.from && <span className="pill">from: {String(edge.from)}</span>}
               {edge.to && <span className="pill">to: {String(edge.to)}</span>}
             </div>
+            {edge.edge_summary && <div className="muted">{String(edge.edge_summary)}</div>}
             {(edge.type || edge.kind || edge.label) && (
               <div className="muted">{String(edge.type || edge.kind || edge.label)}</div>
             )}

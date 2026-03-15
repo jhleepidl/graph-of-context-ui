@@ -280,7 +280,7 @@ class RuntimeContractRoundtripTests(unittest.TestCase):
                                 "member_instance_ids": ["rt-1"],
                                 "topology": "self_loop",
                                 "max_rounds": 2,
-                                "termination": "confidence_reached",
+                                "termination": {"condition": "confidence_reached"},
                             }
                         ],
                         "authority_graph": [
@@ -300,10 +300,12 @@ class RuntimeContractRoundtripTests(unittest.TestCase):
                                 "human_interrupt_allowed": True,
                                 "approval_required": True,
                                 "trigger_after_instances": ["rt-1"],
+                                "supervisor_decision": {"mode": "await_user", "condition": "research_reports_ready"},
+                                "completion_signal": {"signal": "final_answer_ready"},
                             }
                         ],
                         "execution_graph": {
-                            "parallel_groups": [["rt-1"]],
+                            "parallel_groups": [{"group_id": "group-1", "member_instance_ids": ["rt-1"]}],
                             "supervisor_edges": [{"from": "sup-1", "to": "rt-1"}],
                         },
                     },
@@ -319,8 +321,14 @@ class RuntimeContractRoundtripTests(unittest.TestCase):
         projection = resolve_runtime_projection(nodes=nodes, edges=[])
         capability = projection.capability_payload()
         self.assertEqual((capability.get("collaboration") or {}).get("items", [])[0].get("kind"), "reflection")
+        self.assertEqual((capability.get("collaboration") or {}).get("items", [])[0].get("termination"), {"condition": "confidence_reached"})
+        self.assertEqual((capability.get("collaboration") or {}).get("items", [])[0].get("termination_summary"), "condition: confidence_reached")
         self.assertEqual((capability.get("orchestration") or {}).get("supervisor_mode"), "interrupt_on_completion")
+        self.assertEqual((capability.get("orchestration") or {}).get("parallel_groups", [])[0].get("member_labels"), ["Analyst"])
         self.assertEqual((capability.get("checkpoints") or {}).get("items", [])[0].get("human_interrupt_allowed"), True)
+        self.assertEqual((capability.get("checkpoints") or {}).get("items", [])[0].get("supervisor_decision"), {"mode": "await_user", "condition": "research_reports_ready"})
+        self.assertEqual((capability.get("checkpoints") or {}).get("items", [])[0].get("supervisor_decision_summary"), "condition: research_reports_ready | mode: await_user")
+        self.assertEqual((capability.get("checkpoints") or {}).get("items", [])[0].get("completion_signal_summary"), "signal: final_answer_ready")
         self.assertIn("publish", (capability.get("authority") or {}).get("items", [])[0].get("denied_actions") or [])
 
         engine = create_engine("sqlite://")
@@ -346,8 +354,11 @@ class RuntimeContractRoundtripTests(unittest.TestCase):
             summary = build_run_studio_summary(session, thread=thread, context_set_id=context_set.id)
 
         self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("kind"), "reflection")
+        self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("termination"), {"condition": "confidence_reached"})
         self.assertEqual((summary.get("orchestration") or {}).get("supervisor_mode"), "interrupt_on_completion")
+        self.assertEqual((summary.get("orchestration") or {}).get("parallel_groups", [])[0].get("member_labels"), ["Analyst"])
         self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("human_interrupt_allowed"), True)
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("completion_signal_summary"), "signal: final_answer_ready")
         self.assertIn("publish", (summary.get("authority") or {}).get("items", [])[0].get("denied_actions") or [])
 
 

@@ -100,7 +100,7 @@ export default function RunStudioLayout({
   const effectiveTeam = selectEffectiveAgentTeam(summary, team)
   const teamView = selectEffectiveTeamView(summary, team)
   const whyThisTeam = selectEffectiveWhyThisTeam(summary, team)
-  const orchestration = selectEffectiveOrchestration(summary)
+  const orchestration = selectEffectiveOrchestration(summary, teamView)
   const collaboration = selectEffectiveCollaboration(summary)
   const authorityProjection = selectEffectiveAuthority(summary, team)
   const checkpoints = selectEffectiveCheckpoints(summary)
@@ -175,7 +175,7 @@ export default function RunStudioLayout({
 
       <div className="runStudioGrid runStudioGrid--bottom">
         <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
-        <OrchestrationPanel orchestration={orchestration} checkpoints={checkpoints} />
+        <OrchestrationPanel orchestration={orchestration} checkpoints={checkpoints} teamView={teamView} />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
