@@ -40,7 +40,9 @@ export default function AgentTeamPanel({
   const parallelGroupCount = orchestration?.parallel_group_count ?? orchestration?.parallel_groups?.length ?? 0
   const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
   const supervisorEnabled = Boolean(
+    orchestration?.supervisor_enabled ||
     orchestration?.supervisor_mode ||
+    orchestration?.supervisor_runtime?.interaction_mode ||
     orchestration?.supervisor_edges?.length ||
     orchestration?.supervisor_runtime?.mode ||
     orchestration?.supervisor_runtime?.instance_id,

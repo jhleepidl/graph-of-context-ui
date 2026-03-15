@@ -341,15 +341,43 @@ class RunStudioLogicTests(unittest.TestCase):
                                     {"slot_id": "slot-1", "role_id": "role-1", "display_label": "Analyst"},
                                     {"slot_id": "slot-2", "role_id": "role-2", "display_label": "Reviewer"},
                                 ],
-                                "supervisor_runtime": {"mode": "oversight"},
+                                "supervisor_runtime": {
+                                    "interaction_mode": "interrupt_on_completion",
+                                    "instance_id": "sup-1",
+                                    "enabled": True,
+                                    "user_visible": True,
+                                },
                             },
                             "runtime_agents": [
                                 {"instance_id": "rt-1", "slot_id": "slot-1", "role_id": "role-1", "display_label": "Analyst"},
                                 {"instance_id": "rt-2", "slot_id": "slot-2", "role_id": "role-2", "display_label": "Reviewer", "synthesized": True},
                             ],
-                            "collaboration_cells": [{"cell_id": "cell-1", "kind": "debate", "members": ["rt-1", "rt-2"]}],
-                            "authority_graph": [{"authority_id": "auth-1", "runtime_instance_id": "rt-1", "authority_profile_id": "authority.read_only"}],
-                            "checkpoints": [{"checkpoint_id": "checkpoint-1", "kind": "approval", "requires_approval": True}],
+                            "collaboration_cells": [
+                                {
+                                    "cell_id": "cell-1",
+                                    "pattern": "debate",
+                                    "member_instance_ids": ["rt-1", "rt-2"],
+                                    "topology": "pairwise",
+                                    "max_rounds": 3,
+                                    "termination": "majority_converged",
+                                }
+                            ],
+                            "authority_graph": [
+                                {
+                                    "authority_id": "auth-1",
+                                    "runtime_instance_id": "rt-1",
+                                    "authority_profile_id": "authority.read_only",
+                                    "denied_actions": ["publish"],
+                                }
+                            ],
+                            "checkpoints": [
+                                {
+                                    "checkpoint_id": "checkpoint-1",
+                                    "kind": "approval",
+                                    "approval_required": True,
+                                    "human_interrupt_allowed": True,
+                                }
+                            ],
                             "execution_graph": {"parallel_groups": [["rt-1", "rt-2"]]},
                             "selection_explanations": [{"slot_id": "slot-1", "text": "Analyst covers the research phase"}],
                         }
@@ -381,8 +409,13 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertIn("checkpoints", summary)
         self.assertEqual((summary.get("team_view") or {}).get("count"), 2)
         self.assertEqual((summary.get("orchestration") or {}).get("mode"), "parallel")
+        self.assertEqual((summary.get("orchestration") or {}).get("supervisor_mode"), "interrupt_on_completion")
         self.assertEqual((summary.get("collaboration") or {}).get("count"), 1)
+        self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("kind"), "debate")
+        self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("topology"), "pairwise")
         self.assertEqual((summary.get("authority") or {}).get("graph_count"), 1)
+        self.assertIn("publish", (summary.get("authority") or {}).get("items", [])[0].get("denied_actions") or [])
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("human_interrupt_allowed"), True)
         self.assertEqual((summary.get("checkpoints") or {}).get("counts", {}).get("approval_required"), 1)
 
     def test_evidence_ranking_prioritizes_supported_selected_claims(self) -> None:

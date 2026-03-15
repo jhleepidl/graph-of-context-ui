@@ -13,8 +13,21 @@ export default function OrchestrationPanel({ orchestration, checkpoints }: Props
   const parallelGroups = orchestration?.parallel_groups || []
   const sequentialAfter = orchestration?.sequential_after || {}
   const supervisorEdges = orchestration?.supervisor_edges || []
-  const checkpointCount = Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
-  const pendingCheckpoints = (checkpoints?.items || []).filter((item) => String(item.status || 'pending') !== 'done').length
+  const checkpointCount = Number(
+    orchestration?.checkpoint_count || checkpoints?.counts?.total || checkpoints?.items?.length || 0,
+  )
+  const pendingCheckpoints = (checkpoints?.items || []).filter((item) => {
+    const status = String(item.status || 'pending').toLowerCase()
+    return status !== 'done' && status !== 'approved'
+  }).length
+  const supervisorInteractionMode =
+    orchestration?.supervisor_runtime?.interaction_mode || orchestration?.supervisor_mode || orchestration?.supervisor_runtime?.mode
+  const supervisorEnabled = Boolean(
+    orchestration?.supervisor_enabled ||
+    supervisorInteractionMode ||
+    orchestration?.supervisor_runtime?.instance_id ||
+    supervisorEdges.length,
+  )
 
   return (
     <section className="card runStudioPanel">
@@ -31,10 +44,22 @@ export default function OrchestrationPanel({ orchestration, checkpoints }: Props
       </div>
 
       <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
-        {orchestration?.supervisor_mode && <span className="pill">supervisor mode: {orchestration.supervisor_mode}</span>}
+        {supervisorEnabled && <span className="pill">supervisor enabled</span>}
+        {supervisorInteractionMode && <span className="pill">interaction: {supervisorInteractionMode}</span>}
         {orchestration?.supervisor_runtime?.instance_id && (
           <span className="pill">supervisor: {String(orchestration.supervisor_runtime.instance_id)}</span>
         )}
+        {orchestration?.supervisor_runtime?.authority_profile_id && (
+          <span className="pill">authority: {String(orchestration.supervisor_runtime.authority_profile_id)}</span>
+        )}
+        {orchestration?.supervisor_runtime?.user_visible != null && (
+          <span className="pill">
+            {orchestration.supervisor_runtime.user_visible ? 'user visible' : 'runtime-only'}
+          </span>
+        )}
+        {Object.entries(orchestration?.checkpoint_status_counts || {}).map(([status, count]) => (
+          <span key={status} className="pill">checkpoint {status}: {count}</span>
+        ))}
       </div>
 
       <div className="runStudioList">

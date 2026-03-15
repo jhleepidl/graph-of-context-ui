@@ -177,6 +177,13 @@ def _pick(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
+def _first_present_value(mapping: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        if key in mapping and mapping.get(key) is not None:
+            return mapping.get(key)
+    return None
+
+
 def _normalize_mode(value: Any) -> str | None:
     clean = str(value or "").strip().lower().replace("-", "_")
     if not clean:
@@ -574,26 +581,31 @@ def normalize_authority_graph(value: Any) -> list[dict[str, Any]]:
         )
         authority_profile_id = extract_authority_profile_id(entry)
         allowed = _clean_list_of_text(
-            entry.get("allowed_actions")
-            or entry.get("allowedActions")
-            or entry.get("permissions")
-            or entry.get("grants"),
+            _first_present_value(entry, ("allowed_actions", "allowedActions", "permissions", "grants")),
             limit=24,
         )
-        restricted = _clean_list_of_text(
-            entry.get("restricted_actions")
-            or entry.get("restrictedActions")
-            or entry.get("restrictions")
-            or entry.get("denies")
-            or entry.get("blocked_actions")
-            or entry.get("blockedActions"),
+        denied = _clean_list_of_text(
+            _first_present_value(
+                entry,
+                (
+                    "denied_actions",
+                    "deniedActions",
+                    "restricted_actions",
+                    "restrictedActions",
+                    "restrictions",
+                    "denies",
+                    "blocked_actions",
+                    "blockedActions",
+                ),
+            ),
             limit=24,
         )
         approvals = _clean_list_of_text(
-            entry.get("approval_required_for")
-            or entry.get("approvalRequiredFor")
-            or entry.get("approval_actions")
-            or entry.get("approvalActions"),
+            _first_present_value(entry, ("approval_required_for", "approvalRequiredFor", "approval_actions", "approvalActions")),
+            limit=24,
+        )
+        tool_allowlist = _clean_list_of_text(
+            _first_present_value(entry, ("tool_allowlist", "toolAllowlist", "allowed_tools", "allowedTools")),
             limit=24,
         )
         normalized.append(
@@ -605,8 +617,10 @@ def normalize_authority_graph(value: Any) -> list[dict[str, Any]]:
                 "managed_by": _clean_text(entry.get("managed_by") or entry.get("managedBy") or entry.get("owner")),
                 "scope": _clean_text(entry.get("scope") or entry.get("kind") or entry.get("type")),
                 "allowed_actions": allowed,
-                "restricted_actions": restricted,
+                "denied_actions": denied,
+                "restricted_actions": denied,
                 "approval_required_for": approvals,
+                "tool_allowlist": tool_allowlist,
             }
         )
     return normalized
@@ -639,13 +653,22 @@ def build_runtime_authority_projection(
             linked_entries.extend(graph_by_profile.get(authority_profile_id, []))
 
         allowed: list[str] = []
-        restricted: list[str] = []
+        denied: list[str] = []
         approvals: list[str] = []
+        tool_allowlist: list[str] = []
         managed_by = _clean_text(agent.get("managed_by") or agent.get("managedBy"))
         for entry in linked_entries:
             allowed.extend(_clean_list_of_text(entry.get("allowed_actions"), limit=24))
-            restricted.extend(_clean_list_of_text(entry.get("restricted_actions"), limit=24))
+            denied.extend(
+                _clean_list_of_text(
+                    entry.get("denied_actions")
+                    if "denied_actions" in entry
+                    else entry.get("restricted_actions"),
+                    limit=24,
+                )
+            )
             approvals.extend(_clean_list_of_text(entry.get("approval_required_for"), limit=24))
+            tool_allowlist.extend(_clean_list_of_text(entry.get("tool_allowlist"), limit=24))
             managed_by = managed_by or _clean_text(entry.get("managed_by"))
 
         items.append(
@@ -655,8 +678,10 @@ def build_runtime_authority_projection(
                 "authority_profile_id": authority_profile_id,
                 "managed_by": managed_by,
                 "allowed_actions": sorted(set(allowed)),
-                "restricted_actions": sorted(set(restricted)),
+                "denied_actions": sorted(set(denied)),
+                "restricted_actions": sorted(set(denied)),
                 "approval_required_for": sorted(set(approvals)),
+                "tool_allowlist": sorted(set(tool_allowlist)),
                 "graph_entry_count": len(linked_entries),
             }
         )

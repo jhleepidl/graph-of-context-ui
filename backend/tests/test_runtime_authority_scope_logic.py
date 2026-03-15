@@ -191,8 +191,9 @@ class RuntimeAuthorityAndScopeTests(unittest.TestCase):
                     "runtime_instance_id": "rt-1",
                     "authority_profile_id": "authority.read_only",
                     "allowed_actions": ["research"],
-                    "restricted_actions": ["publish"],
+                    "denied_actions": ["publish"],
                     "approval_required_for": ["publish"],
+                    "tool_allowlist": ["browser.search"],
                 },
                 {
                     "authority_id": "auth-2",
@@ -208,8 +209,10 @@ class RuntimeAuthorityAndScopeTests(unittest.TestCase):
         reviewer = next(item for item in projection.get("items") or [] if item.get("runtime_instance_id") == "rt-2")
         self.assertEqual(analyst.get("authority_profile_id"), "authority.read_only")
         self.assertIn("research", analyst.get("allowed_actions") or [])
+        self.assertIn("publish", analyst.get("denied_actions") or [])
         self.assertIn("publish", analyst.get("restricted_actions") or [])
         self.assertIn("publish", analyst.get("approval_required_for") or [])
+        self.assertIn("browser.search", analyst.get("tool_allowlist") or [])
         self.assertEqual(reviewer.get("allowed_actions"), ["critique"])
 
     def test_shared_current_run_resolution_applies_to_skill_and_context_summaries(self) -> None:

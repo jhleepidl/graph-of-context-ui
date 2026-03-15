@@ -222,6 +222,103 @@ function mergeRuntimeAgents(
   })
 }
 
+function normalizeSupervisorRuntime(raw: OrchestrationProjection['supervisor_runtime'] | null | undefined) {
+  const runtime = raw || {}
+  return {
+    ...runtime,
+    interaction_mode:
+      cleanText(runtime.interaction_mode) ||
+      cleanText(runtime.mode) ||
+      cleanText(runtime.kind) ||
+      cleanText(runtime.strategy),
+    mode:
+      cleanText(runtime.mode) ||
+      cleanText(runtime.interaction_mode) ||
+      cleanText(runtime.kind) ||
+      cleanText(runtime.strategy),
+    kind: cleanText(runtime.kind),
+    strategy: cleanText(runtime.strategy),
+    instance_id: cleanText(runtime.instance_id),
+    authority_profile_id: cleanText(runtime.authority_profile_id),
+    user_visible:
+      runtime.user_visible == null ? undefined : asBoolean(runtime.user_visible),
+    enabled:
+      runtime.enabled == null ? undefined : asBoolean(runtime.enabled),
+  }
+}
+
+function normalizeCollaborationCell(item: NonNullable<CollaborationProjection['items']>[number]) {
+  const pattern = cleanText(item.pattern) || cleanText(item.kind) || 'collaboration'
+  const termination = cleanText(item.termination) || cleanText(item.termination_rule)
+  return {
+    ...item,
+    cell_id: cleanText(item.cell_id),
+    pattern,
+    kind: cleanText(item.kind) || pattern,
+    display_label: cleanText(item.display_label),
+    member_instance_ids: stringList(item.member_instance_ids),
+    member_labels: stringList(item.member_labels),
+    report_back_to_instance_id: cleanText(item.report_back_to_instance_id),
+    report_back_to_label: cleanText(item.report_back_to_label),
+    decision_mode: cleanText(item.decision_mode),
+    selection_reason: cleanText(item.selection_reason),
+    max_rounds: item.max_rounds == null ? null : asNumber(item.max_rounds),
+    topology: cleanText(item.topology),
+    termination,
+    termination_rule: termination,
+  }
+}
+
+function normalizeAuthorityItem(item: NonNullable<AuthorityProjection['items']>[number]) {
+  const denied = uniqueStrings([...(item.denied_actions || []), ...(item.restricted_actions || [])])
+  return {
+    ...item,
+    runtime_instance_id: cleanText(item.runtime_instance_id),
+    display_label: cleanText(item.display_label),
+    authority_profile_id: cleanText(item.authority_profile_id),
+    managed_by: cleanText(item.managed_by),
+    allowed_actions: uniqueStrings(item.allowed_actions || []),
+    denied_actions: denied,
+    restricted_actions: denied,
+    approval_required_for: uniqueStrings(item.approval_required_for || []),
+    tool_allowlist: uniqueStrings(item.tool_allowlist || []),
+    graph_entry_count: asNumber(item.graph_entry_count),
+  }
+}
+
+function normalizeCheckpoint(item: ExecutionCheckpoint): ExecutionCheckpoint {
+  const humanInterruptAllowed =
+    item.human_interrupt_allowed == null
+      ? item.requires_human == null
+        ? undefined
+        : asBoolean(item.requires_human)
+      : asBoolean(item.human_interrupt_allowed)
+  const approvalRequired =
+    item.approval_required == null
+      ? item.requires_approval == null
+        ? undefined
+        : asBoolean(item.requires_approval)
+      : asBoolean(item.approval_required)
+
+  return {
+    ...item,
+    checkpoint_id: cleanText(item.checkpoint_id),
+    kind: cleanText(item.kind),
+    label: cleanText(item.label),
+    stage: cleanText(item.stage),
+    status: cleanText(item.status) || 'pending',
+    human_interrupt_allowed: humanInterruptAllowed,
+    requires_human: humanInterruptAllowed,
+    approval_required: approvalRequired,
+    requires_approval: approvalRequired,
+    blocking: item.blocking == null ? undefined : asBoolean(item.blocking),
+    trigger_after_instances: stringList(item.trigger_after_instances),
+    supervisor_decision: cleanText(item.supervisor_decision),
+    completion_signal: cleanText(item.completion_signal),
+    selection_reason: cleanText(item.selection_reason),
+  }
+}
+
 function currentRunSkills(summary: RunStudioSummary | null) {
   return summary?.current_run_skills || null
 }
@@ -297,13 +394,17 @@ export function selectEffectiveWhyThisTeam(
 export function selectEffectiveOrchestration(summary: RunStudioSummary | null): OrchestrationProjection | null {
   const rawProjection = summary?.orchestration || currentRunSkills(summary)?.orchestration || null
   if (!rawProjection) {
+    const supervisorRuntime = normalizeSupervisorRuntime({})
     return {
       mode: 'runtime_managed',
       parallel_groups: [],
       sequential_after: {},
-      supervisor_runtime: {},
+      supervisor_runtime: supervisorRuntime,
       supervisor_mode: null,
+      supervisor_enabled: false,
       supervisor_edges: [],
+      checkpoint_count: 0,
+      checkpoint_status_counts: {},
       parallel_group_count: 0,
       sequential_dependency_count: 0,
       supervisor_edge_count: 0,
@@ -313,19 +414,28 @@ export function selectEffectiveOrchestration(summary: RunStudioSummary | null): 
   const parallelGroups = rawProjection.parallel_groups || []
   const sequentialAfter = rawProjection.sequential_after || {}
   const supervisorEdges = rawProjection.supervisor_edges || []
+  const supervisorRuntime = normalizeSupervisorRuntime(rawProjection.supervisor_runtime)
+  const supervisorMode =
+    cleanText(rawProjection.supervisor_mode) ||
+    cleanText(supervisorRuntime.interaction_mode) ||
+    cleanText(supervisorRuntime.mode) ||
+    null
+  const supervisorEnabled =
+    rawProjection.supervisor_enabled == null
+      ? Boolean(supervisorMode || supervisorRuntime.instance_id || supervisorEdges.length)
+      : asBoolean(rawProjection.supervisor_enabled)
 
   return {
     ...rawProjection,
     mode: cleanText(rawProjection.mode) || 'runtime_managed',
     parallel_groups: parallelGroups,
     sequential_after: sequentialAfter,
-    supervisor_runtime: rawProjection.supervisor_runtime || {},
-    supervisor_mode:
-      cleanText(rawProjection.supervisor_mode) ||
-      cleanText(rawProjection.supervisor_runtime?.mode) ||
-      cleanText(rawProjection.supervisor_runtime?.kind) ||
-      null,
+    supervisor_runtime: supervisorRuntime,
+    supervisor_mode: supervisorMode,
+    supervisor_enabled: supervisorEnabled,
     supervisor_edges: supervisorEdges,
+    checkpoint_count: rawProjection.checkpoint_count ?? 0,
+    checkpoint_status_counts: rawProjection.checkpoint_status_counts || {},
     parallel_group_count: rawProjection.parallel_group_count ?? parallelGroups.length,
     sequential_dependency_count: rawProjection.sequential_dependency_count ?? Object.keys(sequentialAfter).length,
     supervisor_edge_count: rawProjection.supervisor_edge_count ?? supervisorEdges.length,
@@ -342,9 +452,9 @@ export function selectEffectiveCollaboration(summary: RunStudioSummary | null): 
     }
   }
 
-  const items = rawProjection.items || []
+  const items = (rawProjection.items || []).map((item) => normalizeCollaborationCell(item))
   const counts = rawProjection.counts || items.reduce<Record<string, number>>((acc, item) => {
-    const kind = cleanText(item.kind) || 'collaboration'
+    const kind = cleanText(item.pattern) || cleanText(item.kind) || 'collaboration'
     acc[kind] = (acc[kind] || 0) + 1
     return acc
   }, {})
@@ -367,12 +477,14 @@ export function selectEffectiveAuthority(summary: RunStudioSummary | null, detai
       authority_profile_id: item.authority_profile_id || null,
       managed_by: null,
       allowed_actions: [],
+      denied_actions: [],
       restricted_actions: [],
       approval_required_for: [],
+      tool_allowlist: [],
       graph_entry_count: 0,
     }))
 
-  const rawItems = rawProjection?.items || []
+  const rawItems = (rawProjection?.items || []).map((item) => normalizeAuthorityItem(item))
   const mergedItemsMap = new Map<string, AuthorityProjection['items'][number]>()
   ;[...rawItems, ...fallbackItems].forEach((item) => {
     const key = cleanText(item.runtime_instance_id) || cleanText(item.display_label) || cleanText(item.authority_profile_id) || 'authority'
@@ -385,11 +497,19 @@ export function selectEffectiveAuthority(summary: RunStudioSummary | null, detai
       authority_profile_id: cleanText(current?.authority_profile_id) || cleanText(item.authority_profile_id),
       managed_by: cleanText(current?.managed_by) || cleanText(item.managed_by),
       allowed_actions: uniqueStrings([...(current?.allowed_actions || []), ...(item.allowed_actions || [])]),
-      restricted_actions: uniqueStrings([...(current?.restricted_actions || []), ...(item.restricted_actions || [])]),
+      denied_actions: uniqueStrings([
+        ...(current?.denied_actions || current?.restricted_actions || []),
+        ...(item.denied_actions || item.restricted_actions || []),
+      ]),
+      restricted_actions: uniqueStrings([
+        ...(current?.denied_actions || current?.restricted_actions || []),
+        ...(item.denied_actions || item.restricted_actions || []),
+      ]),
       approval_required_for: uniqueStrings([
         ...(current?.approval_required_for || []),
         ...(item.approval_required_for || []),
       ]),
+      tool_allowlist: uniqueStrings([...(current?.tool_allowlist || []), ...(item.tool_allowlist || [])]),
       graph_entry_count: Math.max(asNumber(current?.graph_entry_count), asNumber(item.graph_entry_count)),
     })
   })
@@ -398,7 +518,19 @@ export function selectEffectiveAuthority(summary: RunStudioSummary | null, detai
 
   return {
     items: Array.from(mergedItemsMap.values()),
-    graph: rawProjection?.graph || [],
+    graph: (rawProjection?.graph || []).map((entry) => ({
+      ...entry,
+      authority_id: cleanText(entry.authority_id),
+      runtime_instance_id: cleanText(entry.runtime_instance_id),
+      authority_profile_id: cleanText(entry.authority_profile_id),
+      managed_by: cleanText(entry.managed_by),
+      scope: cleanText(entry.scope),
+      allowed_actions: uniqueStrings(entry.allowed_actions || []),
+      denied_actions: uniqueStrings([...(entry.denied_actions || []), ...(entry.restricted_actions || [])]),
+      restricted_actions: uniqueStrings([...(entry.denied_actions || []), ...(entry.restricted_actions || [])]),
+      approval_required_for: uniqueStrings(entry.approval_required_for || []),
+      tool_allowlist: uniqueStrings(entry.tool_allowlist || []),
+    })),
     count: rawProjection?.count ?? mergedItemsMap.size,
     graph_count: rawProjection?.graph_count ?? (rawProjection?.graph || []).length,
   }
@@ -411,23 +543,24 @@ export function selectEffectiveCheckpoints(summary: RunStudioSummary | null): Ch
   const syntheticItems: ExecutionCheckpoint[] = []
 
   if (rawItems.length === 0 && asBoolean(nowState?.current_pending_approval ?? nowState?.pending_approval)) {
-    syntheticItems.push({
+    syntheticItems.push(normalizeCheckpoint({
       checkpoint_id: 'legacy-pending-approval',
       kind: 'approval',
       label: 'Pending user approval',
       status: 'pending',
+      approval_required: true,
       requires_approval: true,
       blocking: true,
-    })
+    }))
   }
 
-  const items = rawItems.length > 0 ? rawItems : syntheticItems
+  const items = rawItems.length > 0 ? rawItems.map((item) => normalizeCheckpoint(item)) : syntheticItems
   if (!rawProjection && items.length === 0) return null
 
   const counts = rawProjection?.counts || {
     total: items.length,
-    human_interrupts: items.filter((item) => asBoolean(item.requires_human)).length,
-    approval_required: items.filter((item) => asBoolean(item.requires_approval)).length,
+    human_interrupts: items.filter((item) => asBoolean(item.human_interrupt_allowed ?? item.requires_human)).length,
+    approval_required: items.filter((item) => asBoolean(item.approval_required ?? item.requires_approval)).length,
     blocking: items.filter((item) => asBoolean(item.blocking)).length,
   }
 

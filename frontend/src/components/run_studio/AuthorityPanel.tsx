@@ -26,27 +26,39 @@ export default function AuthorityPanel({ authority, runtimeAuthority }: Props) {
       </div>
 
       <div className="runStudioList">
-        {items.map((item, index) => (
-          <article key={`${item.runtime_instance_id || item.authority_profile_id || 'authority'}:${index}`} className="runStudioListItem">
-            <div className="row" style={{ marginBottom: 4 }}>
-              <span className="pill">{item.display_label || item.runtime_instance_id || 'runtime agent'}</span>
-              {item.authority_profile_id && <span className="pill">profile: {item.authority_profile_id}</span>}
-              {item.managed_by && <span className="pill">managed by: {item.managed_by}</span>}
-            </div>
-            {(item.allowed_actions || []).length > 0 && (
-              <div className="muted">allowed: {(item.allowed_actions || []).join(' | ')}</div>
-            )}
-            {(item.restricted_actions || []).length > 0 && (
-              <div className="muted">denied: {(item.restricted_actions || []).join(' | ')}</div>
-            )}
-            {(item.approval_required_for || []).length > 0 && (
-              <div className="muted">approval required: {(item.approval_required_for || []).join(' | ')}</div>
-            )}
-            {(!item.allowed_actions?.length && !item.restricted_actions?.length && !item.approval_required_for?.length) && (
-              <div className="muted">Authority profile is present, but no action-level details were emitted.</div>
-            )}
-          </article>
-        ))}
+        {items.map((item, index) => {
+          const deniedActions = item.denied_actions || item.restricted_actions || []
+          const hasDetails =
+            Boolean(item.allowed_actions?.length) ||
+            Boolean(deniedActions.length) ||
+            Boolean(item.approval_required_for?.length) ||
+            Boolean(item.tool_allowlist?.length)
+
+          return (
+            <article key={`${item.runtime_instance_id || item.authority_profile_id || 'authority'}:${index}`} className="runStudioListItem">
+              <div className="row" style={{ marginBottom: 4 }}>
+                <span className="pill">{item.display_label || item.runtime_instance_id || 'runtime agent'}</span>
+                {item.authority_profile_id && <span className="pill">profile: {item.authority_profile_id}</span>}
+                {item.managed_by && <span className="pill">managed by: {item.managed_by}</span>}
+              </div>
+              {(item.allowed_actions || []).length > 0 && (
+                <div className="muted">allowed: {(item.allowed_actions || []).join(' | ')}</div>
+              )}
+              {deniedActions.length > 0 && (
+                <div className="muted">denied: {deniedActions.join(' | ')}</div>
+              )}
+              {(item.approval_required_for || []).length > 0 && (
+                <div className="muted">approval required: {(item.approval_required_for || []).join(' | ')}</div>
+              )}
+              {(item.tool_allowlist || []).length > 0 && (
+                <div className="muted">tools: {(item.tool_allowlist || []).join(' | ')}</div>
+              )}
+              {!hasDetails && (
+                <div className="muted">Authority profile is present, but no action-level details were emitted.</div>
+              )}
+            </article>
+          )
+        })}
 
         {items.length === 0 && runtimeAuthority && (
           <article className="runStudioListItem">

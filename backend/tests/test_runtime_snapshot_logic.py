@@ -123,7 +123,11 @@ class RuntimeSnapshotHelperTests(unittest.TestCase):
                                         "selection_reason": "Need grounded evidence gathering",
                                     }
                                 ],
-                                "supervisor_runtime": {"mode": "oversight", "instance_id": "sup-1"},
+                                "supervisor_runtime": {
+                                    "interaction_mode": "interrupt_on_completion",
+                                    "instance_id": "sup-1",
+                                    "enabled": True,
+                                },
                             },
                             "runtime_agents": [
                                 {
@@ -138,20 +142,29 @@ class RuntimeSnapshotHelperTests(unittest.TestCase):
                                 }
                             ],
                             "collaboration_cells": [
-                                {"cell_id": "cell-1", "kind": "debate", "members": ["rt-1", "rt-2"]}
+                                {
+                                    "cell_id": "cell-1",
+                                    "pattern": "debate",
+                                    "member_instance_ids": ["rt-1", "rt-2"],
+                                    "topology": "pairwise",
+                                    "max_rounds": 3,
+                                    "termination": "majority_converged",
+                                }
                             ],
                             "authority_graph": [
                                 {
                                     "authority_id": "auth-1",
                                     "runtime_instance_id": "rt-1",
                                     "authority_profile_id": "authority.read_only",
+                                    "denied_actions": ["publish"],
                                 }
                             ],
                             "checkpoints": [
                                 {
                                     "checkpoint_id": "checkpoint-1",
                                     "kind": "approval",
-                                    "requires_approval": True,
+                                    "approval_required": True,
+                                    "human_interrupt_allowed": True,
                                 }
                             ],
                             "execution_graph": {
@@ -173,12 +186,15 @@ class RuntimeSnapshotHelperTests(unittest.TestCase):
         assert snapshot is not None
         self.assertEqual(snapshot["task_interpretation"]["summary"], "Split into research and review")
         self.assertEqual((snapshot.get("team_plan") or {}).get("slots", [])[0]["slot_id"], "slot-analyst")
-        self.assertEqual((snapshot.get("team_plan") or {}).get("supervisor_runtime", {}).get("mode"), "oversight")
+        self.assertEqual((snapshot.get("team_plan") or {}).get("supervisor_runtime", {}).get("interaction_mode"), "interrupt_on_completion")
         self.assertEqual(snapshot["members"][0]["instance_id"], "rt-1")
         self.assertEqual(snapshot["members"][0]["attached_skill_ids"], ["skill.claim_evidence_audit.v1"])
         self.assertEqual((snapshot.get("collaboration_cells") or [])[0]["kind"], "debate")
+        self.assertEqual((snapshot.get("collaboration_cells") or [])[0]["topology"], "pairwise")
         self.assertEqual((snapshot.get("authority_graph") or [])[0]["authority_profile_id"], "authority.read_only")
+        self.assertEqual((snapshot.get("authority_graph") or [])[0]["denied_actions"], ["publish"])
         self.assertEqual((snapshot.get("checkpoints") or [])[0]["checkpoint_id"], "checkpoint-1")
+        self.assertEqual((snapshot.get("checkpoints") or [])[0]["human_interrupt_allowed"], True)
         self.assertEqual((snapshot.get("execution_graph") or {}).get("sequential_after"), {"rt-2": ["rt-1"]})
         self.assertEqual((snapshot.get("selection_explanations") or [])[0]["slot_id"], "slot-analyst")
         self.assertEqual((snapshot.get("conversation_preferences") or {}).get("tone"), "concise")

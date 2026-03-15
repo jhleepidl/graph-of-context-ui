@@ -138,6 +138,34 @@ def clean_text(value: Any) -> str | None:
     return clean or None
 
 
+def coerce_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        clean = value.strip().lower()
+        if clean in {"1", "true", "yes", "y", "on"}:
+            return True
+        if clean in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
+
+
+def coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        clean = value.strip()
+        if clean and clean.lstrip("-").isdigit():
+            return int(clean)
+    return None
+
+
 def parse_jsonish(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return value
@@ -233,6 +261,307 @@ def normalize_task_interpretation(value: Any) -> dict[str, Any] | None:
     if items:
         return {"items": items}
     return None
+
+
+def normalize_supervisor_runtime(value: Any) -> dict[str, Any] | None:
+    mapping = normalize_mapping(value)
+    if not mapping:
+        return None
+
+    interaction_mode = clean_text(
+        first_present(mapping, ("interaction_mode", "interactionMode", "mode", "kind", "strategy"))
+    )
+    instance_id = clean_text(
+        first_present(mapping, ("instance_id", "runtime_instance_id", "runtimeInstanceId", "id"))
+    )
+    authority_profile_id = clean_text(
+        first_present(mapping, ("authority_profile_id", "authorityProfileId"))
+    )
+    enabled = coerce_bool(first_present(mapping, ("enabled", "is_enabled", "isEnabled")))
+    user_visible = coerce_bool(first_present(mapping, ("user_visible", "userVisible", "visible")))
+
+    out = dict(mapping)
+    if interaction_mode:
+        out["interaction_mode"] = interaction_mode
+        if not clean_text(out.get("mode")):
+            out["mode"] = interaction_mode
+    if instance_id:
+        out["instance_id"] = instance_id
+    if authority_profile_id:
+        out["authority_profile_id"] = authority_profile_id
+    if enabled is not None:
+        out["enabled"] = enabled
+    if user_visible is not None:
+        out["user_visible"] = user_visible
+    return out
+
+
+def normalize_collaboration_cells(value: Any) -> list[dict[str, Any]]:
+    items = normalize_record_list(
+        value,
+        id_field="cell_id",
+        hint_keys=(
+            "cell_id",
+            "id",
+            "pattern",
+            "kind",
+            "type",
+            "mode",
+            "name",
+            "label",
+            "topology",
+            "max_rounds",
+            "termination",
+            "member_instance_ids",
+            "memberInstanceIds",
+            "report_back_to_instance_id",
+            "reportBackToInstanceId",
+        ),
+        max_items=32,
+    )
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        entry = dict(item)
+        cell_id = clean_text(first_present(entry, ("cell_id", "id"))) or f"cell-{index + 1}"
+        pattern = clean_text(first_present(entry, ("pattern", "kind", "type", "mode")))
+        member_instance_ids = clean_list_of_text(
+            first_present(
+                entry,
+                (
+                    "member_instance_ids",
+                    "memberInstanceIds",
+                    "members",
+                    "participants",
+                    "runtime_instance_ids",
+                    "runtimeInstanceIds",
+                    "agents",
+                ),
+            ),
+            limit=24,
+        )
+        topology = clean_text(first_present(entry, ("topology", "collaboration_topology", "topology_mode")))
+        max_rounds = coerce_int(first_present(entry, ("max_rounds", "maxRounds", "rounds")))
+        termination = clean_text(
+            first_present(entry, ("termination", "termination_rule", "terminationRule", "stop_rule", "stopRule"))
+        )
+        report_back_to_instance_id = clean_text(
+            first_present(
+                entry,
+                (
+                    "report_back_to_instance_id",
+                    "reportBackToInstanceId",
+                    "report_to_instance_id",
+                    "reportToInstanceId",
+                ),
+            )
+        )
+
+        entry["cell_id"] = cell_id
+        if pattern:
+            entry["pattern"] = pattern
+            if not clean_text(entry.get("kind")):
+                entry["kind"] = pattern
+        if member_instance_ids:
+            entry["member_instance_ids"] = member_instance_ids
+        if topology:
+            entry["topology"] = topology
+        if max_rounds is not None:
+            entry["max_rounds"] = max_rounds
+        if termination:
+            entry["termination"] = termination
+            if not clean_text(entry.get("termination_rule")):
+                entry["termination_rule"] = termination
+        if report_back_to_instance_id:
+            entry["report_back_to_instance_id"] = report_back_to_instance_id
+
+        normalized.append(entry)
+
+    return normalized
+
+
+def normalize_authority_graph_entries(value: Any) -> list[dict[str, Any]]:
+    items = normalize_record_list(
+        value,
+        id_field="authority_id",
+        hint_keys=(
+            "authority_id",
+            "id",
+            "instance_id",
+            "runtime_instance_id",
+            "authority_profile_id",
+            "authorityProfileId",
+            "subject_id",
+            "source",
+            "target",
+            "denied_actions",
+            "deniedActions",
+            "allowed_actions",
+            "allowedActions",
+            "approval_required_for",
+            "approvalRequiredFor",
+            "tool_allowlist",
+            "toolAllowlist",
+        ),
+        max_items=64,
+    )
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        entry = dict(item)
+        authority_id = clean_text(first_present(entry, ("authority_id", "id"))) or f"authority-{index + 1}"
+        runtime_instance_id = clean_text(
+            first_present(
+                entry,
+                (
+                    "runtime_instance_id",
+                    "instance_id",
+                    "subject_instance_id",
+                    "subjectInstanceId",
+                    "subject_id",
+                    "subjectId",
+                ),
+            )
+        )
+        authority_profile_id = clean_text(first_present(entry, ("authority_profile_id", "authorityProfileId")))
+        allowed_actions = clean_list_of_text(
+            first_present(entry, ("allowed_actions", "allowedActions", "permissions", "grants")),
+            limit=24,
+        )
+        denied_actions = clean_list_of_text(
+            first_present(
+                entry,
+                (
+                    "denied_actions",
+                    "deniedActions",
+                    "restricted_actions",
+                    "restrictedActions",
+                    "restrictions",
+                    "denies",
+                    "blocked_actions",
+                    "blockedActions",
+                ),
+            ),
+            limit=24,
+        )
+        approval_required_for = clean_list_of_text(
+            first_present(entry, ("approval_required_for", "approvalRequiredFor", "approval_actions", "approvalActions")),
+            limit=24,
+        )
+        tool_allowlist = clean_list_of_text(
+            first_present(entry, ("tool_allowlist", "toolAllowlist", "allowed_tools", "allowedTools")),
+            limit=24,
+        )
+
+        entry["authority_id"] = authority_id
+        if runtime_instance_id:
+            entry["runtime_instance_id"] = runtime_instance_id
+        if authority_profile_id:
+            entry["authority_profile_id"] = authority_profile_id
+        if allowed_actions:
+            entry["allowed_actions"] = allowed_actions
+        if denied_actions:
+            entry["denied_actions"] = denied_actions
+            if "restricted_actions" not in entry:
+                entry["restricted_actions"] = denied_actions
+        if approval_required_for:
+            entry["approval_required_for"] = approval_required_for
+        if tool_allowlist:
+            entry["tool_allowlist"] = tool_allowlist
+        normalized.append(entry)
+
+    return normalized
+
+
+def normalize_checkpoints(value: Any) -> list[dict[str, Any]]:
+    items = normalize_record_list(
+        value,
+        id_field="checkpoint_id",
+        hint_keys=(
+            "checkpoint_id",
+            "id",
+            "kind",
+            "type",
+            "mode",
+            "stage",
+            "label",
+            "title",
+            "name",
+            "human_interrupt_allowed",
+            "humanInterruptAllowed",
+            "approval_required",
+            "approvalRequired",
+            "trigger_after_instances",
+            "triggerAfterInstances",
+            "supervisor_decision",
+            "supervisorDecision",
+            "completion_signal",
+            "completionSignal",
+        ),
+        max_items=48,
+    )
+
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        entry = dict(item)
+        checkpoint_id = clean_text(first_present(entry, ("checkpoint_id", "id"))) or f"checkpoint-{index + 1}"
+        kind = clean_text(first_present(entry, ("kind", "type", "mode")))
+        label = clean_text(first_present(entry, ("label", "title", "name")))
+        status = clean_text(first_present(entry, ("status", "checkpoint_status", "checkpointStatus")))
+        human_interrupt_allowed = coerce_bool(
+            first_present(
+                entry,
+                (
+                    "human_interrupt_allowed",
+                    "humanInterruptAllowed",
+                    "requires_human",
+                    "requiresHuman",
+                    "human_interrupt",
+                    "humanInterrupt",
+                ),
+            )
+        )
+        approval_required = coerce_bool(
+            first_present(entry, ("approval_required", "approvalRequired", "requires_approval", "requiresApproval"))
+        )
+        trigger_after_instances = clean_list_of_text(
+            first_present(entry, ("trigger_after_instances", "triggerAfterInstances", "after_instances", "afterInstances")),
+            limit=24,
+        )
+        supervisor_decision = clean_text(
+            first_present(entry, ("supervisor_decision", "supervisorDecision", "decision"))
+        )
+        completion_signal = clean_text(
+            first_present(entry, ("completion_signal", "completionSignal", "completion"))
+        )
+        blocking = coerce_bool(first_present(entry, ("blocking", "is_blocking", "isBlocking")))
+
+        entry["checkpoint_id"] = checkpoint_id
+        if kind:
+            entry["kind"] = kind
+        if label:
+            entry["label"] = label
+        if status:
+            entry["status"] = status
+        if human_interrupt_allowed is not None:
+            entry["human_interrupt_allowed"] = human_interrupt_allowed
+            if "requires_human" not in entry:
+                entry["requires_human"] = human_interrupt_allowed
+        if approval_required is not None:
+            entry["approval_required"] = approval_required
+            if "requires_approval" not in entry:
+                entry["requires_approval"] = approval_required
+        if trigger_after_instances:
+            entry["trigger_after_instances"] = trigger_after_instances
+        if supervisor_decision:
+            entry["supervisor_decision"] = supervisor_decision
+        if completion_signal:
+            entry["completion_signal"] = completion_signal
+        if blocking is not None:
+            entry["blocking"] = blocking
+        normalized.append(entry)
+
+    return normalized
 
 
 def normalize_parallel_groups(value: Any) -> list[dict[str, Any]]:
@@ -377,50 +706,31 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
             hint_keys=("slot_id", "slotId", "role_id", "roleId", "display_label", "displayLabel", "name", "label"),
             max_items=32,
         )
-        supervisor_runtime = normalize_mapping(team_plan.get("supervisor_runtime") or team_plan.get("supervisorRuntime"))
+        supervisor_runtime = normalize_supervisor_runtime(team_plan.get("supervisor_runtime") or team_plan.get("supervisorRuntime"))
         normalized_team_plan = dict(team_plan)
         normalized_team_plan["slots"] = normalized_slots
         normalized_team_plan["supervisor_runtime"] = supervisor_runtime
         out["team_plan"] = normalized_team_plan
 
-    collaboration_cells = normalize_record_list(
+    collaboration_cells = normalize_collaboration_cells(
         first_present(raw, COLLABORATION_CELL_KEYS)
         or ((out.get("team_plan") or {}).get("collaboration_cells"))
         or ((out.get("team_plan") or {}).get("collaborationCells")),
-        id_field="cell_id",
-        hint_keys=("cell_id", "id", "type", "kind", "mode", "name", "label"),
-        max_items=32,
     )
     if collaboration_cells:
         out["collaboration_cells"] = collaboration_cells
 
-    authority_graph = normalize_record_list(
+    authority_graph = normalize_authority_graph_entries(
         first_present(raw, AUTHORITY_GRAPH_KEYS)
         or ((out.get("team_plan") or {}).get("authority_graph"))
         or ((out.get("team_plan") or {}).get("authorityGraph")),
-        id_field="authority_id",
-        hint_keys=(
-            "authority_id",
-            "id",
-            "instance_id",
-            "runtime_instance_id",
-            "authority_profile_id",
-            "authorityProfileId",
-            "subject_id",
-            "source",
-            "target",
-        ),
-        max_items=64,
     )
     if authority_graph:
         out["authority_graph"] = authority_graph
 
-    checkpoints = normalize_record_list(
+    checkpoints = normalize_checkpoints(
         first_present(raw, CHECKPOINT_KEYS)
         or ((out.get("team_plan") or {}).get("checkpoints")),
-        id_field="checkpoint_id",
-        hint_keys=("checkpoint_id", "id", "kind", "type", "stage", "label", "title", "name"),
-        max_items=48,
     )
     if checkpoints:
         out["checkpoints"] = checkpoints
@@ -573,7 +883,10 @@ def team_plan_member_candidates(team_plan: Any, *, source_prefix: str) -> list[t
         return []
 
     out: list[tuple[str, list[dict[str, Any]]]] = []
-    runtime_agents = extract_runtime_members(team_plan.get("runtime_agents"), allow_string_ids=True, allow_keyed_map=True)
+    runtime_agents_value = team_plan.get("runtime_agents")
+    if runtime_agents_value is None:
+        runtime_agents_value = team_plan.get("runtimeAgents")
+    runtime_agents = extract_runtime_members(runtime_agents_value, allow_string_ids=True, allow_keyed_map=True)
     if runtime_agents:
         out.append((f"{source_prefix}.runtime_agents", runtime_agents))
 

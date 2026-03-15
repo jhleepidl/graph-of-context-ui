@@ -45,6 +45,13 @@ def _clean_text(value: Any) -> str | None:
     return clean or None
 
 
+def _first_present_value(mapping: dict[str, Any], keys: Iterable[str]) -> Any:
+    for key in keys:
+        if key in mapping and mapping.get(key) is not None:
+            return mapping.get(key)
+    return None
+
+
 def _runtime_status_from_counts(status_counts: dict[str, int]) -> str:
     if status_counts.get("running", 0) > 0:
         return "running"
@@ -195,6 +202,20 @@ def _boolish(value: Any) -> bool:
     return False
 
 
+def _intish(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        clean = value.strip()
+        if clean and clean.lstrip("-").isdigit():
+            return int(clean)
+    return None
+
+
 def _slot_indexes(runtime_snapshot: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     slots = list(((runtime_snapshot or {}).get("team_plan") or {}).get("slots") or [])
     slot_by_id: dict[str, dict[str, Any]] = {}
@@ -327,17 +348,53 @@ def build_why_this_team_projection(
 def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> dict[str, Any]:
     snapshot = runtime_snapshot or {}
     team_plan = snapshot.get("team_plan") or {}
-    supervisor_runtime = team_plan.get("supervisor_runtime") or {}
+    raw_supervisor_runtime = team_plan.get("supervisor_runtime") or {}
+    supervisor_runtime = dict(raw_supervisor_runtime) if isinstance(raw_supervisor_runtime, dict) else {}
     execution_graph = snapshot.get("execution_graph") or {}
     parallel_groups = list(execution_graph.get("parallel_groups") or [])
     sequential_after = dict(execution_graph.get("sequential_after") or {})
     supervisor_edges = list(execution_graph.get("supervisor_edges") or [])
+    interaction_mode = _clean_text(
+        _first_present_value(
+            supervisor_runtime,
+            ("interaction_mode", "interactionMode", "mode", "kind", "strategy"),
+        )
+    )
+    has_explicit_enabled = any(key in supervisor_runtime for key in ("enabled", "is_enabled", "isEnabled"))
+    supervisor_enabled = (
+        _boolish(_first_present_value(supervisor_runtime, ("enabled", "is_enabled", "isEnabled")))
+        if has_explicit_enabled
+        else bool(interaction_mode or supervisor_runtime.get("instance_id") or supervisor_edges)
+    )
+    instance_id = _clean_text(
+        _first_present_value(
+            supervisor_runtime,
+            ("instance_id", "runtime_instance_id", "runtimeInstanceId", "id"),
+        )
+    )
+    authority_profile_id = extract_authority_profile_id(supervisor_runtime)
+    user_visible = None
+    if any(key in supervisor_runtime for key in ("user_visible", "userVisible", "visible")):
+        user_visible = _boolish(
+            _first_present_value(supervisor_runtime, ("user_visible", "userVisible", "visible"))
+        )
+
+    normalized_supervisor_runtime = dict(supervisor_runtime)
+    if interaction_mode:
+        normalized_supervisor_runtime["interaction_mode"] = interaction_mode
+        normalized_supervisor_runtime.setdefault("mode", interaction_mode)
+    if instance_id:
+        normalized_supervisor_runtime["instance_id"] = instance_id
+    if authority_profile_id:
+        normalized_supervisor_runtime["authority_profile_id"] = authority_profile_id
+    normalized_supervisor_runtime["enabled"] = supervisor_enabled
+    if user_visible is not None:
+        normalized_supervisor_runtime["user_visible"] = user_visible
+
     mode = _clean_text(
         team_plan.get("mode")
         or execution_graph.get("mode")
-        or supervisor_runtime.get("mode")
-        or supervisor_runtime.get("kind")
-        or supervisor_runtime.get("strategy")
+        or interaction_mode
     )
     if not mode:
         if parallel_groups:
@@ -347,15 +404,22 @@ def build_orchestration_projection(runtime_snapshot: dict[str, Any] | None) -> d
         else:
             mode = "runtime_managed"
 
+    checkpoints = [item for item in list(snapshot.get("checkpoints") or []) if isinstance(item, dict)]
+    checkpoint_status_counts: dict[str, int] = {}
+    for checkpoint in checkpoints:
+        status = _clean_text(checkpoint.get("status")) or "pending"
+        checkpoint_status_counts[status] = checkpoint_status_counts.get(status, 0) + 1
+
     return {
         "mode": mode,
         "parallel_groups": parallel_groups,
         "sequential_after": sequential_after,
-        "supervisor_runtime": supervisor_runtime,
-        "supervisor_mode": _clean_text(
-            supervisor_runtime.get("mode") or supervisor_runtime.get("kind") or supervisor_runtime.get("strategy")
-        ),
+        "supervisor_runtime": normalized_supervisor_runtime,
+        "supervisor_mode": interaction_mode,
+        "supervisor_enabled": supervisor_enabled,
         "supervisor_edges": supervisor_edges,
+        "checkpoint_count": len(checkpoints),
+        "checkpoint_status_counts": checkpoint_status_counts,
         "parallel_group_count": len(parallel_groups),
         "sequential_dependency_count": len(sequential_after),
         "supervisor_edge_count": len(supervisor_edges),
@@ -379,23 +443,61 @@ def build_collaboration_projection(
     for raw in list(snapshot.get("collaboration_cells") or []):
         if not isinstance(raw, dict):
             continue
-        kind = _clean_text(raw.get("kind") or raw.get("type") or raw.get("mode")) or "collaboration"
+        kind = _clean_text(_first_present_value(raw, ("pattern", "kind", "type", "mode"))) or "collaboration"
         member_instance_ids = _clean_list_of_text(
-            raw.get("member_instance_ids")
-            or raw.get("memberInstanceIds")
-            or raw.get("runtime_instance_ids")
-            or raw.get("runtimeInstanceIds")
-            or raw.get("members")
-            or raw.get("participants"),
+            _first_present_value(
+                raw,
+                (
+                    "member_instance_ids",
+                    "memberInstanceIds",
+                    "runtime_instance_ids",
+                    "runtimeInstanceIds",
+                    "members",
+                    "participants",
+                    "agents",
+                ),
+            ),
             limit=24,
+        )
+        member_labels = [
+            labels_by_instance.get(member_id)
+            for member_id in member_instance_ids
+            if labels_by_instance.get(member_id)
+        ]
+        fallback_member_labels = _clean_list_of_text(
+            _first_present_value(raw, ("member_labels", "memberLabels")),
+            limit=24,
+        )
+        if not member_labels and fallback_member_labels:
+            member_labels = fallback_member_labels
+        report_back_to_instance_id = _clean_text(
+            _first_present_value(
+                raw,
+                (
+                    "report_back_to_instance_id",
+                    "reportBackToInstanceId",
+                    "report_to_instance_id",
+                    "reportToInstanceId",
+                ),
+            )
+        )
+        termination = _clean_text(
+            _first_present_value(raw, ("termination", "termination_rule", "terminationRule"))
         )
         items.append(
             {
                 "cell_id": raw.get("cell_id") or raw.get("id"),
                 "kind": kind,
+                "pattern": kind,
                 "display_label": raw.get("display_label") or raw.get("displayLabel") or raw.get("label") or raw.get("name"),
                 "member_instance_ids": member_instance_ids,
-                "member_labels": [labels_by_instance.get(member_id) for member_id in member_instance_ids if labels_by_instance.get(member_id)],
+                "member_labels": member_labels,
+                "topology": _clean_text(raw.get("topology")),
+                "max_rounds": _intish(_first_present_value(raw, ("max_rounds", "maxRounds", "rounds"))),
+                "termination": termination,
+                "termination_rule": termination,
+                "report_back_to_instance_id": report_back_to_instance_id,
+                "report_back_to_label": labels_by_instance.get(report_back_to_instance_id or ""),
                 "decision_mode": _clean_text(raw.get("decision_mode") or raw.get("decisionMode")),
                 "selection_reason": _clean_text(raw.get("selection_reason") or raw.get("selectionReason") or raw.get("reason")),
             }
@@ -420,9 +522,36 @@ def build_checkpoints_projection(runtime_snapshot: dict[str, Any] | None) -> dic
         if not isinstance(raw, dict):
             continue
         kind = _clean_text(raw.get("kind") or raw.get("type") or raw.get("mode")) or "checkpoint"
-        needs_human = _boolish(raw.get("requires_human") or raw.get("requiresHuman") or raw.get("human_interrupt"))
-        approval = _boolish(raw.get("requires_approval") or raw.get("requiresApproval") or raw.get("approval_required"))
+        needs_human = _boolish(
+            _first_present_value(
+                raw,
+                (
+                    "human_interrupt_allowed",
+                    "humanInterruptAllowed",
+                    "requires_human",
+                    "requiresHuman",
+                    "human_interrupt",
+                    "humanInterrupt",
+                ),
+            )
+        )
+        approval = _boolish(
+            _first_present_value(
+                raw,
+                ("approval_required", "approvalRequired", "requires_approval", "requiresApproval"),
+            )
+        )
         is_blocking = _boolish(raw.get("blocking") or raw.get("is_blocking") or raw.get("isBlocking"))
+        trigger_after_instances = _clean_list_of_text(
+            _first_present_value(raw, ("trigger_after_instances", "triggerAfterInstances", "after_instances", "afterInstances")),
+            limit=24,
+        )
+        supervisor_decision = _clean_text(
+            _first_present_value(raw, ("supervisor_decision", "supervisorDecision", "decision"))
+        )
+        completion_signal = _clean_text(
+            _first_present_value(raw, ("completion_signal", "completionSignal", "completion"))
+        )
         if needs_human:
             human_interrupts += 1
         if approval:
@@ -436,9 +565,14 @@ def build_checkpoints_projection(runtime_snapshot: dict[str, Any] | None) -> dic
                 "label": raw.get("label") or raw.get("title") or raw.get("name"),
                 "stage": _clean_text(raw.get("stage")),
                 "status": _clean_text(raw.get("status")) or "pending",
+                "human_interrupt_allowed": needs_human,
                 "requires_human": needs_human,
+                "approval_required": approval,
                 "requires_approval": approval,
                 "blocking": is_blocking,
+                "trigger_after_instances": trigger_after_instances,
+                "supervisor_decision": supervisor_decision,
+                "completion_signal": completion_signal,
                 "selection_reason": _clean_text(raw.get("selection_reason") or raw.get("reason")),
             }
         )

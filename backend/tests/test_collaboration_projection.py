@@ -21,40 +21,53 @@ class FakeNode:
 
 
 def make_payload() -> dict:
-    return {
-        "runtime_team_snapshot": {
-            "team_plan": {
-                "slots": [
-                    {"slot_id": "slot-a", "role_id": "role-a", "display_label": "Analyst"},
-                    {"slot_id": "slot-b", "role_id": "role-b", "display_label": "Reviewer"},
+        return {
+            "runtime_team_snapshot": {
+                "team_plan": {
+                    "slots": [
+                        {"slot_id": "slot-a", "role_id": "role-a", "display_label": "Analyst"},
+                        {"slot_id": "slot-b", "role_id": "role-b", "display_label": "Reviewer"},
+                    ],
+                    "supervisor_runtime": {
+                        "interaction_mode": "report_back",
+                        "instance_id": "sup-1",
+                        "enabled": True,
+                    },
+                },
+                "runtime_agents": [
+                    {"instance_id": "rt-a", "slot_id": "slot-a", "role_id": "role-a", "display_label": "Analyst"},
+                    {"instance_id": "rt-b", "slot_id": "slot-b", "role_id": "role-b", "display_label": "Reviewer"},
                 ],
-                "supervisor_runtime": {"mode": "oversight", "instance_id": "sup-1"},
-            },
-            "runtime_agents": [
-                {"instance_id": "rt-a", "slot_id": "slot-a", "role_id": "role-a", "display_label": "Analyst"},
-                {"instance_id": "rt-b", "slot_id": "slot-b", "role_id": "role-b", "display_label": "Reviewer"},
-            ],
-            "collaboration_cells": [
-                {
-                    "cell_id": "cell-reflect",
-                    "kind": "reflection",
-                    "members": ["rt-a"],
-                    "selection_reason": "Force self-check before finalizing",
-                },
-                {
-                    "cell_id": "cell-debate",
-                    "kind": "debate",
-                    "members": ["rt-a", "rt-b"],
-                    "decision_mode": "majority",
-                },
-                {
-                    "cell_id": "cell-committee",
-                    "kind": "committee",
-                    "participants": ["rt-a", "rt-b"],
-                },
-            ],
+                "collaboration_cells": [
+                    {
+                        "cell_id": "cell-reflect",
+                        "pattern": "reflection",
+                        "member_instance_ids": ["rt-a"],
+                        "topology": "self_loop",
+                        "max_rounds": 2,
+                        "termination": "confidence_reached",
+                        "report_back_to_instance_id": "sup-1",
+                        "selection_reason": "Force self-check before finalizing",
+                    },
+                    {
+                        "cell_id": "cell-debate",
+                        "pattern": "debate",
+                        "member_instance_ids": ["rt-a", "rt-b"],
+                        "topology": "pairwise",
+                        "max_rounds": 3,
+                        "termination": "majority_converged",
+                        "decision_mode": "majority",
+                    },
+                    {
+                        "cell_id": "cell-committee",
+                        "pattern": "committee",
+                        "member_instance_ids": ["rt-a", "rt-b"],
+                        "topology": "hub_and_spoke",
+                        "termination": "chair_finalize",
+                    },
+                ],
+            }
         }
-    }
 
 
 class CollaborationProjectionTests(unittest.TestCase):
@@ -100,6 +113,11 @@ class CollaborationProjectionTests(unittest.TestCase):
         debate = next(item for item in items if item.get("kind") == "debate")
         self.assertEqual(debate.get("member_instance_ids"), ["rt-a", "rt-b"])
         self.assertEqual(debate.get("member_labels"), ["Analyst", "Reviewer"])
+        self.assertEqual(debate.get("topology"), "pairwise")
+        self.assertEqual(debate.get("max_rounds"), 3)
+        self.assertEqual(debate.get("termination"), "majority_converged")
+        reflection = next(item for item in items if item.get("kind") == "reflection")
+        self.assertEqual(reflection.get("report_back_to_instance_id"), "sup-1")
 
 
 if __name__ == "__main__":

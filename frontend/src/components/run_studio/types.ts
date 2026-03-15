@@ -45,23 +45,31 @@ export type CapabilitySlotSpec = {
 }
 
 export type SupervisorRuntime = {
+  interaction_mode?: string | null
   mode?: string | null
   kind?: string | null
   strategy?: string | null
   instance_id?: string | null
+  authority_profile_id?: string | null
+  user_visible?: boolean
+  enabled?: boolean
   [key: string]: unknown
 }
 
 export type CollaborationCell = {
   cell_id?: string | null
+  pattern?: string | null
   kind?: string | null
   display_label?: string | null
   member_instance_ids?: string[]
   member_labels?: string[]
+  report_back_to_instance_id?: string | null
+  report_back_to_label?: string | null
   decision_mode?: string | null
   selection_reason?: string | null
   max_rounds?: number | null
   topology?: string | null
+  termination?: string | null
   termination_rule?: string | null
   [key: string]: unknown
 }
@@ -73,8 +81,10 @@ export type AuthorityGraphEntry = {
   managed_by?: string | null
   scope?: string | null
   allowed_actions?: string[]
+  denied_actions?: string[]
   restricted_actions?: string[]
   approval_required_for?: string[]
+  tool_allowlist?: string[]
   [key: string]: unknown
 }
 
@@ -84,9 +94,14 @@ export type ExecutionCheckpoint = {
   label?: string | null
   stage?: string | null
   status?: string | null
+  human_interrupt_allowed?: boolean
   requires_human?: boolean
+  approval_required?: boolean
   requires_approval?: boolean
   blocking?: boolean
+  trigger_after_instances?: string[]
+  supervisor_decision?: string | null
+  completion_signal?: string | null
   selection_reason?: string | null
   [key: string]: unknown
 }
@@ -166,7 +181,10 @@ export type OrchestrationProjection = {
   sequential_after?: Record<string, string[]>
   supervisor_runtime?: SupervisorRuntime
   supervisor_mode?: string | null
+  supervisor_enabled?: boolean
   supervisor_edges?: Array<Record<string, unknown>>
+  checkpoint_count?: number
+  checkpoint_status_counts?: Record<string, number>
   parallel_group_count?: number
   sequential_dependency_count?: number
   supervisor_edge_count?: number
@@ -185,8 +203,10 @@ export type AuthorityProjection = {
     authority_profile_id?: string | null
     managed_by?: string | null
     allowed_actions?: string[]
+    denied_actions?: string[]
     restricted_actions?: string[]
     approval_required_for?: string[]
+    tool_allowlist?: string[]
     graph_entry_count?: number
   }>
   graph?: AuthorityGraphEntry[]

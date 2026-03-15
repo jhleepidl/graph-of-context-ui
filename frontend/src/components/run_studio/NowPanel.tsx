@@ -65,7 +65,9 @@ export default function NowPanel({
   const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
   const checkpointCount = Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
   const supervisorEnabled = Boolean(
+    orchestration?.supervisor_enabled ||
     orchestration?.supervisor_mode ||
+    orchestration?.supervisor_runtime?.interaction_mode ||
     orchestration?.supervisor_runtime?.mode ||
     orchestration?.supervisor_runtime?.instance_id ||
     orchestration?.supervisor_edges?.length,

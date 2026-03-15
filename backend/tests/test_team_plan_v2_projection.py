@@ -60,7 +60,13 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
                                     "selection_reason": "Need adversarial review",
                                 },
                             ],
-                            "supervisor_runtime": {"mode": "oversight", "instance_id": "sup-1"},
+                            "supervisor_runtime": {
+                                "interaction_mode": "interrupt_on_completion",
+                                "instance_id": "sup-1",
+                                "enabled": True,
+                                "user_visible": True,
+                                "authority_profile_id": "authority.supervisor",
+                            },
                         },
                         "runtime_agents": [
                             {
@@ -85,14 +91,26 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
                                 "authority_profile_id": "authority.review",
                             },
                         ],
+                        "collaboration_cells": [
+                            {
+                                "cell_id": "cell-reflect",
+                                "pattern": "reflection",
+                                "member_instance_ids": ["rt-1"],
+                                "topology": "self_loop",
+                                "max_rounds": 2,
+                                "termination": "confidence_reached",
+                                "report_back_to_instance_id": "sup-1",
+                            }
+                        ],
                         "authority_graph": [
                             {
                                 "authority_id": "auth-1",
                                 "runtime_instance_id": "rt-1",
                                 "authority_profile_id": "authority.read_only",
                                 "allowed_actions": ["research"],
-                                "restricted_actions": ["publish"],
+                                "denied_actions": ["publish"],
                                 "approval_required_for": ["publish"],
+                                "tool_allowlist": ["browser.search"],
                             },
                             {
                                 "authority_id": "auth-2",
@@ -106,8 +124,12 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
                                 "checkpoint_id": "checkpoint-1",
                                 "kind": "approval",
                                 "label": "Approve final answer",
-                                "requires_approval": True,
+                                "human_interrupt_allowed": True,
+                                "approval_required": True,
                                 "blocking": True,
+                                "trigger_after_instances": ["rt-1", "rt-2"],
+                                "supervisor_decision": "await_user",
+                                "completion_signal": "final_answer_ready",
                             }
                         ],
                         "execution_graph": {
@@ -149,10 +171,19 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
         self.assertEqual(payload.get("why_this_team", {}).get("synthesized_count"), 1)
         self.assertEqual(payload.get("why_this_team", {}).get("conversation_preferences", {}).get("tone"), "concise")
         self.assertEqual(payload.get("orchestration", {}).get("mode"), "parallel")
+        self.assertEqual(payload.get("orchestration", {}).get("supervisor_mode"), "interrupt_on_completion")
+        self.assertTrue(bool(payload.get("orchestration", {}).get("supervisor_enabled")))
         self.assertEqual(payload.get("orchestration", {}).get("parallel_group_count"), 1)
         self.assertEqual(payload.get("orchestration", {}).get("sequential_after"), {"rt-2": ["rt-1"]})
+        self.assertEqual((payload.get("collaboration", {}).get("items") or [])[0].get("kind"), "reflection")
+        self.assertEqual((payload.get("collaboration", {}).get("items") or [])[0].get("topology"), "self_loop")
+        self.assertEqual((payload.get("collaboration", {}).get("items") or [])[0].get("max_rounds"), 2)
+        self.assertEqual((payload.get("collaboration", {}).get("items") or [])[0].get("termination"), "confidence_reached")
         self.assertEqual(payload.get("authority", {}).get("graph_count"), 2)
         self.assertEqual((payload.get("authority", {}).get("items") or [])[0].get("authority_profile_id"), "authority.read_only")
+        self.assertIn("publish", (payload.get("authority", {}).get("items") or [])[0].get("denied_actions") or [])
+        self.assertIn("browser.search", (payload.get("authority", {}).get("items") or [])[0].get("tool_allowlist") or [])
+        self.assertEqual((payload.get("checkpoints", {}).get("items") or [])[0].get("human_interrupt_allowed"), True)
         self.assertEqual((payload.get("checkpoints", {}).get("counts") or {}).get("approval_required"), 1)
         self.assertEqual((payload.get("planning_boundary", {}).get("stages") or [])[0].get("stage"), "task_interpretation")
         self.assertTrue(bool(payload.get("planning_boundary", {}).get("ready_for_goc_control_plane")))
@@ -171,20 +202,24 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
                             "template_id": "legacy-template",
                         }
                     ],
-                    "runtime_team_snapshot": {
-                        "team_plan": {
-                            "slots": [
+                        "runtime_team_snapshot": {
+                            "team_plan": {
+                                "slots": [
                                 {
                                     "slot_id": "slot-reviewer",
                                     "role_id": "role-reviewer",
                                     "display_label": "Reviewer",
-                                    "selection_reason": "Need structured critique",
-                                }
-                            ],
-                            "supervisor_runtime": {"mode": "oversight", "instance_id": "sup-mixed"},
-                        },
-                        "runtime_agents": [
-                            {
+                                        "selection_reason": "Need structured critique",
+                                    }
+                                ],
+                                "supervisor_runtime": {
+                                    "interaction_mode": "report_back",
+                                    "instance_id": "sup-mixed",
+                                    "enabled": True,
+                                },
+                            },
+                            "runtime_agents": [
+                                {
                                 "instance_id": "rt-mixed-1",
                                 "slot_id": "slot-reviewer",
                                 "role_id": "role-reviewer",
@@ -216,7 +251,7 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
         self.assertEqual(item.get("runtime_instance_id"), "rt-mixed-1")
         self.assertEqual(item.get("display_label"), "Structured Reviewer")
         self.assertTrue(bool(item.get("synthesized")))
-        self.assertEqual((payload.get("orchestration") or {}).get("supervisor_mode"), "oversight")
+        self.assertEqual((payload.get("orchestration") or {}).get("supervisor_mode"), "report_back")
 
 
 if __name__ == "__main__":

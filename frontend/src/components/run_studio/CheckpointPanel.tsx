@@ -33,6 +33,8 @@ export default function CheckpointPanel({ checkpoints }: Props) {
       <div className="runStudioList">
         {items.map((checkpoint, index) => {
           const status = String(checkpoint.status || 'pending')
+          const humanInterrupt = Boolean(checkpoint.human_interrupt_allowed ?? checkpoint.requires_human)
+          const approvalRequired = Boolean(checkpoint.approval_required ?? checkpoint.requires_approval)
           return (
             <article key={`${checkpoint.checkpoint_id || checkpoint.label || 'checkpoint'}:${index}`} className="runStudioListItem">
               <div className="row" style={{ marginBottom: 4 }}>
@@ -41,10 +43,19 @@ export default function CheckpointPanel({ checkpoints }: Props) {
                 {checkpoint.stage && <span className="pill">stage: {checkpoint.stage}</span>}
               </div>
               <div className="runStudioMetaRow">
-                {checkpoint.requires_human && <span className="pill">human interrupt</span>}
-                {checkpoint.requires_approval && <span className="pill">approval stop</span>}
+                {humanInterrupt && <span className="pill">human interrupt</span>}
+                {approvalRequired && <span className="pill">approval stop</span>}
                 {checkpoint.blocking && <span className="pill">blocking</span>}
               </div>
+              {(checkpoint.trigger_after_instances || []).length > 0 && (
+                <div className="muted">after: {(checkpoint.trigger_after_instances || []).join(' | ')}</div>
+              )}
+              {checkpoint.supervisor_decision && (
+                <div className="muted">supervisor decision: {checkpoint.supervisor_decision}</div>
+              )}
+              {checkpoint.completion_signal && (
+                <div className="muted">completion signal: {checkpoint.completion_signal}</div>
+              )}
               {checkpoint.selection_reason && <div className="muted">reason: {checkpoint.selection_reason}</div>}
             </article>
           )

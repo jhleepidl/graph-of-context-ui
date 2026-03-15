@@ -20,6 +20,7 @@ from tests.runtime_contract_fixtures import (
     mixed_skill_authority_runtime_contract_scenario,
     standalone_runtime_contract_scenario,
 )
+from app.models import ContextSet, Node, Thread
 
 
 class RuntimeContractRoundtripTests(unittest.TestCase):
@@ -235,6 +236,119 @@ class RuntimeContractRoundtripTests(unittest.TestCase):
 
         authority = derive_runtime_authority(nodes=nodes, context_source_default="goc")
         self.assertEqual(authority, expected)
+
+    def test_actual_ddalggak_v2_payload_roundtrips_through_runtime_and_run_studio(self) -> None:
+        authority = canonical_runtime_authority(
+            mode="goc",
+            plan_source="goc",
+            context_source="goc",
+            agent_catalog_source="goc",
+            conversation_team_source="local",
+            skill_catalog_source="mixed",
+        )
+        nodes = [
+            make_fixture_node(
+                "run-ddalggak-v2",
+                "Run",
+                payload={
+                    "runtime_authority": authority,
+                    "runtime_team_snapshot": {
+                        "team_plan": {
+                            "mode": "parallel",
+                            "supervisor_runtime": {
+                                "interaction_mode": "interrupt_on_completion",
+                                "instance_id": "sup-1",
+                                "enabled": True,
+                            },
+                            "slots": [
+                                {"slot_id": "slot-1", "role_id": "role-1", "display_label": "Analyst"},
+                            ],
+                        },
+                        "runtime_agents": [
+                            {
+                                "instance_id": "rt-1",
+                                "slot_id": "slot-1",
+                                "role_id": "role-1",
+                                "display_label": "Analyst",
+                                "authority_profile_id": "authority.read_only",
+                            }
+                        ],
+                        "collaboration_cells": [
+                            {
+                                "cell_id": "cell-1",
+                                "pattern": "reflection",
+                                "member_instance_ids": ["rt-1"],
+                                "topology": "self_loop",
+                                "max_rounds": 2,
+                                "termination": "confidence_reached",
+                            }
+                        ],
+                        "authority_graph": [
+                            {
+                                "authority_id": "auth-1",
+                                "runtime_instance_id": "rt-1",
+                                "authority_profile_id": "authority.read_only",
+                                "allowed_actions": ["research"],
+                                "denied_actions": ["publish"],
+                                "approval_required_for": ["publish"],
+                            }
+                        ],
+                        "checkpoints": [
+                            {
+                                "checkpoint_id": "checkpoint-1",
+                                "kind": "approval",
+                                "human_interrupt_allowed": True,
+                                "approval_required": True,
+                                "trigger_after_instances": ["rt-1"],
+                            }
+                        ],
+                        "execution_graph": {
+                            "parallel_groups": [["rt-1"]],
+                            "supervisor_edges": [{"from": "sup-1", "to": "rt-1"}],
+                        },
+                    },
+                },
+            ),
+            make_fixture_node(
+                "step-ddalggak-v2",
+                "Step",
+                payload={"run_id": "run-ddalggak-v2", "status": "running", "agent_id": "rt-1"},
+            ),
+        ]
+
+        projection = resolve_runtime_projection(nodes=nodes, edges=[])
+        capability = projection.capability_payload()
+        self.assertEqual((capability.get("collaboration") or {}).get("items", [])[0].get("kind"), "reflection")
+        self.assertEqual((capability.get("orchestration") or {}).get("supervisor_mode"), "interrupt_on_completion")
+        self.assertEqual((capability.get("checkpoints") or {}).get("items", [])[0].get("human_interrupt_allowed"), True)
+        self.assertIn("publish", (capability.get("authority") or {}).get("items", [])[0].get("denied_actions") or [])
+
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            thread = Thread(id="thread-ddalggak-v2", service_id="svc", title="ddalggak v2")
+            context_set = ContextSet(id="ctx-ddalggak-v2", thread_id=thread.id, name="default", active_node_ids_json="[]")
+            session.add(thread)
+            session.add(context_set)
+            session.flush()
+            for raw in nodes:
+                session.add(
+                    Node(
+                        id=raw.id,
+                        thread_id=thread.id,
+                        type=raw.type,
+                        text=raw.text,
+                        payload_json=raw.payload_json,
+                        created_at=raw.created_at,
+                    )
+                )
+            session.commit()
+            summary = build_run_studio_summary(session, thread=thread, context_set_id=context_set.id)
+
+        self.assertEqual((summary.get("collaboration") or {}).get("items", [])[0].get("kind"), "reflection")
+        self.assertEqual((summary.get("orchestration") or {}).get("supervisor_mode"), "interrupt_on_completion")
+        self.assertEqual((summary.get("checkpoints") or {}).get("items", [])[0].get("human_interrupt_allowed"), True)
+        self.assertIn("publish", (summary.get("authority") or {}).get("items", [])[0].get("denied_actions") or [])
 
 
 if __name__ == "__main__":

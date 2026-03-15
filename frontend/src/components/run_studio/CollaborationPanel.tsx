@@ -25,7 +25,8 @@ export default function CollaborationPanel({ collaboration }: Props) {
         {items.map((cell, index) => (
           <article key={`${cell.cell_id || cell.kind || 'cell'}:${index}`} className="runStudioListItem">
             <div className="row" style={{ marginBottom: 4 }}>
-              <span className="pill">{cell.display_label || cell.kind || cell.cell_id || 'collaboration cell'}</span>
+              <span className="pill">{cell.display_label || cell.pattern || cell.kind || cell.cell_id || 'collaboration cell'}</span>
+              {(cell.pattern || cell.kind) && <span className="pill">pattern: {cell.pattern || cell.kind}</span>}
               {cell.decision_mode && <span className="pill">decision: {cell.decision_mode}</span>}
               {typeof cell.max_rounds === 'number' && <span className="pill">rounds: {cell.max_rounds}</span>}
             </div>
@@ -39,7 +40,12 @@ export default function CollaborationPanel({ collaboration }: Props) {
             {(cell.topology || cell.termination_rule) && (
               <div className="muted">
                 {cell.topology ? `topology: ${cell.topology}` : 'topology: runtime-managed'}
-                {cell.termination_rule ? ` | terminate: ${cell.termination_rule}` : ''}
+                {cell.termination || cell.termination_rule ? ` | terminate: ${cell.termination || cell.termination_rule}` : ''}
+              </div>
+            )}
+            {(cell.report_back_to_label || cell.report_back_to_instance_id) && (
+              <div className="muted">
+                report back: {cell.report_back_to_label || cell.report_back_to_instance_id}
               </div>
             )}
             {cell.selection_reason && <div className="muted">reason: {cell.selection_reason}</div>}
