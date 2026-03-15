@@ -57,7 +57,7 @@ export default function AgentTeamPanel({
       <div className="runStudioPanelHeader">
         <h3>Team View</h3>
         <div className="runStudioMetaRow">
-          <span className="pill">runtime: {runtimeCount}</span>
+          <span className="pill">runtime agents: {runtimeCount}</span>
           <span className="pill">preset-backed: {presetCount}</span>
           <span className="pill">synthesized: {synthesizedCount}</span>
           <span className="pill">parallel groups: {parallelGroupCount}</span>
@@ -76,7 +76,7 @@ export default function AgentTeamPanel({
 
       {items.length === 0 && (
         <div className="muted">
-          No runtime team projection is visible yet. Legacy team detail will appear after execution emits runtime members.
+          No runtime agents are visible yet. Legacy team detail will appear after execution emits runtime members.
         </div>
       )}
 

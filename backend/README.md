@@ -19,7 +19,18 @@ postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
 - Graph storage stays generic: `Node` / `Edge`.
 - Run Studio data is assembled via service projections (no graph-stack replacement).
 - Skill layer is additive and payload-driven.
-- `ddalggak` remains runtime-first; GoC is the upgrade/control layer when connected.
+- `ddalggak` is the execution runtime.
+- GoC is the graph-first projection/control layer when connected.
+- Human-authored presets remain text-first, but the runtime/control model is structured.
+
+### Core Runtime Model
+- `RuntimeAgent = Role + Attached Skills + Context Pack`.
+- Team composition is capability-slot fulfillment.
+- `TeamPlan v2` can carry `task_interpretation`, `slots`, `runtime_agents`, `SupervisorRuntime`, `collaboration_cells`, `authority_graph`, `checkpoints`, and `execution_graph`.
+- `SupervisorRuntime` is a control actor, not a worker role.
+- `planner` is not a canonical runtime worker role in GoC projections.
+- Collaboration cells describe runtime cooperation such as reflection, debate, and committee review.
+- GoC stays backward compatible with legacy runtime payloads and mixed payloads.
 
 ### Service Ownership
 - `app/services/run_studio.py`: Run Studio screen-level summary assembly + capability composition.
@@ -42,6 +53,14 @@ postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
 - `skills observability`: attached skills, usage events, context-pack skill metadata (projection-oriented; runtime-executed).
 - `planning boundary`: explicit seam for future GoC planning migration without changing runtime projection contracts.
 
+### Run Studio Projection Vocabulary
+- `Team View`: normalized runtime agents for the current run scope.
+- `Why this team?`: selection explanations, slot-level reasons, preset vs synthesized summary.
+- `Orchestration`: supervisor mode, parallel groups, sequential dependencies, and report-back edges.
+- `Collaboration`: reflection/debate/committee cells.
+- `Authority`: per-instance authority profile summary and restrictions.
+- `Checkpoints`: human-interrupt and approval stops.
+
 ## Run Studio API Surface
 - `GET /api/threads/{thread_id}/run_studio/summary`
 - `GET /api/threads/{thread_id}/run_studio/agent_team`
@@ -54,6 +73,16 @@ Summary-first strategy:
 - `summary` is the canonical initial payload.
 - detail routes are additive and intended for on-demand UI expansion.
 - Skill-aware fields may be populated or empty depending on runtime payload availability; both shapes are supported.
+- No API path changes are required for TeamPlan v2 support.
+
+Structured runtime/control fields may now appear on `summary` and run-scoped capability payloads:
+- `task_interpretation`
+- `team_view`
+- `why_this_team`
+- `orchestration`
+- `collaboration`
+- `authority`
+- `checkpoints`
 
 Authority/fallback projection fields are exposed across summary and run-scoped detail payloads:
 - `mode`
@@ -86,6 +115,11 @@ Degraded behavior:
 - `plan_source=local_fallback` or an explicit `fallback_reason` surfaces `degraded_mode=true`
 - ordinary `message` / `reason` fields are not treated as degraded signals
 - resolved runtime projections keep summary, team, skill, context-pack, and planning-boundary views aligned to the same authority truth
+
+Planning-boundary semantics:
+- planning is no longer framed around a planner worker concept
+- the compatibility field remains, but the projection now centers on runtime/control stages
+- current stage vocabulary: `task_interpretation`, `team_building`, `preset_resolution`, `skill_resolution`, `context_pack_building`, `execution_coordination`
 
 Additional skill routes:
 - `GET /api/skills`
@@ -133,4 +167,5 @@ Logical agent lineage for integration consumers:
 - Canonical runtime authority contract interpretation is centralized in `runtime_authority.py` and consumed through `resolved_runtime.py`.
 - GoC is authoritative for graph-backed context and structured agent/team management once connected.
 - Skill package execution/content authority remains mostly runtime-side; GoC currently focuses on skill observability/projection.
+- TeamPlan v2 and legacy runtime payloads are both first-class supported inputs.
 - See operator behavior details in [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md).

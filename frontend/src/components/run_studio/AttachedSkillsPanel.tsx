@@ -46,7 +46,7 @@ export default function AttachedSkillsPanel({ summary, team }: Props) {
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
-        <h3>Attached Skills</h3>
+        <h3>Dominant Skills</h3>
         <div className="runStudioMetaRow">
           <span className="pill">skills: {aggregatedSkills.length}</span>
           <span className="pill">role links: {effectiveRoleLinks.length}</span>
@@ -77,7 +77,7 @@ export default function AttachedSkillsPanel({ summary, team }: Props) {
           </article>
         ))}
         {effectiveRoleLinks.length === 0 && (
-          <div className="muted">No attached skills are visible yet for this run scope.</div>
+          <div className="muted">No dominant skills are visible yet for this run scope.</div>
         )}
       </div>
     </section>

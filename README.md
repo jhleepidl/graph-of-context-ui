@@ -1,36 +1,39 @@
 # Graph-of-Context Run Studio
 
-Graph-of-Context (GoC) is a graph-first control/upgrade layer for conversational runtimes.
+Graph-of-Context (GoC) is a graph-first projection and control layer for conversational runtimes.
 
-- `ddalggak` remains standalone-first as a runtime.
-- When connected, GoC upgrades context authority, structured agent management, and observability.
-- GoC keeps the generic `Node`/`Edge` model and adds an additive Run Studio projection/control layer.
+- `ddalggak` is the execution runtime.
+- GoC stays graph-first: it projects runtime state into operator-facing structures, explainability, and control-plane semantics.
+- GoC keeps the generic `Node`/`Edge` model and adds an additive Run Studio projection layer without replacing the runtime.
 
 ## Product Surfaces
-- `Run Studio` (default): now/status, runtime team, attached skills, context packs, skill usage, context decisions, evidence.
+- `Run Studio` (default): `Now`, `Team View`, `Why this team?`, `Orchestration`, `Collaboration`, `Authority`, `Checkpoints`, `Dominant Skills`, `Context Packs`, `Skill Usage`, `Context Decisions`, `Evidence`.
 - `Graph`: manual graph editing and fold/unfold.
 - `Raw Trace`: execution trace and timeline.
 - `Artifacts` and `Advanced` tools remain available.
 
-## Skill-Aware Model (Additive)
-- `Agent = role`
-- `Skill = reusable expertise package`
-- `TeamPlan = roles + attached skills + policy`
-- `ContextPack = shared + role-specific + skill-specific context`
-- `RuntimeAgent = instantiated role with attached skills`
+## Runtime Model
+- Human-authored presets are text-first role templates. They stay easy to edit and reason about.
+- The internal runtime model is structured.
+- `RuntimeAgent = Role + Attached Skills + Context Pack`.
+- Team composition is capability-slot fulfillment, not a flat list of worker labels.
+- `RuntimeAgent` instances may be preset-backed or synthesized.
+- `SupervisorRuntime` is a control actor, not a worker role.
+- `planner` is not a canonical runtime worker role in GoC projections.
+- Collaboration cells express structured cooperation such as reflection, debate, and committee review.
 
 ## Authority Model (Current)
 - GoC authoritative now:
   - graph-backed context compilation/selection/decisions and explainability
   - structured agent catalog + conversation team membership
-  - runtime projection normalization including authority/fallback metadata
+  - runtime projection normalization including authority/fallback metadata and structured control-plane views
 - Runtime-side today:
-  - execution and most planning behavior
+  - execution and team-plan realization inside `ddalggak`
   - skill package execution and most skill-content authority
-  - runtime-emitted team/skill/context-pack projection payloads
+  - runtime-emitted team/skill/context-pack/control payloads
 - Planning boundary:
-  - backend now includes a lightweight planning boundary projection (`runtime_managed`, GoC-ready)
-  - future GoC planning capability can attach task interpretation/team plan/skill/context-pack decisions without untangling existing projections
+  - backend includes a lightweight planning-boundary projection for `task_interpretation`, `team_building`, `preset_resolution`, `skill_resolution`, `context_pack_building`, and `execution_coordination`
+  - future GoC planning capability can attach richer control-plane decisions without breaking runtime payload compatibility
 
 ## Runtime Authority Projection Fields
 Run Studio and run-scoped projection payloads now expose canonical authority metadata:
@@ -44,6 +47,11 @@ Run Studio and run-scoped projection payloads now expose canonical authority met
 - `fallback_reason` (string | null)
 
 This remains projection-compatible with older runtime payload shapes.
+
+## Backward Compatibility
+- GoC remains backward compatible with legacy runtime payloads.
+- Older payloads that only expose legacy team/runtime/context shapes still project safely.
+- Mixed payloads prefer the newer structured runtime fields first, then fall back to legacy data when needed.
 
 This is still projection-oriented over the existing graph backend; no new graph stack is required.
 - Run Studio uses `summary` as the primary load and lazy-loads detail panels.

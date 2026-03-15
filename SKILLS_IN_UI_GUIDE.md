@@ -3,9 +3,11 @@
 This is a supplement to [`UI_USAGE_GUIDE.md`](UI_USAGE_GUIDE.md), focused only on skill interpretation.
 
 ## Mental Model
-- `Agent` = runtime role.
+- `ddalggak` is the execution runtime; GoC projects what it emitted into graph/control views.
+- `RuntimeAgent = Role + Attached Skills + Context Pack`.
 - `Skill` = reusable procedural package.
 - `Context Pack` = shared + role-specific + skill-specific context loading.
+- Human-authored presets remain text-first. They can later be instantiated as structured runtime agents.
 
 ## Load Levels
 - `metadata_only`: skill identity/descriptor only.
@@ -13,10 +15,11 @@ This is a supplement to [`UI_USAGE_GUIDE.md`](UI_USAGE_GUIDE.md), focused only o
 - `resources`: instructions + resource/tool context loaded.
 
 ## “Why was this skill selected?”
-1. Open `Attached Skills` and read `selected_by` + `selection_reason`.
-2. Check `Skill Usage` for selection/escalation events.
-3. Check `Context Packs` to confirm load-level escalation and skill-scoped item counts.
-4. If still unclear, inspect `Raw Trace`/`Graph` lineage.
+1. Open `Team View` and inspect each runtime agent's `Dominant Skills`.
+2. Open `Why this team?` to see slot-level and runtime-agent selection reasons.
+3. Check `Skill Usage` for selection/escalation events.
+4. Check `Context Packs` to confirm load-level escalation and skill-scoped item counts.
+5. If still unclear, inspect `Raw Trace`/`Graph` lineage.
 
 ## Related APIs
 - `GET /api/skills`

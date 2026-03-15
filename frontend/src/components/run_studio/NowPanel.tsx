@@ -147,7 +147,7 @@ export default function NowPanel({
         <span className="pill">context: {contextSource}</span>
         <span className="pill">team: {teamSource}</span>
         <span className="pill">skills: {skillSource}</span>
-        <span className="pill">runtime team: {runtimeTeamCount}</span>
+        <span className="pill">runtime agents: {runtimeTeamCount}</span>
         <span className="pill">collaboration: {collaborationCount}</span>
         <span className="pill">checkpoints: {checkpointCount}</span>
         {orchestration?.parallel_group_count ? (

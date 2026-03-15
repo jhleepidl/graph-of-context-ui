@@ -34,7 +34,7 @@ export default function WhyThisTeamPanel({ teamView, whyThisTeam }: Props) {
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
-        <h3>Why This Team?</h3>
+        <h3>Why this team?</h3>
         <div className="runStudioMetaRow">
           <span className="pill">explanations: {selectionExplanations.length}</span>
           <span className="pill">slot reasons: {slotReasons.length}</span>
@@ -100,7 +100,7 @@ export default function WhyThisTeamPanel({ teamView, whyThisTeam }: Props) {
         ))}
 
         {selectionExplanations.length === 0 && slotReasons.length === 0 && agentReasons.length === 0 && (
-          <div className="muted">No explicit team-selection rationale was emitted. Legacy payloads still render the runtime team safely.</div>
+          <div className="muted">No explicit team-selection rationale was emitted. Legacy payloads still render runtime agents safely.</div>
         )}
       </div>
     </section>

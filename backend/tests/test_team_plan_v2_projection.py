@@ -157,6 +157,67 @@ class TeamPlanV2ProjectionTests(unittest.TestCase):
         self.assertEqual((payload.get("planning_boundary", {}).get("stages") or [])[0].get("stage"), "task_interpretation")
         self.assertTrue(bool(payload.get("planning_boundary", {}).get("ready_for_goc_control_plane")))
 
+    def test_runtime_projection_prefers_team_plan_v2_over_legacy_runtime_fields_in_mixed_payload(self) -> None:
+        base = datetime(2026, 3, 14, 0, 0, tzinfo=timezone.utc)
+        nodes = [
+            make_node(
+                "run-mixed-runtime",
+                "Run",
+                payload={
+                    "runtime_agents": [
+                        {
+                            "runtime_instance_id": "legacy-rt-1",
+                            "role_label": "Legacy Worker",
+                            "template_id": "legacy-template",
+                        }
+                    ],
+                    "runtime_team_snapshot": {
+                        "team_plan": {
+                            "slots": [
+                                {
+                                    "slot_id": "slot-reviewer",
+                                    "role_id": "role-reviewer",
+                                    "display_label": "Reviewer",
+                                    "selection_reason": "Need structured critique",
+                                }
+                            ],
+                            "supervisor_runtime": {"mode": "oversight", "instance_id": "sup-mixed"},
+                        },
+                        "runtime_agents": [
+                            {
+                                "instance_id": "rt-mixed-1",
+                                "slot_id": "slot-reviewer",
+                                "role_id": "role-reviewer",
+                                "display_label": "Structured Reviewer",
+                                "synthesized": True,
+                                "selection_reason": "Synthesized from critique requirement",
+                            }
+                        ],
+                        "execution_graph": {
+                            "parallel_groups": [["rt-mixed-1"]],
+                            "supervisor_edges": [{"from": "sup-mixed", "to": "rt-mixed-1"}],
+                        },
+                    },
+                },
+                created_at=base,
+            ),
+            make_node(
+                "step-mixed-runtime",
+                "Step",
+                payload={"run_id": "run-mixed-runtime", "status": "running", "agent_id": "rt-mixed-1"},
+                created_at=base + timedelta(seconds=1),
+            ),
+        ]
+
+        payload = resolve_runtime_projection(nodes=nodes, edges=[]).capability_payload()
+
+        self.assertEqual((payload.get("team_view") or {}).get("count"), 1)
+        item = (payload.get("team_view") or {}).get("items", [])[0]
+        self.assertEqual(item.get("runtime_instance_id"), "rt-mixed-1")
+        self.assertEqual(item.get("display_label"), "Structured Reviewer")
+        self.assertTrue(bool(item.get("synthesized")))
+        self.assertEqual((payload.get("orchestration") or {}).get("supervisor_mode"), "oversight")
+
 
 if __name__ == "__main__":
     unittest.main()

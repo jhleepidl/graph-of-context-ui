@@ -576,6 +576,58 @@ class RunStudioLogicTests(unittest.TestCase):
             self.assertGreaterEqual(len(summary["current_run_skills"].get("attached_skills", [])), 1)
             self.assertIn("skill_counts", summary)
 
+    def test_run_studio_summary_is_safe_for_legacy_agent_team_only_state(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+
+        with Session(engine) as session:
+            thread = Thread(id="thread-legacy-team-only", service_id="svc", title="Legacy Team Only")
+            context_set = ContextSet(
+                id="ctx-legacy-team-only",
+                thread_id=thread.id,
+                name="default",
+                active_node_ids_json="[]",
+            )
+            conversation = Conversation(thread_id=thread.id, owner_user_id="u1", service_id="svc")
+            agent = Agent(owner_user_id="u1", service_id="svc", name="Research Preset", description="preset", model="gpt-4o-mini")
+            session.add(thread)
+            session.add(context_set)
+            session.add(conversation)
+            session.add(agent)
+            session.commit()
+
+            session.add(
+                ConversationAgent(
+                    conversation_id=conversation.id,
+                    agent_id=agent.id,
+                    enabled=True,
+                    order_index=0,
+                    overrides_json=json.dumps({"role_label": "Researcher"}),
+                )
+            )
+            session.add(
+                Node(
+                    id="run-legacy-team-only",
+                    thread_id=thread.id,
+                    type="Run",
+                    text="run",
+                    payload_json=json.dumps({"status": "queued"}),
+                    created_at=base,
+                )
+            )
+            session.commit()
+
+            summary = build_run_studio_summary(session, thread=thread, context_set_id=context_set.id)
+
+        self.assertEqual(len((summary.get("agent_team") or {}).get("items", [])), 1)
+        self.assertEqual((summary.get("team_view") or {}).get("count"), 0)
+        self.assertEqual((summary.get("why_this_team") or {}).get("selection_explanations"), [])
+        self.assertEqual((summary.get("orchestration") or {}).get("mode"), "runtime_managed")
+        self.assertEqual((summary.get("collaboration") or {}).get("count"), 0)
+        self.assertEqual((summary.get("authority") or {}).get("count"), 0)
+        self.assertEqual((summary.get("checkpoints") or {}).get("counts", {}).get("total"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

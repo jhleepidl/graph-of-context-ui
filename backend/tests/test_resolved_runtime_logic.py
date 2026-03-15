@@ -208,6 +208,25 @@ class ResolvedRuntimeLogicTests(unittest.TestCase):
         self.assertTrue(bool(degraded_summary.get("degraded_mode")))
         self.assertEqual(degraded_summary.get("fallback_reason"), "switched to local mode")
 
+    def test_resolved_runtime_projection_keeps_new_sections_empty_state_safe(self) -> None:
+        projection = resolve_runtime_projection(
+            nodes=[
+                make_node("run-empty", "Run", payload={"status": "queued"}),
+                make_node("step-empty", "Step", payload={"run_id": "run-empty", "status": "queued"}),
+            ],
+            edges=[],
+            context_source_default="goc",
+        )
+
+        summary = projection.capability_payload()
+        self.assertEqual((summary.get("team_view") or {}).get("count"), 0)
+        self.assertEqual((summary.get("team_view") or {}).get("items"), [])
+        self.assertEqual((summary.get("why_this_team") or {}).get("selection_explanations"), [])
+        self.assertEqual((summary.get("orchestration") or {}).get("mode"), "runtime_managed")
+        self.assertEqual((summary.get("collaboration") or {}).get("count"), 0)
+        self.assertEqual((summary.get("authority") or {}).get("count"), 0)
+        self.assertEqual((summary.get("checkpoints") or {}).get("counts", {}).get("total"), 0)
+
     def test_conversation_team_service_matches_resolved_runtime_team(self) -> None:
         engine = create_engine("sqlite://")
         SQLModel.metadata.create_all(engine)
