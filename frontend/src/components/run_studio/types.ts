@@ -695,3 +695,24 @@ export type RunStudioSkillUsage = {
   degraded_mode?: boolean
   fallback_reason?: string | null
 }
+
+export type ControlPlaneSummaryProjection = {
+  mode: string
+  planSource: string
+  contextSource: string
+  teamSource: string
+  skillSource: string
+  supervisorMode: string | null
+  supervisorEnabled: boolean
+  runtimeAgentCount: number
+  parallelGroupCount: number
+  collaborationCount: number
+  checkpointCount: number
+  presetCount: number
+  synthesizedCount: number
+  reviewerPresent: boolean
+  synthesizerPresent: boolean
+  degradedMode: boolean
+  fallbackReason: string | null
+  legacyFallback: boolean
+}

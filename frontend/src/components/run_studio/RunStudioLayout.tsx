@@ -1,4 +1,5 @@
 import React from 'react'
+import ControlPlaneSummaryPanel from './ControlPlaneSummaryPanel'
 import NowPanel from './NowPanel'
 import AgentTeamPanel from './AgentTeamPanel'
 import WhyThisTeamPanel from './WhyThisTeamPanel'
@@ -29,6 +30,7 @@ import {
   selectEffectiveOrchestration,
   selectEffectiveTeamView,
   selectEffectiveWhyThisTeam,
+  selectControlPlaneSummary,
 } from './selectors'
 
 type DetailState = {
@@ -104,6 +106,7 @@ export default function RunStudioLayout({
   const collaboration = selectEffectiveCollaboration(summary)
   const authorityProjection = selectEffectiveAuthority(summary, team)
   const checkpoints = selectEffectiveCheckpoints(summary)
+  const controlPlaneSummary = selectControlPlaneSummary(summary, team)
   const decisionsLoaded = Boolean(detailLoaded?.contextDecisions || decisions)
   const evidenceLoaded = Boolean(detailLoaded?.evidence || evidence)
 
@@ -142,6 +145,8 @@ export default function RunStudioLayout({
         {error && <div className="runStudioWarning"><b>Load error:</b> {error}</div>}
       </div>
 
+      <ControlPlaneSummaryPanel summary={controlPlaneSummary} />
+
       <div className="runStudioGrid runStudioGrid--top">
         <NowPanel
           summary={summary}
@@ -150,6 +155,7 @@ export default function RunStudioLayout({
           orchestration={orchestration}
           collaboration={collaboration}
           checkpoints={checkpoints}
+          controlPlaneSummary={controlPlaneSummary}
         />
         {teamView || effectiveTeam ? (
           <AgentTeamPanel

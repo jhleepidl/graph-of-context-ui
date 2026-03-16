@@ -14,6 +14,7 @@ import {
   type StructuredRuntimeValue,
   type TeamViewProjection,
   type WhyThisTeamProjection,
+  type ControlPlaneSummaryProjection,
 } from './types'
 
 function cleanText(value: unknown): string | null {
@@ -171,6 +172,59 @@ function mergeAttachedSkills(primary?: AttachedSkillSummary[], secondary?: Attac
   })
 }
 
+function genericRuntimeLabel(label?: string | null, roleId?: string | null): boolean {
+  const cleanLabel = cleanText(label).toLowerCase()
+  const cleanRole = cleanText(roleId).toLowerCase()
+  if (!cleanLabel) return true
+  if (cleanRole && (cleanLabel === cleanRole || cleanLabel === titleCaseIdentifier(cleanRole).toLowerCase())) return true
+  return false
+}
+
+function titleCaseIdentifier(value?: string | null): string {
+  return cleanText(value)
+    .replace(/[._-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+}
+
+function friendlyRuntimeLabel(agent: Partial<RuntimeAgentInstanceV2>): string {
+  const roleId = cleanText(agent.role_id || agent.role_label).toLowerCase()
+  const current = cleanText(agent.display_label || agent.name || agent.role_label || agent.agent_id)
+  const slotText = [agent.slot_label, agent.selection_reason].map((value) => cleanText(value).toLowerCase()).filter(Boolean).join(' ')
+  if (current && !genericRuntimeLabel(current, roleId)) return current
+  const hasAny = (...patterns: string[]) => patterns.some((pattern) => slotText.includes(pattern))
+  if (roleId === 'researcher') {
+    if (hasAny('filing', 'dart', '10-k', '10q', '공시')) return hasAny('investment', 'market', 'equity', 'stock') ? 'DART Financial Researcher' : 'Filing Researcher'
+    if (hasAny('news', 'headline', 'market')) return 'Market News Researcher'
+    if (hasAny('evidence', 'citation', 'claim', 'validate')) return 'Evidence Researcher'
+    if (hasAny('investment', 'equity', 'stock', 'portfolio')) return 'Investment Researcher'
+    return current || 'Task Researcher'
+  }
+  if (roleId === 'reviewer') {
+    if (hasAny('skeptical', 'adversarial', 'stress-test', 'stress test', 'claim', 'citation', 'evidence')) return 'Skeptical Claim Reviewer'
+    if (hasAny('regression', 'test', 'qa')) return 'Regression Reviewer'
+    if (hasAny('risk', 'contradiction')) return 'Risk Reviewer'
+    if (hasAny('implementation', 'code', 'patch', 'refactor')) return 'Implementation Reviewer'
+    return current || 'Reviewer'
+  }
+  if (roleId === 'builder') {
+    if (hasAny('notebook')) return 'Notebook Builder'
+    if (hasAny('patch', 'refactor')) return 'Patch Builder'
+    return 'Implementation Builder'
+  }
+  if (roleId === 'synthesizer') {
+    if (hasAny('investment', 'memo')) return 'Investment Memo Synthesizer'
+    if (hasAny('brief')) return 'Briefing Synthesizer'
+    if (hasAny('report', 'final output', 'assemble', 'aggregation')) return 'Report Synthesizer'
+    return current || 'Synthesizer'
+  }
+  if (roleId === 'operator') {
+    return hasAny('workflow', 'runtime', 'tool') ? 'Workflow Operator' : (current || 'Operator')
+  }
+  return current || titleCaseIdentifier(roleId) || 'runtime agent'
+}
+
 function runtimeAgentKey(agent: Partial<RuntimeAgentInstanceV2>): string {
   return (
     cleanText(agent.runtime_instance_id) ||
@@ -194,8 +248,8 @@ function normalizeRuntimeAgent(agent: Partial<RuntimeAgentInstanceV2>): RuntimeA
     runtime_instance_id: cleanText(agent.runtime_instance_id || agent.instance_id),
     instance_id: cleanText(agent.instance_id || agent.runtime_instance_id),
     agent_id: cleanText(agent.agent_id),
-    display_label: cleanText(agent.display_label || agent.name || agent.role_label || agent.agent_id),
-    name: cleanText(agent.name || agent.display_label || agent.role_label || agent.agent_id),
+    display_label: friendlyRuntimeLabel(agent),
+    name: cleanText(agent.name || friendlyRuntimeLabel(agent)),
     role_label: cleanText(agent.role_label),
     role_id: cleanText(agent.role_id),
     slot_id: cleanText(agent.slot_id),
@@ -774,4 +828,66 @@ export function selectTeamDiversitySummary(teamView: TeamViewProjection | null):
   if (items.length > 1 && roles.size <= 1) notes.push('multiple agents share similar roles to increase coverage or redundancy')
 
   return notes
+}
+
+export function selectControlPlaneSummary(
+  summary: RunStudioSummary | null,
+  detail: RunStudioAgentTeam | null,
+): ControlPlaneSummaryProjection | null {
+  const teamView = selectEffectiveTeamView(summary, detail)
+  const orchestration = selectEffectiveOrchestration(summary, teamView)
+  const collaboration = selectEffectiveCollaboration(summary)
+  const checkpoints = selectEffectiveCheckpoints(summary)
+  const authority = summary?.runtime_authority || currentRunSkills(summary)?.runtime_authority || null
+  const state = summary?.now?.state || {}
+
+  const mode = cleanText(authority?.mode) || cleanText(state.mode) || cleanText(summary?.mode) || 'standalone'
+  const planSource = cleanText(authority?.plan_source) || cleanText(state.plan_source) || cleanText(summary?.plan_source) || 'local'
+  const contextSource = cleanText(authority?.context_source) || cleanText(state.context_source) || cleanText(summary?.context_source) || 'local'
+  const teamSource = cleanText(authority?.conversation_team_source) || cleanText(state.conversation_team_source) || cleanText(summary?.conversation_team_source) || 'local'
+  const skillSource = cleanText(authority?.skill_catalog_source) || cleanText(state.skill_catalog_source) || cleanText(summary?.skill_catalog_source) || 'local'
+  const degradedMode = Boolean(authority?.degraded_mode ?? state.degraded_mode ?? summary?.degraded_mode)
+  const fallbackReason = cleanText(authority?.fallback_reason) || cleanText(state.fallback_reason) || cleanText(summary?.fallback_reason) || null
+  const supervisorMode =
+    cleanText(orchestration?.supervisor_mode) ||
+    cleanText(orchestration?.supervisor_runtime?.interaction_mode) ||
+    cleanText(orchestration?.supervisor_runtime?.mode) ||
+    null
+  const items = teamView?.items || []
+  const runtimeAgentCount = teamView?.count ?? items.length
+  const presetCount = teamView?.preset_count ?? items.filter((item) => Boolean(cleanText(item.preset_id))).length
+  const synthesizedCount = teamView?.synthesized_count ?? items.filter((item) => Boolean(item.synthesized)).length
+  const reviewerPresent = items.some((item) => cleanText(item.role_id || item.role_label) === 'reviewer')
+  const synthesizerPresent = items.some((item) => cleanText(item.role_id || item.role_label) === 'synthesizer')
+  const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
+  const checkpointCount = Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
+  const parallelGroupCount = orchestration?.parallel_group_count ?? orchestration?.parallel_groups?.length ?? 0
+  const supervisorEnabled = Boolean(
+    orchestration?.supervisor_enabled ||
+    supervisorMode ||
+    orchestration?.supervisor_edges?.length ||
+    orchestration?.supervisor_runtime?.instance_id,
+  )
+  const legacyFallback = !summary?.team_view && !currentRunSkills(summary)?.team_view
+
+  return {
+    mode,
+    planSource,
+    contextSource,
+    teamSource,
+    skillSource,
+    supervisorMode,
+    supervisorEnabled,
+    runtimeAgentCount,
+    parallelGroupCount,
+    collaborationCount,
+    checkpointCount,
+    presetCount,
+    synthesizedCount,
+    reviewerPresent,
+    synthesizerPresent,
+    degradedMode,
+    fallbackReason,
+    legacyFallback,
+  }
 }

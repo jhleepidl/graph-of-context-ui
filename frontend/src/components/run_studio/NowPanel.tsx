@@ -6,10 +6,12 @@ import {
   type RunStudioAgentTeam,
   type RunStudioSummary,
   type TeamViewProjection,
+  type ControlPlaneSummaryProjection,
 } from './types'
 
 type Props = {
   summary: RunStudioSummary | null
+  controlPlaneSummary?: ControlPlaneSummaryProjection | null
   team?: RunStudioAgentTeam | null
   teamView?: TeamViewProjection | null
   orchestration?: OrchestrationProjection | null
@@ -33,6 +35,7 @@ export default function NowPanel({
   orchestration,
   collaboration,
   checkpoints,
+  controlPlaneSummary,
 }: Props) {
   const now = summary?.now
   const task = now?.task
@@ -49,22 +52,22 @@ export default function NowPanel({
   const staleQueuedStepCount = Number(state?.stale_queued_step_count || 0)
   const currentRunId = String(state?.current_run_id || '').trim()
   const currentRunInactive = Boolean(state?.current_run_inactive)
-  const mode = String(authority?.mode || state?.mode || summary?.mode || 'standalone')
-  const degradedMode = Boolean(authority?.degraded_mode ?? state?.degraded_mode ?? summary?.degraded_mode)
-  const fallbackReason = String(authority?.fallback_reason || state?.fallback_reason || summary?.fallback_reason || '').trim()
-  const planSource = String(authority?.plan_source || state?.plan_source || summary?.plan_source || 'local')
-  const contextSource = String(authority?.context_source || state?.context_source || summary?.context_source || 'local')
-  const teamSource = String(
+  const mode = controlPlaneSummary?.mode || String(authority?.mode || state?.mode || summary?.mode || 'standalone')
+  const degradedMode = controlPlaneSummary?.degradedMode ?? Boolean(authority?.degraded_mode ?? state?.degraded_mode ?? summary?.degraded_mode)
+  const fallbackReason = controlPlaneSummary?.fallbackReason || String(authority?.fallback_reason || state?.fallback_reason || summary?.fallback_reason || '').trim()
+  const planSource = controlPlaneSummary?.planSource || String(authority?.plan_source || state?.plan_source || summary?.plan_source || 'local')
+  const contextSource = controlPlaneSummary?.contextSource || String(authority?.context_source || state?.context_source || summary?.context_source || 'local')
+  const teamSource = controlPlaneSummary?.teamSource || String(
     authority?.conversation_team_source || state?.conversation_team_source || summary?.conversation_team_source || 'local',
   )
-  const skillSource = String(
+  const skillSource = controlPlaneSummary?.skillSource || String(
     authority?.skill_catalog_source || state?.skill_catalog_source || summary?.skill_catalog_source || 'local',
   )
   const legacyTeamItems = team?.items || []
-  const runtimeTeamCount = teamView?.count ?? legacyTeamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
-  const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
-  const checkpointCount = Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
-  const supervisorEnabled = Boolean(
+  const runtimeTeamCount = controlPlaneSummary?.runtimeAgentCount ?? teamView?.count ?? legacyTeamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
+  const collaborationCount = controlPlaneSummary?.collaborationCount ?? collaboration?.count ?? collaboration?.items?.length ?? 0
+  const checkpointCount = controlPlaneSummary?.checkpointCount ?? Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
+  const supervisorEnabled = controlPlaneSummary?.supervisorEnabled ?? Boolean(
     orchestration?.supervisor_enabled ||
     orchestration?.supervisor_mode ||
     orchestration?.supervisor_runtime?.interaction_mode ||

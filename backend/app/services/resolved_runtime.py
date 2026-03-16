@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -299,6 +300,13 @@ def _structured_summary(value: Any) -> str | None:
     return None
 
 
+def _title_case_identifier(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", re.sub(r"[._-]+", " ", text)).strip().title()
+
+
 def _team_view_labels_by_instance(team_view: dict[str, Any] | None) -> dict[str, str]:
     return {
         str(item.get("runtime_instance_id") or ""): str(item.get("display_label") or "")
@@ -307,6 +315,76 @@ def _team_view_labels_by_instance(team_view: dict[str, Any] | None) -> dict[str,
         and str(item.get("runtime_instance_id") or "").strip()
         and str(item.get("display_label") or "").strip()
     }
+
+
+def _generic_runtime_label(label: Any, role_id: Any = None) -> bool:
+    clean_label = _clean_text(label).lower()
+    clean_role = _clean_text(role_id).lower()
+    if not clean_label:
+        return True
+    if clean_role and clean_label in {clean_role, _clean_text(_title_case_identifier(clean_role)).lower()}:
+        return True
+    return False
+
+
+def _friendly_runtime_label(*, display_label: Any = None, role_id: Any = None, slot: dict[str, Any] | None = None, selection_reason: Any = None, synthesized: Any = None) -> str | None:
+    slot = slot or {}
+    label = _clean_text(display_label)
+    role = _clean_text(role_id).lower()
+    slot_text = " ".join(
+        filter(
+            None,
+            [
+                _clean_text(slot.get("purpose") or slot.get("display_label") or slot.get("displayLabel") or slot.get("label")),
+                _clean_text(selection_reason),
+            ],
+        )
+    ).lower()
+    if not _boolish(synthesized) and label:
+        return label
+    if label and not _generic_runtime_label(label, role):
+        return label
+
+    def has_any(*patterns: str) -> bool:
+        return any(pattern in slot_text for pattern in patterns)
+
+    if role == "researcher":
+        if has_any("filing", "dart", "10-k", "10q", "공시"):
+            return "DART Financial Researcher" if has_any("investment", "market", "equity", "stock") else "Filing Researcher"
+        if has_any("news", "headline", "market"):
+            return "Market News Researcher"
+        if has_any("evidence", "citation", "claim", "validate"):
+            return "Evidence Researcher"
+        if has_any("investment", "equity", "stock", "portfolio"):
+            return "Investment Researcher"
+        return label or "Task Researcher"
+    if role == "reviewer":
+        if has_any("skeptical", "adversarial", "stress-test", "stress test", "claim", "citation", "evidence"):
+            return "Skeptical Claim Reviewer"
+        if has_any("regression", "test", "qa"):
+            return "Regression Reviewer"
+        if has_any("risk", "contradiction"):
+            return "Risk Reviewer"
+        if has_any("implementation", "code", "patch", "refactor"):
+            return "Implementation Reviewer"
+        return label or "Reviewer"
+    if role == "builder":
+        if has_any("notebook"):
+            return "Notebook Builder"
+        if has_any("patch", "refactor"):
+            return "Patch Builder"
+        return "Implementation Builder"
+    if role == "synthesizer":
+        if has_any("investment", "memo"):
+            return "Investment Memo Synthesizer"
+        if has_any("brief"):
+            return "Briefing Synthesizer"
+        if has_any("report", "final output", "assemble", "aggregation"):
+            return "Report Synthesizer"
+        return label or "Synthesizer"
+    if role == "operator":
+        return "Workflow Operator" if has_any("workflow", "runtime", "tool") else (label or "Operator")
+    return label or _title_case_identifier(role) or None
 
 
 def _slot_indexes(runtime_snapshot: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -335,14 +413,20 @@ def build_team_view_projection(
 
     for agent in runtime_agents:
         slot = slot_by_id.get(str(agent.get("slot_id") or "").strip()) or slot_by_role_id.get(str(agent.get("role_id") or "").strip())
-        display_label = _clean_text(
-            agent.get("display_label")
-            or agent.get("name")
-            or (slot or {}).get("display_label")
-            or (slot or {}).get("displayLabel")
-            or agent.get("role_label")
-            or agent.get("runtime_instance_id")
-            or agent.get("agent_id")
+        display_label = _friendly_runtime_label(
+            display_label=(
+                agent.get("display_label")
+                or agent.get("name")
+                or (slot or {}).get("display_label")
+                or (slot or {}).get("displayLabel")
+                or agent.get("role_label")
+                or agent.get("runtime_instance_id")
+                or agent.get("agent_id")
+            ),
+            role_id=agent.get("role_id") or (slot or {}).get("role_id") or (slot or {}).get("roleId"),
+            slot=slot,
+            selection_reason=agent.get("selection_reason") or (slot or {}).get("selection_reason") or (slot or {}).get("selectionReason"),
+            synthesized=agent.get("synthesized"),
         )
         selection_reason = _clean_text(
             agent.get("selection_reason")
