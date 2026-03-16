@@ -7,6 +7,7 @@ import {
   type CollaborationProjection,
   type OrchestrationProjection,
   type RunStudioAgentTeam,
+  type RuntimeAgentInstanceV2,
   type TeamViewProjection,
 } from './types'
 
@@ -24,6 +25,16 @@ function runtimeClass(status: string): string {
   if (clean === 'error' || clean === 'blocked') return 'runStudioStatus--blocked'
   if (clean === 'done') return 'runStudioStatus--done'
   return 'runStudioStatus--idle'
+}
+
+function laneLabel(roleId: string): string {
+  const clean = String(roleId || '').trim().toLowerCase()
+  if (clean === 'researcher') return 'Research lanes'
+  if (clean === 'reviewer') return 'Review gate'
+  if (clean === 'synthesizer') return 'Final synthesis'
+  if (clean === 'builder') return 'Build lane'
+  if (clean === 'operator') return 'Runtime ops'
+  return 'Runtime agents'
 }
 
 export default function AgentTeamPanel({
@@ -50,14 +61,25 @@ export default function AgentTeamPanel({
   const { reviewerPresent, synthesizerPresent } = selectTeamViewFlags(teamView)
   const degradedMode = Boolean(authority?.degraded_mode ?? legacyTeam?.degraded_mode)
   const fallbackReason = String(authority?.fallback_reason || legacyTeam?.fallback_reason || '').trim()
-  const runtimeSnapshotCount = (legacyTeam?.items || []).filter((item) => item.source === 'runtime_snapshot').length
-  const threadTeamCount = (legacyTeam?.items || []).filter((item) => item.source === 'conversation_membership').length
-  const inferredCount = (legacyTeam?.items || []).filter((item) => item.source === 'inferred_from_steps').length
+
+  const grouped = new Map<string, RuntimeAgentInstanceV2[]>()
+  items.forEach((item) => {
+    const role = String(item.role_id || item.role_label || 'runtime').trim().toLowerCase() || 'runtime'
+    if (!grouped.has(role)) grouped.set(role, [])
+    grouped.get(role)!.push(item)
+  })
+  const orderedGroups = Array.from(grouped.entries()).sort((a, b) => {
+    const order = ['researcher', 'builder', 'reviewer', 'synthesizer', 'operator']
+    return (order.indexOf(a[0]) === -1 ? 99 : order.indexOf(a[0])) - (order.indexOf(b[0]) === -1 ? 99 : order.indexOf(b[0]))
+  })
 
   return (
-    <section className="card runStudioPanel">
+    <section className="card runStudioPanel runStudioTeamPanel">
       <div className="runStudioPanelHeader">
-        <h3>Team View</h3>
+        <div>
+          <h3 style={{ margin: 0 }}>Runtime Agents</h3>
+          <div className="muted">Preset-backed or synthesized workers that currently make up the team.</div>
+        </div>
         <div className="runStudioMetaRow">
           <span className="pill">runtime agents: {runtimeCount}</span>
           <span className="pill">preset-backed: {presetCount}</span>
@@ -82,61 +104,55 @@ export default function AgentTeamPanel({
         </div>
       )}
 
-      {items.length > 0 && (
-        <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
-          {runtimeSnapshotCount > 0 && <span className="pill">runtime snapshot: {runtimeSnapshotCount}</span>}
-          {threadTeamCount > 0 && <span className="pill">thread team fallback: {threadTeamCount}</span>}
-          {inferredCount > 0 && <span className="pill">inferred fallback: {inferredCount}</span>}
-        </div>
-      )}
-
-      <div className="runStudioList">
-        {items.map((item, index) => {
-          const dominantSkills = selectDominantSkills(item)
-          const fallbackSkillIds = (item.attached_skill_ids || []).slice(0, 3)
-          const skillChips = dominantSkills.length > 0
-            ? dominantSkills.map((skill) => skill.skill_name || skill.skill_id)
-            : fallbackSkillIds
-          const roleBits = [item.role_label, item.role_id].filter(Boolean)
-          const slotBits = [item.slot_label, item.slot_id].filter(Boolean)
-          const status = String(item.runtime_status || 'idle')
-
-          return (
-            <article
-              key={`${item.runtime_instance_id || item.agent_id || item.display_label || 'runtime-agent'}:${index}`}
-              className="runStudioListItem"
-            >
-              <div className="row" style={{ marginBottom: 6 }}>
-                <b>{item.display_label || item.role_label || item.agent_id || 'runtime agent'}</b>
-                <span className={`pill runStudioStatus ${runtimeClass(status)}`}>{status}</span>
-                {item.preset_id && <span className="pill">preset: {item.preset_id}</span>}
-                {!item.preset_id && item.synthesized && <span className="pill">synthesized</span>}
-                {item.authority_profile_id && <span className="pill">authority: {item.authority_profile_id}</span>}
-              </div>
-
-              {roleBits.length > 0 && <div className="muted">role: {roleBits.join(' / ')}</div>}
-              {slotBits.length > 0 && <div className="muted">slot: {slotBits.join(' / ')}</div>}
-              {(item.provider || item.model) && (
-                <div className="muted">
-                  model: {item.provider || '-'} / {item.model || '-'}
-                </div>
-              )}
-              {item.context_pack_id && <div className="muted">context pack: {item.context_pack_id}</div>}
-              {item.runtime_instance_id && <div className="muted">runtime instance: {item.runtime_instance_id}</div>}
-              {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
-
-              {skillChips.length > 0 && (
-                <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
-                  {skillChips.map((skill) => (
-                    <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:${skill}`} className="pill">
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </article>
-          )
-        })}
+      <div className="runStudioTeamGroupList">
+        {orderedGroups.map(([role, roleItems]) => (
+          <section key={role} className="runStudioTeamGroup">
+            <div className="runStudioTeamGroupHeader">
+              <div className="runStudioExecutionLaneTitle">{laneLabel(role)}</div>
+              <div className="muted">{roleItems.length} agent{roleItems.length === 1 ? '' : 's'}</div>
+            </div>
+            <div className="runStudioAgentCardGrid">
+              {roleItems.map((item, index) => {
+                const dominantSkills = selectDominantSkills(item)
+                const fallbackSkillIds = (item.attached_skill_ids || []).slice(0, 4)
+                const skillChips = dominantSkills.length > 0
+                  ? dominantSkills.map((skill) => skill.skill_name || skill.skill_id)
+                  : fallbackSkillIds
+                const status = String(item.runtime_status || 'idle')
+                return (
+                  <article
+                    key={`${item.runtime_instance_id || item.agent_id || item.display_label || 'runtime-agent'}:${index}`}
+                    className="runStudioAgentCard"
+                  >
+                    <div className="row" style={{ marginBottom: 6 }}>
+                      <b>{item.display_label || item.role_label || item.agent_id || 'runtime agent'}</b>
+                      <span className={`pill runStudioStatus ${runtimeClass(status)}`}>{status}</span>
+                    </div>
+                    <div className="runStudioMetaRow" style={{ marginBottom: 6 }}>
+                      {item.preset_id && <span className="pill">preset-backed</span>}
+                      {!item.preset_id && item.synthesized && <span className="pill">synthesized</span>}
+                      {item.slot_label && <span className="pill">slot: {item.slot_label}</span>}
+                      {!item.slot_label && item.slot_id && <span className="pill">slot: {item.slot_id}</span>}
+                    </div>
+                    <div className="muted">role: {item.role_label || item.role_id || '-'}</div>
+                    {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
+                    {item.authority_profile_id && <div className="muted">authority: {item.authority_profile_id}</div>}
+                    {(item.provider || item.model) && <div className="muted">model: {item.provider || '-'} / {item.model || '-'}</div>}
+                    {skillChips.length > 0 && (
+                      <div className="runStudioMetaRow" style={{ marginTop: 8 }}>
+                        {skillChips.map((skill) => (
+                          <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:${skill}`} className="pill">
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                )
+              })}
+            </div>
+          </section>
+        ))}
       </div>
     </section>
   )

@@ -1,5 +1,7 @@
 import React from 'react'
 import ControlPlaneSummaryPanel from './ControlPlaneSummaryPanel'
+import LegacyFallbackNoticePanel from './LegacyFallbackNoticePanel'
+import ExecutionMapPanel from './ExecutionMapPanel'
 import NowPanel from './NowPanel'
 import AgentTeamPanel from './AgentTeamPanel'
 import WhyThisTeamPanel from './WhyThisTeamPanel'
@@ -146,17 +148,16 @@ export default function RunStudioLayout({
       </div>
 
       <ControlPlaneSummaryPanel summary={controlPlaneSummary} />
+      <LegacyFallbackNoticePanel summary={controlPlaneSummary} />
+
+      <ExecutionMapPanel
+        orchestration={orchestration}
+        teamView={teamView}
+        collaboration={collaboration}
+        checkpoints={checkpoints}
+      />
 
       <div className="runStudioGrid runStudioGrid--top">
-        <NowPanel
-          summary={summary}
-          team={effectiveTeam}
-          teamView={teamView}
-          orchestration={orchestration}
-          collaboration={collaboration}
-          checkpoints={checkpoints}
-          controlPlaneSummary={controlPlaneSummary}
-        />
         {teamView || effectiveTeam ? (
           <AgentTeamPanel
             teamView={teamView}
@@ -167,7 +168,7 @@ export default function RunStudioLayout({
         ) : (
           <section className="card runStudioPanel">
             <div className="runStudioPanelHeader">
-              <h3>Team View</h3>
+              <h3>Runtime Agents</h3>
             </div>
             <div className="muted" style={{ marginBottom: 8 }}>
               Runtime team detail is available on demand.
@@ -177,20 +178,29 @@ export default function RunStudioLayout({
             </button>
           </section>
         )}
+        <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
+        <NowPanel
+          summary={summary}
+          team={effectiveTeam}
+          teamView={teamView}
+          orchestration={orchestration}
+          collaboration={collaboration}
+          checkpoints={checkpoints}
+          controlPlaneSummary={controlPlaneSummary}
+        />
         <OrchestrationPanel orchestration={orchestration} checkpoints={checkpoints} teamView={teamView} />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
         <CollaborationPanel collaboration={collaboration} />
-        <AuthorityPanel authority={authorityProjection} runtimeAuthority={runtimeAuthority} />
+        <CheckpointPanel checkpoints={checkpoints} />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <CheckpointPanel checkpoints={checkpoints} />
+        <AuthorityPanel authority={authorityProjection} runtimeAuthority={runtimeAuthority} />
         <AttachedSkillsPanel summary={summary} team={effectiveTeam} />
       </div>
 
