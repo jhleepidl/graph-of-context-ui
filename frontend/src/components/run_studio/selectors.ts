@@ -15,6 +15,8 @@ import {
   type TeamViewProjection,
   type WhyThisTeamProjection,
   type ControlPlaneSummaryProjection,
+  type SkillAttachmentOverviewProjection,
+  type AgentSkillAttachmentProjection,
 } from './types'
 
 function cleanText(value: unknown): string | null {
@@ -889,5 +891,67 @@ export function selectControlPlaneSummary(
     degradedMode,
     fallbackReason,
     legacyFallback,
+  }
+}
+
+
+export function selectSkillAttachmentOverview(
+  summary: RunStudioSummary | null,
+  detail?: RunStudioAgentTeam | null,
+): SkillAttachmentOverviewProjection {
+  const teamView = selectEffectiveTeamView(summary, detail)
+  const items = teamView?.items || []
+
+  const agents: AgentSkillAttachmentProjection[] = items
+    .map((item) => ({
+      runtime_instance_id: cleanText(item.runtime_instance_id || item.instance_id || item.agent_id),
+      display_label: cleanText(item.display_label) || friendlyRuntimeLabel(item),
+      role_label: cleanText(item.role_label) || titleCaseIdentifier(item.role_id) || 'Runtime agent',
+      slot_label: cleanText(item.slot_label || item.slot_id),
+      authority_profile_id: cleanText(item.authority_profile_id),
+      preset_id: cleanText(item.preset_id),
+      synthesized: Boolean(item.synthesized),
+      attached_skills: mergeAttachedSkills(item.attached_skills),
+      attached_skill_ids: uniqueStrings(item.attached_skill_ids || []),
+    }))
+    .sort((a, b) => a.display_label.localeCompare(b.display_label))
+
+  const skillCounts = new Map<string, { skill_name: string; count: number }>()
+  let totalAgentSkillLinks = 0
+  let agentsWithSkills = 0
+
+  agents.forEach((agent) => {
+    if ((agent.attached_skills || []).length > 0 || (agent.attached_skill_ids || []).length > 0) agentsWithSkills += 1
+    ;(agent.attached_skills || []).forEach((skill) => {
+      const skillId = cleanText(skill.skill_id)
+      if (!skillId) return
+      totalAgentSkillLinks += 1
+      const current = skillCounts.get(skillId) || { skill_name: cleanText(skill.skill_name) || skillId, count: 0 }
+      current.count += 1
+      current.skill_name = cleanText(skill.skill_name) || current.skill_name || skillId
+      skillCounts.set(skillId, current)
+    })
+    if ((agent.attached_skills || []).length === 0) {
+      ;(agent.attached_skill_ids || []).forEach((skillIdRaw) => {
+        const skillId = cleanText(skillIdRaw)
+        if (!skillId) return
+        totalAgentSkillLinks += 1
+        const current = skillCounts.get(skillId) || { skill_name: skillId, count: 0 }
+        current.count += 1
+        skillCounts.set(skillId, current)
+      })
+    }
+  })
+
+  const top_skills = Array.from(skillCounts.entries())
+    .map(([skill_id, value]) => ({ skill_id, skill_name: value.skill_name, count: value.count }))
+    .sort((a, b) => (b.count - a.count) || a.skill_name.localeCompare(b.skill_name))
+
+  return {
+    agents,
+    top_skills,
+    total_agent_skill_links: totalAgentSkillLinks,
+    total_unique_skills: top_skills.length,
+    agents_with_skills: agentsWithSkills,
   }
 }

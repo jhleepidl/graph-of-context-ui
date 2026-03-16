@@ -78,7 +78,7 @@ export default function AgentTeamPanel({
       <div className="runStudioPanelHeader">
         <div>
           <h3 style={{ margin: 0 }}>Runtime Agents</h3>
-          <div className="muted">Preset-backed or synthesized workers that currently make up the team.</div>
+          <div className="muted">Preset-backed or synthesized workers that currently make up the team, with their attached skills visible on each card.</div>
         </div>
         <div className="runStudioMetaRow">
           <span className="pill">runtime agents: {runtimeCount}</span>
@@ -114,10 +114,18 @@ export default function AgentTeamPanel({
             <div className="runStudioAgentCardGrid">
               {roleItems.map((item, index) => {
                 const dominantSkills = selectDominantSkills(item)
-                const fallbackSkillIds = (item.attached_skill_ids || []).slice(0, 4)
-                const skillChips = dominantSkills.length > 0
+                const explicitSkills = (item.attached_skills || []).map((skill) => ({
+                  name: skill.skill_name || skill.skill_id,
+                  level: skill.load_level || 'metadata_only',
+                }))
+                const fallbackSkillIds = (item.attached_skill_ids || []).slice(0, 6).map((skillId) => ({
+                  name: skillId,
+                  level: 'metadata_only',
+                }))
+                const skillChips = explicitSkills.length > 0 ? explicitSkills : fallbackSkillIds
+                const highlightSkills = dominantSkills.length > 0
                   ? dominantSkills.map((skill) => skill.skill_name || skill.skill_id)
-                  : fallbackSkillIds
+                  : skillChips.slice(0, 3).map((skill) => skill.name)
                 const status = String(item.runtime_status || 'idle')
                 return (
                   <article
@@ -138,13 +146,36 @@ export default function AgentTeamPanel({
                     {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
                     {item.authority_profile_id && <div className="muted">authority: {item.authority_profile_id}</div>}
                     {(item.provider || item.model) && <div className="muted">model: {item.provider || '-'} / {item.model || '-'}</div>}
-                    {skillChips.length > 0 && (
-                      <div className="runStudioMetaRow" style={{ marginTop: 8 }}>
-                        {skillChips.map((skill) => (
-                          <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:${skill}`} className="pill">
-                            {skill}
-                          </span>
-                        ))}
+
+                    {highlightSkills.length > 0 && (
+                      <div className="runStudioAgentSkillSection">
+                        <div className="runStudioAgentSkillSectionLabel">Skill profile</div>
+                        <div className="runStudioMetaRow">
+                          {highlightSkills.map((skill) => (
+                            <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:highlight:${skill}`} className="pill runStudioSkillPill runStudioSkillPill--prominent">
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {skillChips.length > 0 ? (
+                      <div className="runStudioAgentSkillSection">
+                        <div className="runStudioAgentSkillSectionLabel">Attached skills</div>
+                        <div className="runStudioSkillStack">
+                          {skillChips.map((skill) => (
+                            <div key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:${skill.name}:${skill.level}`} className="runStudioSkillRow">
+                              <span className="runStudioSkillName">{skill.name}</span>
+                              <span className="pill">{skill.level}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="runStudioAgentSkillSection">
+                        <div className="runStudioAgentSkillSectionLabel">Attached skills</div>
+                        <div className="muted">No attached skill projection was emitted for this runtime agent.</div>
                       </div>
                     )}
                   </article>

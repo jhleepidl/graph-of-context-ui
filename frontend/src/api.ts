@@ -76,7 +76,7 @@ export function getStoredBearerToken(): string {
     }
   }
 
-  return ''
+  return captureBearerTokenFromLocation()
 }
 
 export function setStoredBearerToken(token: string): void {
@@ -97,6 +97,22 @@ export function setStoredBearerToken(token: string): void {
   }
 }
 
+
+function captureBearerTokenFromLocation(): string {
+  if (typeof window === 'undefined') return ''
+  const read = (raw: string): string => {
+    const clean = raw.startsWith('#') ? raw.slice(1) : raw
+    if (!clean) return ''
+    const params = new URLSearchParams(clean)
+    return (params.get('token') || params.get('ui_token') || '').trim()
+  }
+
+  const token = read(window.location.hash || '') || read(window.location.search || '')
+  if (!token) return ''
+  writeSessionStorage(UI_TOKEN_STORAGE_KEY, token)
+  return token
+}
+
 function buildHeaders(existing?: HeadersInit): Headers {
   const headers = new Headers(existing || undefined)
   if (headers.has('X-Admin-Key') || headers.has('Authorization')) {
@@ -109,7 +125,7 @@ function buildHeaders(existing?: HeadersInit): Headers {
     return headers
   }
 
-  const token = getStoredBearerToken()
+  const token = getStoredBearerToken() || captureBearerTokenFromLocation()
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }

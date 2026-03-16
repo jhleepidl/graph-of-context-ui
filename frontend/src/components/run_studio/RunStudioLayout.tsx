@@ -33,6 +33,7 @@ import {
   selectEffectiveTeamView,
   selectEffectiveWhyThisTeam,
   selectControlPlaneSummary,
+  selectSkillAttachmentOverview,
 } from './selectors'
 
 type DetailState = {
@@ -109,6 +110,7 @@ export default function RunStudioLayout({
   const authorityProjection = selectEffectiveAuthority(summary, team)
   const checkpoints = selectEffectiveCheckpoints(summary)
   const controlPlaneSummary = selectControlPlaneSummary(summary, team)
+  const skillAttachmentOverview = selectSkillAttachmentOverview(summary, effectiveTeam)
   const decisionsLoaded = Boolean(detailLoaded?.contextDecisions || decisions)
   const evidenceLoaded = Boolean(detailLoaded?.evidence || evidence)
 
@@ -147,7 +149,7 @@ export default function RunStudioLayout({
         {error && <div className="runStudioWarning"><b>Load error:</b> {error}</div>}
       </div>
 
-      <ControlPlaneSummaryPanel summary={controlPlaneSummary} />
+      <ControlPlaneSummaryPanel summary={controlPlaneSummary} skillOverview={skillAttachmentOverview} />
       <LegacyFallbackNoticePanel summary={controlPlaneSummary} />
 
       <ExecutionMapPanel
@@ -178,8 +180,10 @@ export default function RunStudioLayout({
             </button>
           </section>
         )}
-        <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
+        <AttachedSkillsPanel summary={summary} team={effectiveTeam} />
       </div>
+
+      <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
 
       <div className="runStudioGrid runStudioGrid--bottom">
         <NowPanel
@@ -201,10 +205,6 @@ export default function RunStudioLayout({
 
       <div className="runStudioGrid runStudioGrid--bottom">
         <AuthorityPanel authority={authorityProjection} runtimeAuthority={runtimeAuthority} />
-        <AttachedSkillsPanel summary={summary} team={effectiveTeam} />
-      </div>
-
-      <div className="runStudioGrid runStudioGrid--bottom">
         <ContextPackPanel
           contextPacks={contextPacks}
           summary={summary}
@@ -212,6 +212,9 @@ export default function RunStudioLayout({
           detailLoading={Boolean(detailLoading?.contextPacks)}
           detailLoaded={Boolean(detailLoaded?.contextPacks)}
         />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
         <SkillUsagePanel
           skillUsage={skillUsage}
           summary={summary}

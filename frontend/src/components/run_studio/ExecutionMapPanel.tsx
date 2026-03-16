@@ -115,12 +115,20 @@ export default function ExecutionMapPanel({ orchestration, teamView, collaborati
                   .filter(([target]) => target === itemId)
                   .flatMap(([, deps]) => deps)
                   .map((dep) => byId.get(String(dep))?.display_label || dep)
+                const skillChips = (item.attached_skills || []).slice(0, 3).map((skill) => skill.skill_name || skill.skill_id)
                 return (
                   <div key={itemId || item.display_label} className="runStudioExecutionNode">
                     <div className="runStudioExecutionNodeTitle">{item.display_label || item.role_label || itemId || 'runtime agent'}</div>
                     <div className="muted">slot: {item.slot_label || item.slot_id || item.role_id || '-'}</div>
                     {dependencies.length > 0 && (
                       <div className="muted">after: {dependencies.join(' | ')}</div>
+                    )}
+                    {skillChips.length > 0 && (
+                      <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
+                        {skillChips.map((skill) => (
+                          <span key={`${itemId}:skill:${skill}`} className="pill runStudioSkillPill">{skill}</span>
+                        ))}
+                      </div>
                     )}
                     {renderedParallelIds.has(itemId) && <div className="runStudioExecutionBadge">parallel</div>}
                     {item.selection_reason && <div className="muted">{item.selection_reason}</div>}

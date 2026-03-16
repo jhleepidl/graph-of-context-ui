@@ -696,6 +696,31 @@ export type RunStudioSkillUsage = {
   fallback_reason?: string | null
 }
 
+
+export type AgentSkillAttachmentProjection = {
+  runtime_instance_id?: string | null
+  display_label: string
+  role_label: string
+  slot_label?: string | null
+  authority_profile_id?: string | null
+  preset_id?: string | null
+  synthesized?: boolean
+  attached_skills: AttachedSkillSummary[]
+  attached_skill_ids: string[]
+}
+
+export type SkillAttachmentOverviewProjection = {
+  agents: AgentSkillAttachmentProjection[]
+  top_skills: Array<{
+    skill_id: string
+    skill_name: string
+    count: number
+  }>
+  total_agent_skill_links: number
+  total_unique_skills: number
+  agents_with_skills: number
+}
+
 export type ControlPlaneSummaryProjection = {
   mode: string
   planSource: string

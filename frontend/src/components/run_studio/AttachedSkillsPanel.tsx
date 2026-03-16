@@ -1,6 +1,6 @@
 import React from 'react'
 import { type RunStudioAgentTeam, type RunStudioSummary } from './types'
-import { selectEffectiveAgentTeam } from './selectors'
+import { selectEffectiveAgentTeam, selectSkillAttachmentOverview } from './selectors'
 
 type Props = {
   summary: RunStudioSummary | null
@@ -9,77 +9,78 @@ type Props = {
 
 export default function AttachedSkillsPanel({ summary, team }: Props) {
   const effectiveTeam = selectEffectiveAgentTeam(summary, team)
-  const currentRunSkills = summary?.current_run_skills
-  const aggregatedSkills = currentRunSkills?.attached_skills || []
-  const roleSkillLinks = currentRunSkills?.lineage?.role_skill_links || []
-  const runtimeAgents = currentRunSkills?.runtime_agents || []
-
-  const fallbackRoleSkills = (effectiveTeam?.items || [])
-    .flatMap((item) =>
-      (item.attached_skills || []).map((skill) => ({
-        runtime_instance_id: item.runtime_instance_id || null,
-        role_label: item.display_label || item.role_label || item.name || item.agent_id,
-        skill_id: skill.skill_id,
-        skill_name: skill.skill_name || skill.skill_id,
-        load_level: skill.load_level || 'metadata_only',
-        selected_by: skill.selected_by || null,
-        selection_reason: skill.selection_reason || null,
-      })),
-    )
-
-  const runtimeAgentFallbackRoleSkills = runtimeAgents.flatMap((item) =>
-    (item.attached_skills || []).map((skill) => ({
-      runtime_instance_id: item.runtime_instance_id || item.instance_id || null,
-      role_label: item.display_label || item.role_label || item.name || item.agent_id || 'runtime role',
-      skill_id: skill.skill_id,
-      skill_name: skill.skill_name || skill.skill_id,
-      load_level: skill.load_level || 'metadata_only',
-      selected_by: skill.selected_by || null,
-      selection_reason: skill.selection_reason || null,
-    })),
-  )
-
-  const effectiveRoleLinks = roleSkillLinks.length > 0
-    ? roleSkillLinks
-    : (fallbackRoleSkills.length > 0 ? fallbackRoleSkills : runtimeAgentFallbackRoleSkills)
+  const overview = selectSkillAttachmentOverview(summary, effectiveTeam)
+  const agents = overview.agents
+  const topSkills = overview.top_skills.slice(0, 10)
 
   return (
-    <section className="card runStudioPanel">
+    <section className="card runStudioPanel runStudioSkillAttachmentPanel">
       <div className="runStudioPanelHeader">
-        <h3>Dominant Skills</h3>
+        <div>
+          <h3 style={{ margin: 0 }}>Skill Attachment</h3>
+          <div className="muted">Shows how attached skills are distributed across the current runtime agents.</div>
+        </div>
         <div className="runStudioMetaRow">
-          <span className="pill">skills: {aggregatedSkills.length}</span>
-          <span className="pill">role links: {effectiveRoleLinks.length}</span>
+          <span className="pill">agents: {agents.length}</span>
+          <span className="pill">agents with skills: {overview.agents_with_skills}</span>
+          <span className="pill">unique skills: {overview.total_unique_skills}</span>
+          <span className="pill">agent-skill links: {overview.total_agent_skill_links}</span>
         </div>
       </div>
 
-      {aggregatedSkills.length > 0 && (
-        <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
-          {aggregatedSkills.slice(0, 10).map((skill) => (
-            <span key={skill.skill_id} className="pill">
-              {skill.skill_name || skill.skill_id}
-              {skill.load_level ? ` (${skill.load_level})` : ''}
-            </span>
-          ))}
+      {topSkills.length > 0 && (
+        <div className="runStudioSkillAttachmentSummary">
+          <div className="muted" style={{ marginBottom: 6 }}>Top attached skills across the team</div>
+          <div className="runStudioMetaRow">
+            {topSkills.map((skill) => (
+              <span key={skill.skill_id} className="pill runStudioSkillPill runStudioSkillPill--prominent">
+                {skill.skill_name} · {skill.count}
+              </span>
+            ))}
+          </div>
         </div>
       )}
 
-      <div className="runStudioList">
-        {effectiveRoleLinks.slice(0, 14).map((link, index) => (
-          <article key={`${link.runtime_instance_id || link.role_label || 'role'}:${link.skill_id || 'skill'}:${index}`} className="runStudioListItem">
-            <div className="row" style={{ marginBottom: 4 }}>
-              <span className="pill">{link.role_label || link.runtime_instance_id || 'runtime role'}</span>
-              <span className="pill">{link.skill_name || link.skill_id}</span>
-              <span className="pill">load: {link.load_level || 'metadata_only'}</span>
-              {link.selected_by && <span className="pill">by: {link.selected_by}</span>}
-            </div>
-            {link.selection_reason && <div className="muted">reason: {link.selection_reason}</div>}
-          </article>
-        ))}
-        {effectiveRoleLinks.length === 0 && (
-          <div className="muted">No dominant skills are visible yet for this run scope.</div>
-        )}
+      <div className="runStudioSkillAttachmentGrid">
+        {agents.map((agent) => {
+          const skillRows = (agent.attached_skills || []).map((skill) => ({
+            id: skill.skill_id,
+            name: skill.skill_name || skill.skill_id,
+            level: skill.load_level || 'metadata_only',
+            selectedBy: skill.selected_by || null,
+          }))
+          const fallbackRows = skillRows.length > 0
+            ? skillRows
+            : (agent.attached_skill_ids || []).map((skillId) => ({ id: skillId, name: skillId, level: 'metadata_only', selectedBy: null }))
+          return (
+            <article key={agent.runtime_instance_id || agent.display_label} className="runStudioSkillAttachmentCard">
+              <div className="row" style={{ marginBottom: 6 }}>
+                <b>{agent.display_label}</b>
+                <span className="pill">{agent.role_label}</span>
+                {agent.preset_id && <span className="pill">preset</span>}
+                {!agent.preset_id && agent.synthesized && <span className="pill">synthesized</span>}
+              </div>
+              <div className="muted">slot: {agent.slot_label || '-'}</div>
+              {agent.authority_profile_id && <div className="muted">authority: {agent.authority_profile_id}</div>}
+              <div className="runStudioSkillStack" style={{ marginTop: 8 }}>
+                {fallbackRows.length > 0 ? fallbackRows.map((skill) => (
+                  <div key={`${agent.runtime_instance_id || agent.display_label}:${skill.id}`} className="runStudioSkillRow">
+                    <span className="runStudioSkillName">{skill.name}</span>
+                    <div className="runStudioMetaRow" style={{ justifyContent: 'flex-end' }}>
+                      <span className="pill">{skill.level}</span>
+                      {skill.selectedBy && <span className="pill">by: {skill.selectedBy}</span>}
+                    </div>
+                  </div>
+                )) : <div className="muted">No attached skills emitted for this agent.</div>}
+              </div>
+            </article>
+          )
+        })}
       </div>
+
+      {agents.length === 0 && (
+        <div className="muted">No dominant skills are visible yet for this run scope.</div>
+      )}
     </section>
   )
 }
