@@ -39,12 +39,13 @@ export default function ContextPackPanel({
   return (
     <section className="card runStudioPanel">
       <div className="runStudioPanelHeader">
-        <h3>Context Packs</h3>
+        <h3>Legacy Context Packs</h3>
         <div className="row" style={{ marginBottom: 0 }}>
           <span className="pill">mode: {mode}</span>
           <span className="pill">context: {contextSource}</span>
           {degradedMode && <span className="pill">degraded fallback</span>}
           <span className="pill">packs: {items.length}</span>
+          <span className="pill">legacy compatibility</span>
           <span className="pill">shared: {sharedCount}</span>
           <span className="pill">role-specific: {roleSpecificCount}</span>
           <span className="pill">skill-scoped: {skillScopedCount}</span>
@@ -92,7 +93,7 @@ export default function ContextPackPanel({
           </article>
         ))}
         {items.length === 0 && (
-          <div className="muted">No context pack projection is available for this run scope yet.</div>
+          <div className="muted">No legacy context pack projection is active for this run.</div>
         )}
       </div>
     </section>

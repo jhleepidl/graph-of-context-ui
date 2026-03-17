@@ -12,6 +12,7 @@ const statCards = (summary: ControlPlaneSummaryProjection, skillOverview?: Skill
   ['Parallel groups', String(summary.parallelGroupCount)],
   ['Collaboration cells', String(summary.collaborationCount)],
   ['Checkpoints', String(summary.checkpointCount)],
+  ['Scope mode', `${summary.scopeMode} · ${summary.scopeCount}`],
   ['Preset-backed', String(summary.presetCount)],
   ['Synthesized', String(summary.synthesizedCount)],
   ['Attached skills', String(skillOverview?.total_unique_skills || 0)],
@@ -63,6 +64,8 @@ export default function ControlPlaneSummaryPanel({ summary, skillOverview }: Pro
       <div className="runStudioMetaRow runStudioHeroBadges">
         {summary.supervisorEnabled && <span className="pill">supervisor active</span>}
         {summary.legacyFallback && <span className="pill">legacy fallback</span>}
+        {summary.legacyContextPacksEnabled && <span className="pill">legacy context packs active</span>}
+        {summary.legacyContextPackCount > 0 && !summary.legacyContextPacksEnabled && <span className="pill">legacy context packs fallback-only</span>}
         {summary.degradedMode && <span className="pill">degraded mode</span>}
         {summary.reviewerPresent && <span className="pill">reviewer present</span>}
         {summary.synthesizerPresent && <span className="pill">synthesizer present</span>}

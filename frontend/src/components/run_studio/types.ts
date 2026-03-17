@@ -127,6 +127,10 @@ export type RuntimeAgentWithSkills = {
   template_id?: string | null
   preset_id?: string | null
   authority_profile_id?: string | null
+  scope_id?: string | null
+  visibility_mode?: string | null
+  grant_labels?: string[]
+  scope_token_estimate?: number | null
   provider?: string | null
   model?: string | null
   runtime_status?: string | null
@@ -162,6 +166,63 @@ export type TeamViewProjection = {
   count?: number
   preset_count?: number
   synthesized_count?: number
+}
+
+export type ScopeProjection = {
+  context_runtime_mode?: string | null
+  legacy_context_pack_count?: number
+  legacy_context_packs_enabled?: boolean
+  legacy_context_strategy?: string | null
+  scope_first_ready?: boolean
+  scope_projection_note?: string | null
+  items?: Array<{
+    scope_id?: string | null
+    runtime_instance_id?: string | null
+    slot_id?: string | null
+    display_label?: string | null
+    visibility_mode?: string | null
+    context_types?: string[]
+    memory_grants?: Record<string, unknown>
+    grant_labels?: string[]
+    selection_reason?: string | null
+    context_set_id?: string | null
+    token_estimate?: number | null
+    scope_version?: number | null
+    active_node_ids?: string[]
+    active_node_count?: number | null
+    active_type_labels?: string[]
+    visibility_rationale?: string | null
+    compiler?: string | null
+    authoritative_scope?: boolean
+    empty_scope?: boolean
+    soft_budget_exceeded?: boolean
+    selection_strategy?: string | null
+    selection_summary?: string | null
+    matched_query_terms?: string[]
+    matched_context_types?: string[]
+    seed_node_count?: number | null
+    candidate_node_count?: number | null
+    positive_candidate_count?: number | null
+    rejected_positive_node_ids?: string[]
+    selection_confidence?: string | null
+    truncated?: boolean
+  }>
+  count?: number
+  grant_counts?: Record<string, number>
+  visibility_counts?: Record<string, number>
+}
+
+export type VisibilityProjection = {
+  items?: Array<{
+    edge_id?: string | null
+    from_scope_id?: string | null
+    to_scope_id?: string | null
+    from_label?: string | null
+    to_label?: string | null
+    relation?: string | null
+  }>
+  count?: number
+  relation_counts?: Record<string, number>
 }
 
 export type WhyThisTeamProjection = {
@@ -475,6 +536,8 @@ export type RunStudioSummary = {
     task_interpretation?: TaskInterpretation | null
     team_view?: TeamViewProjection
     why_this_team?: WhyThisTeamProjection
+    scope_projection?: ScopeProjection
+    visibility_projection?: VisibilityProjection
     orchestration?: OrchestrationProjection
     collaboration?: CollaborationProjection
     authority?: AuthorityProjection
@@ -522,6 +585,8 @@ export type RunStudioSummary = {
   }
   team_view?: TeamViewProjection
   why_this_team?: WhyThisTeamProjection
+  scope_projection?: ScopeProjection
+  visibility_projection?: VisibilityProjection
   orchestration?: OrchestrationProjection
   collaboration?: CollaborationProjection
   authority?: AuthorityProjection
@@ -740,4 +805,9 @@ export type ControlPlaneSummaryProjection = {
   degradedMode: boolean
   fallbackReason: string | null
   legacyFallback: boolean
+  scopeMode: string
+  scopeCount: number
+  legacyContextPackCount: number
+  legacyContextPacksEnabled: boolean
+  legacyContextStrategy: string | null
 }

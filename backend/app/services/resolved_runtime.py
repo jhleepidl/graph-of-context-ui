@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.models import Agent, Conversation, ConversationAgent
 from app.services.context_packs import extract_context_pack_summaries
 from app.services.planning_boundary import build_planning_boundary_projection
+from app.services.scope_projection import build_scope_projection, build_visibility_projection
 from app.services.runtime_authority import (
     apply_runtime_authority,
     build_runtime_authority_projection,
@@ -409,6 +410,12 @@ def build_team_view_projection(
     runtime_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     slot_by_id, slot_by_role_id = _slot_indexes(runtime_snapshot)
+    scope_specs = list((runtime_snapshot or {}).get("scope_specs") or [])
+    materialized_by_scope = {
+        str(item.get("scope_id") or "").strip(): item
+        for item in list((runtime_snapshot or {}).get("materialized_scopes") or [])
+        if str(item.get("scope_id") or "").strip()
+    }
     items: list[dict[str, Any]] = []
 
     for agent in runtime_agents:
@@ -447,11 +454,17 @@ def build_team_view_projection(
                 if str(item.get("skill_id") or "").strip()
             }
         )
+        runtime_instance_id = agent.get("runtime_instance_id") or agent.get("instance_id")
+        slot_id = agent.get("slot_id") or (slot or {}).get("slot_id") or (slot or {}).get("slotId")
+        scope_spec = next((entry for entry in scope_specs if str(entry.get("target_instance_id") or entry.get("targetInstanceId") or "").strip() == str(runtime_instance_id or "").strip()), None)
+        if scope_spec is None and slot_id:
+            scope_spec = next((entry for entry in scope_specs if str(entry.get("target_slot_id") or entry.get("targetSlotId") or "").strip() == str(slot_id).strip()), None)
+        scope_materialized = materialized_by_scope.get(str((scope_spec or {}).get("scope_id") or "").strip(), {})
         items.append(
             {
-                "runtime_instance_id": agent.get("runtime_instance_id") or agent.get("instance_id"),
+                "runtime_instance_id": runtime_instance_id,
                 "display_label": display_label,
-                "slot_id": agent.get("slot_id") or (slot or {}).get("slot_id") or (slot or {}).get("slotId"),
+                "slot_id": slot_id,
                 "slot_label": _clean_text(
                     (slot or {}).get("display_label")
                     or (slot or {}).get("displayLabel")
@@ -465,6 +478,10 @@ def build_team_view_projection(
                 "selection_reason": selection_reason,
                 "attached_skill_ids": attached_skill_ids,
                 "context_pack_id": agent.get("context_pack_id"),
+                "scope_id": (scope_spec or {}).get("scope_id") or (scope_spec or {}).get("scopeId"),
+                "visibility_mode": (scope_spec or {}).get("visibility_mode") or (scope_spec or {}).get("visibilityMode"),
+                "grant_labels": [key for key, value in dict((scope_spec or {}).get("memory_grants") or (scope_spec or {}).get("memoryGrants") or {}).items() if value is True],
+                "scope_token_estimate": (scope_materialized or {}).get("token_estimate"),
                 "runtime_status": agent.get("runtime_status"),
                 "authority_profile_id": extract_authority_profile_id(agent),
             }
@@ -962,6 +979,8 @@ class ResolvedRunCapabilities:
     task_interpretation: dict[str, Any] | None
     team_view: dict[str, Any]
     why_this_team: dict[str, Any]
+    scope_projection: dict[str, Any]
+    visibility_projection: dict[str, Any]
     orchestration: dict[str, Any]
     collaboration: dict[str, Any]
     authority_projection: dict[str, Any]
@@ -981,6 +1000,8 @@ class ResolvedRunCapabilities:
             "task_interpretation": dict(self.task_interpretation) if self.task_interpretation else None,
             "team_view": dict(self.team_view),
             "why_this_team": dict(self.why_this_team),
+            "scope_projection": dict(self.scope_projection),
+            "visibility_projection": dict(self.visibility_projection),
             "orchestration": dict(self.orchestration),
             "collaboration": dict(self.collaboration),
             "authority": dict(self.authority_projection),
@@ -1054,6 +1075,18 @@ class ResolvedRuntimeProjection:
                 "preset_count": 0,
                 "synthesized_count": 0,
             },
+            "scope_projection": {
+                "context_runtime_mode": "shared_memory",
+                "items": [],
+                "count": 0,
+                "grant_counts": {},
+                "visibility_counts": {},
+            },
+            "visibility_projection": {
+                "items": [],
+                "count": 0,
+                "relation_counts": {},
+            },
             "orchestration": {
                 "mode": "runtime_managed",
                 "parallel_groups": [],
@@ -1092,6 +1125,8 @@ class ResolvedRuntimeProjection:
                 "context_packs": 0,
                 "skill_usage": 0,
                 "team_view": 0,
+                "scope_projection": 0,
+                "visibility_projection": 0,
                 "collaboration": 0,
                 "authority": 0,
                 "checkpoints": 0,
@@ -1417,8 +1452,15 @@ def resolve_run_capabilities(
     context_packs = extract_context_pack_summaries(scoped_nodes)
     usage_events = extract_skill_usage_events(scoped_nodes, skill_lookup=registry)
     attached_skill_summaries = aggregate_attached_skills(runtime_agents)
+    if list(runtime_snapshot.get("scope_specs") or []) and not list(runtime_snapshot.get("materialized_scopes") or []):
+        runtime_snapshot = {
+            **runtime_snapshot,
+            "scope_projection_note": "materialized scopes missing; projection shows plan-time scope specs only",
+        }
     team_view = build_team_view_projection(runtime_agents=runtime_agents, runtime_snapshot=runtime_snapshot)
     why_this_team = build_why_this_team_projection(team_view=team_view, runtime_snapshot=runtime_snapshot)
+    scope_projection = build_scope_projection(runtime_snapshot, team_view=team_view)
+    visibility_projection = build_visibility_projection(runtime_snapshot, scope_projection=scope_projection)
     orchestration = build_orchestration_projection(runtime_snapshot, team_view=team_view)
     collaboration = build_collaboration_projection(runtime_snapshot=runtime_snapshot, team_view=team_view)
     authority_projection = build_runtime_authority_projection(
@@ -1467,6 +1509,8 @@ def resolve_run_capabilities(
         task_interpretation=runtime_snapshot.get("task_interpretation"),
         team_view=team_view,
         why_this_team=why_this_team,
+        scope_projection=scope_projection,
+        visibility_projection=visibility_projection,
         orchestration=orchestration,
         collaboration=collaboration,
         authority_projection=authority_projection,
@@ -1478,6 +1522,8 @@ def resolve_run_capabilities(
             "context_packs": len(context_packs),
             "skill_usage": len(usage_events),
             "team_view": int(team_view.get("count") or 0),
+            "scope_projection": int(scope_projection.get("count") or 0),
+            "visibility_projection": int(visibility_projection.get("count") or 0),
             "collaboration": int(collaboration.get("count") or 0),
             "authority": int(authority_projection.get("count") or 0),
             "checkpoints": int((checkpoints_projection.get("counts") or {}).get("total") or 0),

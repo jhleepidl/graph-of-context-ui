@@ -63,10 +63,15 @@ export default function NowPanel({
   const skillSource = controlPlaneSummary?.skillSource || String(
     authority?.skill_catalog_source || state?.skill_catalog_source || summary?.skill_catalog_source || 'local',
   )
+  const scopeProjection = summary?.current_run_skills?.scope_projection || summary?.scope_projection
   const legacyTeamItems = team?.items || []
   const runtimeTeamCount = controlPlaneSummary?.runtimeAgentCount ?? teamView?.count ?? legacyTeamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
   const collaborationCount = controlPlaneSummary?.collaborationCount ?? collaboration?.count ?? collaboration?.items?.length ?? 0
   const checkpointCount = controlPlaneSummary?.checkpointCount ?? Number(checkpoints?.counts?.total || checkpoints?.items?.length || 0)
+  const scopeMode = String(controlPlaneSummary?.scopeMode || scopeProjection?.context_runtime_mode || "shared_memory")
+  const scopeCount = Number(controlPlaneSummary?.scopeCount || scopeProjection?.count || 0)
+  const legacyContextPackCount = Number(controlPlaneSummary?.legacyContextPackCount || scopeProjection?.legacy_context_pack_count || 0)
+  const legacyContextPacksEnabled = Boolean(controlPlaneSummary?.legacyContextPacksEnabled || scopeProjection?.legacy_context_packs_enabled)
   const supervisorEnabled = controlPlaneSummary?.supervisorEnabled ?? Boolean(
     orchestration?.supervisor_enabled ||
     orchestration?.supervisor_mode ||
@@ -153,6 +158,10 @@ export default function NowPanel({
         <span className="pill">team: {teamSource}</span>
         <span className="pill">skills: {skillSource}</span>
         <span className="pill">runtime agents: {runtimeTeamCount}</span>
+        <span className="pill">scope mode: {scopeMode}</span>
+        <span className="pill">scopes: {scopeCount}</span>
+        {legacyContextPackCount > 0 && <span className="pill">legacy packs: {legacyContextPackCount}</span>}
+        {legacyContextPacksEnabled && <span className="pill">legacy packs active</span>}
         <span className="pill">collaboration: {collaborationCount}</span>
         <span className="pill">checkpoints: {checkpointCount}</span>
         {orchestration?.parallel_group_count ? (

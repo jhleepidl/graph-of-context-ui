@@ -141,11 +141,27 @@ export default function AgentTeamPanel({
                       {!item.preset_id && item.synthesized && <span className="pill">synthesized</span>}
                       {item.slot_label && <span className="pill">slot: {item.slot_label}</span>}
                       {!item.slot_label && item.slot_id && <span className="pill">slot: {item.slot_id}</span>}
+                      {item.scope_id && <span className="pill">scope: {item.scope_id}</span>}
+                      {item.visibility_mode && <span className="pill">{item.visibility_mode}</span>}
                     </div>
                     <div className="muted">role: {item.role_label || item.role_id || '-'}</div>
                     {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
                     {item.authority_profile_id && <div className="muted">authority: {item.authority_profile_id}</div>}
                     {(item.provider || item.model) && <div className="muted">model: {item.provider || '-'} / {item.model || '-'}</div>}
+                    {typeof item.scope_token_estimate === "number" && <div className="muted">scope budget est: {item.scope_token_estimate}</div>}
+
+                    {(item.grant_labels || []).length > 0 && (
+                      <div className="runStudioAgentSkillSection">
+                        <div className="runStudioAgentSkillSectionLabel">Granted memory</div>
+                        <div className="runStudioMetaRow">
+                          {(item.grant_labels || []).map((grant) => (
+                            <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:grant:${grant}`} className="pill">
+                              {grant}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {highlightSkills.length > 0 && (
                       <div className="runStudioAgentSkillSection">

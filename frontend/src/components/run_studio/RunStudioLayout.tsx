@@ -2,6 +2,9 @@ import React from 'react'
 import ControlPlaneSummaryPanel from './ControlPlaneSummaryPanel'
 import LegacyFallbackNoticePanel from './LegacyFallbackNoticePanel'
 import ExecutionMapPanel from './ExecutionMapPanel'
+import ScopeMapPanel from './ScopeMapPanel'
+import VisibilityPanel from './VisibilityPanel'
+import ScopeGrantPanel from './ScopeGrantPanel'
 import NowPanel from './NowPanel'
 import AgentTeamPanel from './AgentTeamPanel'
 import WhyThisTeamPanel from './WhyThisTeamPanel'
@@ -106,7 +109,10 @@ export default function RunStudioLayout({
   const teamView = selectEffectiveTeamView(summary, team)
   const whyThisTeam = selectEffectiveWhyThisTeam(summary, team)
   const orchestration = selectEffectiveOrchestration(summary, teamView)
+  const scopeProjection = summary?.current_run_skills?.scope_projection || summary?.scope_projection || null
+  const visibilityProjection = summary?.current_run_skills?.visibility_projection || summary?.visibility_projection || null
   const collaboration = selectEffectiveCollaboration(summary)
+  const showLegacyContextPacks = Boolean(scopeProjection?.legacy_context_packs_enabled || (scopeProjection?.legacy_context_pack_count || 0) > 0)
   const authorityProjection = selectEffectiveAuthority(summary, team)
   const checkpoints = selectEffectiveCheckpoints(summary)
   const controlPlaneSummary = selectControlPlaneSummary(summary, team)
@@ -159,6 +165,11 @@ export default function RunStudioLayout({
         checkpoints={checkpoints}
       />
 
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <ScopeMapPanel scopeProjection={scopeProjection} />
+        <VisibilityPanel visibilityProjection={visibilityProjection} />
+      </div>
+
       <div className="runStudioGrid runStudioGrid--top">
         {teamView || effectiveTeam ? (
           <AgentTeamPanel
@@ -186,6 +197,7 @@ export default function RunStudioLayout({
       <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
 
       <div className="runStudioGrid runStudioGrid--bottom">
+        <ScopeGrantPanel scopeProjection={scopeProjection} />
         <NowPanel
           summary={summary}
           team={effectiveTeam}
@@ -195,6 +207,9 @@ export default function RunStudioLayout({
           checkpoints={checkpoints}
           controlPlaneSummary={controlPlaneSummary}
         />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
         <OrchestrationPanel orchestration={orchestration} checkpoints={checkpoints} teamView={teamView} />
       </div>
 
@@ -205,13 +220,22 @@ export default function RunStudioLayout({
 
       <div className="runStudioGrid runStudioGrid--bottom">
         <AuthorityPanel authority={authorityProjection} runtimeAuthority={runtimeAuthority} />
-        <ContextPackPanel
-          contextPacks={contextPacks}
-          summary={summary}
-          onLoadDetail={onLoadContextPacks}
-          detailLoading={Boolean(detailLoading?.contextPacks)}
-          detailLoaded={Boolean(detailLoaded?.contextPacks)}
-        />
+        {showLegacyContextPacks ? (
+          <ContextPackPanel
+            contextPacks={contextPacks}
+            summary={summary}
+            onLoadDetail={onLoadContextPacks}
+            detailLoading={Boolean(detailLoading?.contextPacks)}
+            detailLoaded={Boolean(detailLoaded?.contextPacks)}
+          />
+        ) : (
+          <section className="card runStudioPanel">
+            <div className="runStudioPanelHeader">
+              <h3>Legacy Context Packs</h3>
+            </div>
+            <div className="muted">Scope-first runtime is active. Legacy context pack projection is not part of the main execution path.</div>
+          </section>
+        )}
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">

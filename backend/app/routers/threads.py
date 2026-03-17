@@ -33,6 +33,8 @@ from app.services.run_studio import (
     build_run_studio_skill_usage,
     build_run_studio_summary,
 )
+from app.services.scope_materializer import materialize_runtime_scopes
+from app.services.scope_registry import get_scope_spec
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -239,6 +241,8 @@ _CONTEXT_SET_HINT_KEYS = (
     "context_set_id",
     "lens_context_set_id",
     "lens_ctx_set_id",
+    "scope_context_set_id",
+    "scope_ctx_set_id",
     "step_context_set_id",
     "agent_context_set_id",
 )
@@ -332,6 +336,28 @@ def _pick_lens_added_count(payload: dict[str, Any]) -> int:
     return 0
 
 
+
+
+def _pick_scope_hint(payload: dict[str, Any]) -> dict[str, Any] | None:
+    raw = payload.get("scope_hint")
+    if isinstance(raw, dict):
+        return raw
+    raw = payload.get("scope")
+    if isinstance(raw, dict):
+        return raw
+    return _pick_lens_spec(payload)
+
+
+def _pick_scope_added_count(payload: dict[str, Any]) -> int:
+    for key in ("scope_added_ids_count", "scope_added_count"):
+        value = payload.get(key)
+        if isinstance(value, (int, float)):
+            return max(0, int(value))
+    raw_ids = payload.get("scope_added_ids")
+    if isinstance(raw_ids, list):
+        return len(raw_ids)
+    return _pick_lens_added_count(payload)
+
 def _safe_file_component(value: str) -> str:
     clean = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in (value or "").strip())
     return clean or "unknown"
@@ -391,13 +417,13 @@ def _build_run_summaries(
 
         step_items: list[dict[str, Any]] = []
         run_context_set_ids: set[str] = set()
-        lens_added_total = 0
+        scope_added_total = 0
         for step in step_nodes:
             payload = _node_payload(step)
             context_set_ids = sorted(_collect_context_set_ids(payload))
             run_context_set_ids.update(context_set_ids)
-            lens_added = _pick_lens_added_count(payload)
-            lens_added_total += lens_added
+            scope_added = _pick_scope_added_count(payload)
+            scope_added_total += scope_added
             step_items.append({
                 "id": step.id,
                 "created_at": step.created_at,
@@ -412,13 +438,19 @@ def _build_run_summaries(
                     payload,
                     ["shared_context_set_id", "shared_ctx_set_id", "base_context_set_id", "context_set_id"],
                 ),
+                "scope_context_set_id": _pick_context_set_id(
+                    payload,
+                    ["scope_context_set_id", "scope_ctx_set_id", "lens_context_set_id", "lens_ctx_set_id", "step_context_set_id", "agent_context_set_id"],
+                ),
                 "lens_context_set_id": _pick_context_set_id(
                     payload,
                     ["lens_context_set_id", "lens_ctx_set_id", "step_context_set_id", "agent_context_set_id"],
                 ),
                 "context_set_ids": context_set_ids,
+                "scope_hint": _pick_scope_hint(payload),
                 "lens_spec": _pick_lens_spec(payload),
-                "lens_added_ids_count": lens_added,
+                "scope_added_ids_count": scope_added,
+                "lens_added_ids_count": scope_added,
                 "payload": payload,
             })
 
@@ -429,7 +461,8 @@ def _build_run_summaries(
             "step_count": len(step_items),
             "step_ids": [s["id"] for s in step_items],
             "context_set_ids": sorted(run_context_set_ids),
-            "lens_added_ids_total": lens_added_total,
+            "scope_added_ids_total": scope_added_total,
+            "lens_added_ids_total": scope_added_total,
             "steps": step_items,
         }
 
@@ -664,6 +697,37 @@ def get_run_studio_skill_usage(
             run_id=(run_id or "").strip() or None,
         )
         return {"ok": True, **summary}
+
+
+@router.post("/{thread_id}/scope_materialize")
+def post_scope_materialize(
+    thread_id: str,
+    body: dict[str, Any] | None = None,
+):
+    with Session(engine) as s:
+        require_thread_access(s, thread_id)
+        payload = body if isinstance(body, dict) else {}
+        runtime_snapshot = payload.get("runtime_snapshot") if isinstance(payload.get("runtime_snapshot"), dict) else payload
+        requested_scope_id = str(payload.get("scope_id") or payload.get("scopeId") or "").strip()
+        if requested_scope_id and not get_scope_spec(runtime_snapshot, requested_scope_id):
+            raise HTTPException(404, "scope_id not found in runtime snapshot")
+        materialized_scopes = materialize_runtime_scopes(
+            s,
+            thread_id=thread_id,
+            runtime_snapshot=runtime_snapshot,
+            scope_id=requested_scope_id or None,
+        )
+        if requested_scope_id:
+            materialized_scopes = [
+                item for item in materialized_scopes
+                if str(item.get("scope_id") or item.get("scopeId") or "").strip() == requested_scope_id
+            ]
+        return {
+            "ok": True,
+            "thread_id": thread_id,
+            "materialized_scopes": materialized_scopes,
+            "count": len(materialized_scopes),
+        }
 
 
 @router.get("/{thread_id}/skill_usage")

@@ -534,6 +534,8 @@ def build_run_studio_summary(
     team_view = dict(run_skill_summary.get("team_view") or {})
     why_this_team = dict(run_skill_summary.get("why_this_team") or {})
     orchestration = dict(run_skill_summary.get("orchestration") or {})
+    scope_projection = dict(run_skill_summary.get("scope_projection") or {})
+    visibility_projection = dict(run_skill_summary.get("visibility_projection") or {})
     collaboration = dict(run_skill_summary.get("collaboration") or {})
     authority_projection = dict(run_skill_summary.get("authority") or {})
     checkpoints = dict(run_skill_summary.get("checkpoints") or {})
@@ -559,6 +561,8 @@ def build_run_studio_summary(
         "team_view": team_view,
         "why_this_team": why_this_team,
         "orchestration": orchestration,
+        "scope_projection": scope_projection,
+        "visibility_projection": visibility_projection,
         "collaboration": collaboration,
         "authority": authority_projection,
         "checkpoints": checkpoints,

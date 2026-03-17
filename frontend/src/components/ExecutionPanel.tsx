@@ -215,21 +215,25 @@ function pickContextSetId(payload: Record<string, any>, keys: string[]): string 
   return null
 }
 
-function pickLensSpec(payload: Record<string, any>): Record<string, any> | null {
-  const raw = payload.lens_spec
+function pickScopeHint(payload: Record<string, any>): Record<string, any> | null {
+  const raw = payload.scope_hint || payload.scope || payload.lens_spec
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     return raw as Record<string, any>
   }
   const fallback: Record<string, any> = {}
-  if (payload.lens_mode != null) fallback.mode = payload.lens_mode
-  if (payload.lens_query != null) fallback.query = payload.lens_query
-  if (payload.lens_budget_tokens != null) fallback.budget_tokens = payload.lens_budget_tokens
+  if (payload.scope_mode != null || payload.lens_mode != null) fallback.mode = payload.scope_mode ?? payload.lens_mode
+  if (payload.scope_query != null || payload.lens_query != null) fallback.query = payload.scope_query ?? payload.lens_query
+  if (payload.scope_budget_tokens != null || payload.lens_budget_tokens != null) fallback.budget_tokens = payload.scope_budget_tokens ?? payload.lens_budget_tokens
+  if (payload.scope_budget != null && fallback.budget_tokens == null) fallback.budget_tokens = payload.scope_budget
   if (payload.lens_budget != null && fallback.budget_tokens == null) fallback.budget_tokens = payload.lens_budget
-  if (payload.lens_closure != null) fallback.closure = payload.lens_closure
+  if (payload.scope_closure != null || payload.lens_closure != null) fallback.closure = payload.scope_closure ?? payload.lens_closure
   return Object.keys(fallback).length > 0 ? fallback : null
 }
 
-function pickLensAddedCount(payload: Record<string, any>): number {
+function pickScopeAddedCount(payload: Record<string, any>): number {
+  if (typeof payload.scope_added_ids_count === 'number' && Number.isFinite(payload.scope_added_ids_count)) {
+    return Math.max(0, Math.round(payload.scope_added_ids_count))
+  }
   if (typeof payload.lens_added_ids_count === 'number' && Number.isFinite(payload.lens_added_ids_count)) {
     return Math.max(0, Math.round(payload.lens_added_ids_count))
   }
@@ -485,11 +489,14 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
   const sharedContextSetId = selectedIsStep
     ? pickContextSetId(selectedPayload, ['shared_context_set_id', 'shared_ctx_set_id', 'base_context_set_id', 'context_set_id'])
     : null
+  const scopeContextSetId = selectedIsStep
+    ? pickContextSetId(selectedPayload, ['scope_context_set_id', 'scope_ctx_set_id', 'lens_context_set_id', 'lens_ctx_set_id', 'step_context_set_id', 'agent_context_set_id'])
+    : null
   const lensContextSetId = selectedIsStep
     ? pickContextSetId(selectedPayload, ['lens_context_set_id', 'lens_ctx_set_id', 'step_context_set_id', 'agent_context_set_id'])
     : null
-  const lensSpec = selectedIsStep ? pickLensSpec(selectedPayload) : null
-  const lensAddedIdsCount = selectedIsStep ? pickLensAddedCount(selectedPayload) : 0
+  const scopeHint = selectedIsStep ? pickScopeHint(selectedPayload) : null
+  const scopeAddedIdsCount = selectedIsStep ? pickScopeAddedCount(selectedPayload) : 0
   const selectedRunId = useMemo(() => {
     if (!selectedNode) return ''
     if (selectedNode.type === 'Run') {
@@ -664,22 +671,22 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
 
     ;(async () => {
       try {
-        const [shared, lens] = await Promise.all([api.ctx(sharedId), api.ctx(lensId)])
+        const [shared, scoped] = await Promise.all([api.ctx(sharedId), api.ctx(lensId)])
         if (cancelled) return
 
         const sharedIds = orderedUniqueIds(shared?.active_node_ids)
-        const lensIds = orderedUniqueIds(lens?.active_node_ids)
+        const scopeIds = orderedUniqueIds(scoped?.active_node_ids)
         const sharedSet = new Set(sharedIds)
-        const lensSet = new Set(lensIds)
+        const scopeSet = new Set(scopeIds)
         setSharedLensDiff({
           sharedContextSetId: sharedId,
           lensContextSetId: lensId,
           loading: false,
           error: '',
           sharedActiveIds: sharedIds,
-          lensActiveIds: lensIds,
-          addedIds: lensIds.filter((id) => !sharedSet.has(id)),
-          removedIds: sharedIds.filter((id) => !lensSet.has(id)),
+          lensActiveIds: scopeIds,
+          addedIds: scopeIds.filter((id) => !sharedSet.has(id)),
+          removedIds: sharedIds.filter((id) => !scopeSet.has(id)),
           compiledDiff: null,
         })
       } catch (e: any) {
@@ -1017,10 +1024,10 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
               {selectedNode.type === 'Step' && (
                 <div className="executionInspectorBlock">
                   <div><b>shared_context_set_id</b> {sharedContextSetId || '-'}</div>
-                  <div><b>lens_context_set_id</b> {lensContextSetId || '-'}</div>
-                  <div><b>lens_added_ids_count</b> {lensAddedIdsCount}</div>
-                  <div><b>lens_spec</b></div>
-                  <pre>{lensSpec ? JSON.stringify(lensSpec, null, 2) : '-'}</pre>
+                  <div><b>scope_context_set_id</b> {scopeContextSetId || lensContextSetId || '-'}</div>
+                  <div><b>scope_added_ids_count</b> {scopeAddedIdsCount}</div>
+                  <div><b>scope_hint</b></div>
+                  <pre>{scopeHint ? JSON.stringify(scopeHint, null, 2) : '-'}</pre>
                   <div className="executionInspectorActions" style={{ marginTop: 6, marginBottom: 0 }}>
                     <button
                       onClick={() => sharedContextSetId && openCompiledPreview(sharedContextSetId, 'Shared Compiled')}
@@ -1029,17 +1036,17 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
                       Open shared compiled
                     </button>
                     <button
-                      onClick={() => lensContextSetId && openCompiledPreview(lensContextSetId, 'Lens Compiled')}
-                      disabled={!lensContextSetId}
+                      onClick={() => (scopeContextSetId || lensContextSetId) && openCompiledPreview((scopeContextSetId || lensContextSetId) as string, 'Scope Compiled')}
+                      disabled={!(scopeContextSetId || lensContextSetId)}
                     >
-                      Open lens compiled
+                      Open scope compiled
                     </button>
                   </div>
 
-                  {sharedContextSetId && lensContextSetId && (
+                  {sharedContextSetId && (scopeContextSetId || lensContextSetId) && (
                     <div className="executionSharedLensDiffBlock">
-                      <div><b>shared vs lens active diff</b></div>
-                      {sharedLensDiff?.loading && <div className="muted">Loading shared/lens active IDs...</div>}
+                      <div><b>shared vs scope active diff</b></div>
+                      {sharedLensDiff?.loading && <div className="muted">Loading shared/scope active IDs...</div>}
                       {!sharedLensDiff?.loading && sharedLensDiff?.error && (
                         <div className="muted" style={{ color: '#b91c1c' }}>{sharedLensDiff.error}</div>
                       )}
@@ -1047,7 +1054,7 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
                         <>
                           <div className="executionSharedLensSummary">
                             <span className="pill">shared {sharedLensDiff.sharedActiveIds.length}</span>
-                            <span className="pill">lens {sharedLensDiff.lensActiveIds.length}</span>
+                            <span className="pill">scope {sharedLensDiff.lensActiveIds.length}</span>
                             <span className="pill">added {sharedLensDiff.addedIds.length}</span>
                             <span className="pill">removed {sharedLensDiff.removedIds.length}</span>
                           </div>
@@ -1133,11 +1140,11 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
               <button onClick={() => setShowSharedLensIdsModal(false)}>Close</button>
             </div>
             <div className="muted" style={{ marginBottom: 8 }}>
-              shared: {sharedLensDiff.sharedContextSetId} | lens: {sharedLensDiff.lensContextSetId}
+              shared: {sharedLensDiff.sharedContextSetId} | scope: {sharedLensDiff.lensContextSetId}
             </div>
             <div className="executionSharedLensIdGrid">
               <div className="executionSharedLensIdCol">
-                <div><b>Added in lens ({sharedLensDiff.addedIds.length})</b></div>
+                <div><b>Added in scope ({sharedLensDiff.addedIds.length})</b></div>
                 <pre>{sharedLensDiff.addedIds.join('\n') || '(none)'}</pre>
               </div>
               <div className="executionSharedLensIdCol">

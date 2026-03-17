@@ -248,7 +248,7 @@ def clone_context_set(base_context_set_id: str, body: CloneContextSetRequest | N
         require_thread_write_access(s, base.thread_id)
 
         base_active_ids = jload(base.active_node_ids_json, [])
-        clone_name = (req.name or "").strip() or f"{base.name}-lens"
+        clone_name = (req.name or "").strip() or f"{base.name}-scope"
 
         clone = ContextSet(
             thread_id=base.thread_id,

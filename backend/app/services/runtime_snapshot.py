@@ -53,6 +53,10 @@ AUTHORITY_GRAPH_KEYS = ("authority_graph", "authorityGraph")
 CHECKPOINT_KEYS = ("checkpoints",)
 EXECUTION_GRAPH_KEYS = ("execution_graph", "executionGraph")
 SELECTION_EXPLANATION_KEYS = ("selection_explanations", "selectionExplanations")
+SCOPE_SPEC_KEYS = ("scope_specs", "scopeSpecs")
+MATERIALIZED_SCOPE_KEYS = ("materialized_scopes", "materializedScopes")
+VISIBILITY_GRAPH_KEYS = ("visibility_graph", "visibilityGraph")
+CONTEXT_RUNTIME_MODE_KEYS = ("context_runtime_mode", "contextRuntimeMode")
 CONVERSATION_PREFERENCE_KEYS = ("conversation_preferences", "conversationPreferences")
 TEAM_PLAN_V2_HINT_KEYS = (
     *TASK_INTERPRETATION_KEYS,
@@ -61,6 +65,10 @@ TEAM_PLAN_V2_HINT_KEYS = (
     *CHECKPOINT_KEYS,
     *EXECUTION_GRAPH_KEYS,
     *SELECTION_EXPLANATION_KEYS,
+    *SCOPE_SPEC_KEYS,
+    *MATERIALIZED_SCOPE_KEYS,
+    *VISIBILITY_GRAPH_KEYS,
+    *CONTEXT_RUNTIME_MODE_KEYS,
     *CONVERSATION_PREFERENCE_KEYS,
     "slots",
     "supervisor_runtime",
@@ -724,9 +732,36 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
             max_items=32,
         )
         supervisor_runtime = normalize_supervisor_runtime(team_plan.get("supervisor_runtime") or team_plan.get("supervisorRuntime"))
+        normalized_scope_specs = normalize_record_list(
+            first_present(team_plan, SCOPE_SPEC_KEYS),
+            id_field="scope_id",
+            hint_keys=("scope_id", "scopeId", "target_slot_id", "targetSlotId", "target_instance_id", "targetInstanceId", "role_id", "roleId", "visibility_mode", "visibilityMode"),
+            max_items=48,
+        )
+        normalized_materialized_scopes = normalize_record_list(
+            first_present(team_plan, MATERIALIZED_SCOPE_KEYS),
+            id_field="scope_id",
+            hint_keys=("scope_id", "scopeId", "context_set_id", "contextSetId", "token_estimate", "scope_version", "scopeVersion"),
+            max_items=48,
+        )
+        normalized_visibility_graph = normalize_record_list(
+            first_present(team_plan, VISIBILITY_GRAPH_KEYS),
+            id_field="edge_id",
+            hint_keys=("from_scope_id", "fromScopeId", "to_scope_id", "toScopeId", "relation"),
+            max_items=64,
+        )
+        context_runtime_mode = clean_text(first_present(team_plan, CONTEXT_RUNTIME_MODE_KEYS))
         normalized_team_plan = dict(team_plan)
         normalized_team_plan["slots"] = normalized_slots
         normalized_team_plan["supervisor_runtime"] = supervisor_runtime
+        if normalized_scope_specs:
+            normalized_team_plan["scope_specs"] = normalized_scope_specs
+        if normalized_materialized_scopes:
+            normalized_team_plan["materialized_scopes"] = normalized_materialized_scopes
+        if normalized_visibility_graph:
+            normalized_team_plan["visibility_graph"] = normalized_visibility_graph
+        if context_runtime_mode:
+            normalized_team_plan["context_runtime_mode"] = context_runtime_mode
         out["team_plan"] = normalized_team_plan
 
     collaboration_cells = normalize_collaboration_cells(
@@ -771,6 +806,47 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
     )
     if selection_explanations:
         out["selection_explanations"] = selection_explanations
+
+    scope_specs = normalize_record_list(
+        first_present(raw, SCOPE_SPEC_KEYS)
+        or ((out.get("team_plan") or {}).get("scope_specs"))
+        or ((out.get("team_plan") or {}).get("scopeSpecs")),
+        id_field="scope_id",
+        hint_keys=("scope_id", "scopeId", "target_slot_id", "targetSlotId", "target_instance_id", "targetInstanceId", "role_id", "roleId", "visibility_mode", "visibilityMode"),
+        max_items=48,
+    )
+    if scope_specs:
+        out["scope_specs"] = scope_specs
+
+    materialized_scopes = normalize_record_list(
+        first_present(raw, MATERIALIZED_SCOPE_KEYS)
+        or ((out.get("team_plan") or {}).get("materialized_scopes"))
+        or ((out.get("team_plan") or {}).get("materializedScopes")),
+        id_field="scope_id",
+        hint_keys=("scope_id", "scopeId", "context_set_id", "contextSetId", "token_estimate", "scope_version", "scopeVersion"),
+        max_items=48,
+    )
+    if materialized_scopes:
+        out["materialized_scopes"] = materialized_scopes
+
+    visibility_graph = normalize_record_list(
+        first_present(raw, VISIBILITY_GRAPH_KEYS)
+        or ((out.get("team_plan") or {}).get("visibility_graph"))
+        or ((out.get("team_plan") or {}).get("visibilityGraph")),
+        id_field="edge_id",
+        hint_keys=("from_scope_id", "fromScopeId", "to_scope_id", "toScopeId", "relation"),
+        max_items=64,
+    )
+    if visibility_graph:
+        out["visibility_graph"] = visibility_graph
+
+    context_runtime_mode = clean_text(
+        first_present(raw, CONTEXT_RUNTIME_MODE_KEYS)
+        or ((out.get("team_plan") or {}).get("context_runtime_mode"))
+        or ((out.get("team_plan") or {}).get("contextRuntimeMode"))
+    )
+    if context_runtime_mode:
+        out["context_runtime_mode"] = context_runtime_mode
 
     conversation_preferences = normalize_mapping(first_present(raw, CONVERSATION_PREFERENCE_KEYS))
     if conversation_preferences:

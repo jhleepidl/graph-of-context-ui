@@ -871,6 +871,12 @@ export function selectControlPlaneSummary(
     orchestration?.supervisor_runtime?.instance_id,
   )
   const legacyFallback = !summary?.team_view && !currentRunSkills(summary)?.team_view
+  const scopeProjection = currentRunSkills(summary)?.scope_projection || summary?.scope_projection || null
+  const scopeMode = cleanText(scopeProjection?.context_runtime_mode) || 'shared_memory'
+  const scopeCount = Number(scopeProjection?.count || 0)
+  const legacyContextPackCount = Number(scopeProjection?.legacy_context_pack_count || 0)
+  const legacyContextPacksEnabled = Boolean(scopeProjection?.legacy_context_packs_enabled)
+  const legacyContextStrategy = cleanText(scopeProjection?.legacy_context_strategy) || null
 
   return {
     mode,
@@ -891,6 +897,11 @@ export function selectControlPlaneSummary(
     degradedMode,
     fallbackReason,
     legacyFallback,
+    scopeMode,
+    scopeCount,
+    legacyContextPackCount,
+    legacyContextPacksEnabled,
+    legacyContextStrategy,
   }
 }
 
