@@ -146,6 +146,21 @@ export type RuntimeAgentWithSkills = {
   selection_reason?: string | null
   synthesized?: boolean
   enabled?: boolean
+  configured_only?: boolean
+  config_state?: string | null
+  team_name?: string | null
+  composition_mode?: string | null
+  proposal_mode?: string | null
+  purpose?: string | null
+  context_policy?: Record<string, unknown> | null
+  context_policy_summary?: string | null
+  context_types?: string[]
+  publish_targets?: string[]
+  query_template?: string | null
+  shortcut_eligible?: boolean | null
+  shortcut_max_recent_turns?: number | null
+  only_for_followups?: boolean
+  interaction_contract?: Record<string, unknown> | null
 }
 
 export type RuntimeAgentInstanceV2 = RuntimeAgentWithSkills & {
@@ -637,6 +652,8 @@ export type RunStudioAgentTeam = {
     attached_skills?: AttachedSkillSummary[]
     context_pack_id?: string | null
   }>
+  configured_items?: RuntimeAgentInstanceV2[]
+  configured_scope_items?: NonNullable<ScopeProjection['items']>
   skill_packages?: SkillPackage[]
   active_count?: number
   updated_at?: string | null

@@ -1391,3 +1391,66 @@ button.tiny.isActive {
     grid-template-columns: 1fr;
   }
 }
+
+.runStudioGrantEditorGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.runStudioGrantEditorCard {
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, rgba(248, 251, 255, 0.98), rgba(255,255,255,0.98));
+}
+
+.runStudioGrantCheckboxGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px 10px;
+}
+
+.runStudioGrantCheckboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.runStudioGrantFormGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.runStudioFieldLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e3a8a;
+}
+
+.runStudioFieldLabel input,
+.runStudioFieldLabel select,
+.runStudioFieldLabel textarea {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font: inherit;
+  color: #0f172a;
+  background: #fff;
+}
+
+.runStudioFieldLabel textarea {
+  resize: vertical;
+}
+
+@media (max-width: 900px) {
+  .runStudioGrantFormGrid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -33,6 +33,7 @@ import {
   selectEffectiveCheckpoints,
   selectEffectiveCollaboration,
   selectEffectiveOrchestration,
+  selectEffectiveScopeProjection,
   selectEffectiveTeamView,
   selectEffectiveWhyThisTeam,
   selectControlPlaneSummary,
@@ -109,7 +110,7 @@ export default function RunStudioLayout({
   const teamView = selectEffectiveTeamView(summary, team)
   const whyThisTeam = selectEffectiveWhyThisTeam(summary, team)
   const orchestration = selectEffectiveOrchestration(summary, teamView)
-  const scopeProjection = summary?.current_run_skills?.scope_projection || summary?.scope_projection || null
+  const scopeProjection = selectEffectiveScopeProjection(summary, effectiveTeam)
   const visibilityProjection = summary?.current_run_skills?.visibility_projection || summary?.visibility_projection || null
   const collaboration = selectEffectiveCollaboration(summary)
   const showLegacyContextPacks = Boolean(scopeProjection?.legacy_context_packs_enabled || (scopeProjection?.legacy_context_pack_count || 0) > 0)
@@ -197,7 +198,12 @@ export default function RunStudioLayout({
       <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
 
       <div className="runStudioGrid runStudioGrid--bottom">
-        <ScopeGrantPanel scopeProjection={scopeProjection} />
+        <ScopeGrantPanel
+          scopeProjection={scopeProjection}
+          legacyTeam={effectiveTeam}
+          threadId={summary?.thread?.id || null}
+          onSaved={onRefresh}
+        />
         <NowPanel
           summary={summary}
           team={effectiveTeam}

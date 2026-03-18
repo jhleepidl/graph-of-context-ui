@@ -11,6 +11,7 @@ import {
   type RunStudioSummary,
   type RuntimeAgentInstanceV2,
   type RuntimeAgentWithSkills,
+  type ScopeProjection,
   type StructuredRuntimeValue,
   type TeamViewProjection,
   type WhyThisTeamProjection,
@@ -271,6 +272,22 @@ function normalizeRuntimeAgent(agent: Partial<RuntimeAgentInstanceV2>): RuntimeA
     attached_skills: attachedSkills,
     attached_skill_ids: attachedSkillIds,
     enabled: agent.enabled ?? true,
+    configured_only: asBoolean((agent as RuntimeAgentWithSkills).configured_only),
+    config_state: cleanText((agent as RuntimeAgentWithSkills).config_state),
+    team_name: cleanText((agent as RuntimeAgentWithSkills).team_name),
+    composition_mode: cleanText((agent as RuntimeAgentWithSkills).composition_mode),
+    proposal_mode: cleanText((agent as RuntimeAgentWithSkills).proposal_mode),
+    purpose: cleanText((agent as RuntimeAgentWithSkills).purpose),
+    context_policy: (normalizeStructuredValue((agent as RuntimeAgentWithSkills).context_policy) as Record<string, unknown> | null) || null,
+    context_policy_summary: cleanText((agent as RuntimeAgentWithSkills).context_policy_summary),
+    context_types: stringList((agent as RuntimeAgentWithSkills).context_types || []),
+    publish_targets: stringList((agent as RuntimeAgentWithSkills).publish_targets || []),
+    query_template: cleanText((agent as RuntimeAgentWithSkills).query_template),
+    grant_labels: uniqueStrings((agent as RuntimeAgentWithSkills).grant_labels || []),
+    shortcut_eligible: (agent as RuntimeAgentWithSkills).shortcut_eligible == null ? null : asBoolean((agent as RuntimeAgentWithSkills).shortcut_eligible),
+    shortcut_max_recent_turns: (agent as RuntimeAgentWithSkills).shortcut_max_recent_turns == null ? null : asNumber((agent as RuntimeAgentWithSkills).shortcut_max_recent_turns),
+    only_for_followups: asBoolean((agent as RuntimeAgentWithSkills).only_for_followups),
+    interaction_contract: (normalizeStructuredValue((agent as RuntimeAgentWithSkills).interaction_contract) as Record<string, unknown> | null) || null,
   }
 }
 
@@ -285,6 +302,14 @@ function fromLegacyTeamItem(item: NonNullable<RunStudioAgentTeam['items']>[numbe
 function fromLegacyRuntimeAgent(item: RuntimeAgentWithSkills): RuntimeAgentInstanceV2 {
   return normalizeRuntimeAgent({
     ...item,
+    display_label: item.display_label || item.name || item.role_label || item.agent_id,
+  })
+}
+
+function fromConfiguredTeamItem(item: RuntimeAgentWithSkills): RuntimeAgentInstanceV2 {
+  return normalizeRuntimeAgent({
+    ...item,
+    synthesized: item.synthesized ?? true,
     display_label: item.display_label || item.name || item.role_label || item.agent_id,
   })
 }
@@ -471,21 +496,59 @@ export function selectEffectiveAgentTeam(summary: RunStudioSummary | null, detai
 export function selectEffectiveTeamView(summary: RunStudioSummary | null, detail: RunStudioAgentTeam | null): TeamViewProjection | null {
   const runSkills = currentRunSkills(summary)
   const rawProjection = summary?.team_view || runSkills?.team_view || null
+  const effectiveTeam = selectEffectiveAgentTeam(summary, detail)
   const rawItems = (rawProjection?.items || []).map((item) => normalizeRuntimeAgent(item))
-  const legacyTeamItems = (selectEffectiveAgentTeam(summary, detail)?.items || []).map((item) => fromLegacyTeamItem(item))
+  const legacyTeamItems = (effectiveTeam?.items || []).map((item) => fromLegacyTeamItem(item))
+  const configuredTeamItems = (effectiveTeam?.configured_items || []).map((item) => fromConfiguredTeamItem(item))
   const legacyRuntimeAgents = (runSkills?.runtime_agents || []).map((item) => fromLegacyRuntimeAgent(item))
-  const items = mergeRuntimeAgents(rawItems, [...legacyRuntimeAgents, ...legacyTeamItems])
+  const items = mergeRuntimeAgents(rawItems, [...legacyRuntimeAgents, ...legacyTeamItems, ...configuredTeamItems])
 
   if (!rawProjection && items.length === 0) return null
 
   const presetCount = rawProjection?.preset_count ?? items.filter((item) => Boolean(cleanText(item.preset_id))).length
-  const synthesizedCount = rawProjection?.synthesized_count ?? items.filter((item) => Boolean(item.synthesized)).length
+  const synthesizedCount = rawProjection?.synthesized_count ?? items.filter((item) => Boolean(item.synthesized || item.configured_only)).length
 
   return {
     items,
     count: rawProjection?.count ?? items.length,
     preset_count: presetCount,
     synthesized_count: synthesizedCount,
+  }
+}
+
+export function selectEffectiveScopeProjection(summary: RunStudioSummary | null, detail: RunStudioAgentTeam | null): ScopeProjection | null {
+  const rawProjection = currentRunSkills(summary)?.scope_projection || summary?.scope_projection || null
+  if (rawProjection && (Number(rawProjection.count || 0) > 0 || (rawProjection.items || []).length > 0)) {
+    return rawProjection
+  }
+  const effectiveTeam = selectEffectiveAgentTeam(summary, detail)
+  const configuredItems = effectiveTeam?.configured_scope_items || []
+  if (configuredItems.length === 0) return rawProjection
+
+  const grantCounts = configuredItems.reduce<Record<string, number>>((acc, item) => {
+    ;(item.grant_labels || []).forEach((grant) => {
+      const key = cleanText(grant)
+      if (!key) return
+      acc[key] = (acc[key] || 0) + 1
+    })
+    return acc
+  }, {})
+  const visibilityCounts = configuredItems.reduce<Record<string, number>>((acc, item) => {
+    const key = cleanText(item.visibility_mode) || 'configured'
+    acc[key] = (acc[key] || 0) + 1
+    return acc
+  }, {})
+
+  return {
+    ...(rawProjection || {}),
+    context_runtime_mode: cleanText(rawProjection?.context_runtime_mode) || 'scoped_context',
+    items: configuredItems,
+    count: configuredItems.length,
+    grant_counts: Object.keys(rawProjection?.grant_counts || {}).length > 0 ? rawProjection?.grant_counts || {} : grantCounts,
+    visibility_counts: Object.keys(rawProjection?.visibility_counts || {}).length > 0 ? rawProjection?.visibility_counts || {} : visibilityCounts,
+    scope_projection_note:
+      cleanText(rawProjection?.scope_projection_note) ||
+      'Showing configured scope policies from team_config because no runtime materialized scopes are available yet.',
   }
 }
 
@@ -871,7 +934,7 @@ export function selectControlPlaneSummary(
     orchestration?.supervisor_runtime?.instance_id,
   )
   const legacyFallback = !summary?.team_view && !currentRunSkills(summary)?.team_view
-  const scopeProjection = currentRunSkills(summary)?.scope_projection || summary?.scope_projection || null
+  const scopeProjection = selectEffectiveScopeProjection(summary, detail)
   const scopeMode = cleanText(scopeProjection?.context_runtime_mode) || 'shared_memory'
   const scopeCount = Number(scopeProjection?.count || 0)
   const legacyContextPackCount = Number(scopeProjection?.legacy_context_pack_count || 0)

@@ -18,12 +18,38 @@ type Props = {
   collaboration: CollaborationProjection | null
 }
 
+type TeamContractSummary = {
+  state: 'active' | 'pending'
+  teamName: string
+  compositionMode: string
+  proposalMode: string
+  agentCount: number
+  executionPattern: string
+  finalOwner: string
+  shortcutEnabled: boolean | null
+  maxRecentTurns: number | null
+  handoffs: Array<{ from?: string; to?: string; payload?: string }>
+}
+
+function cleanText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : String(value || '').trim()
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function toArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : []
+}
+
 function runtimeClass(status: string): string {
   const clean = status.trim().toLowerCase()
   if (clean === 'running') return 'runStudioStatus--running'
   if (clean === 'queued') return 'runStudioStatus--queued'
   if (clean === 'error' || clean === 'blocked') return 'runStudioStatus--blocked'
   if (clean === 'done') return 'runStudioStatus--done'
+  if (clean === 'configured' || clean === 'ready') return 'runStudioStatus--queued'
   return 'runStudioStatus--idle'
 }
 
@@ -37,6 +63,38 @@ function laneLabel(roleId: string): string {
   return 'Runtime agents'
 }
 
+function summarizeTeamContracts(teamConfig: RunStudioAgentTeam['team_config'] | undefined): TeamContractSummary[] {
+  const summaries: TeamContractSummary[] = []
+  ;(['active', 'pending'] as const).forEach((state) => {
+    const team = asObject(teamConfig?.[`${state}_team` as 'active_team' | 'pending_team'])
+    if (Object.keys(team).length === 0) return
+    const interactionSpec = asObject(team.interaction_spec)
+    const shortcutPolicy = asObject(team.shortcut_policy)
+    const handoffs = toArray<Record<string, unknown>>(interactionSpec.handoffs).slice(0, 6).map((handoff) => ({
+      from: cleanText(handoff.from) || undefined,
+      to: cleanText(handoff.to) || undefined,
+      payload: cleanText(handoff.payload) || undefined,
+    }))
+    const maxRecentTurnsRaw = shortcutPolicy.max_recent_turns
+    const maxRecentTurns = typeof maxRecentTurnsRaw === 'number'
+      ? maxRecentTurnsRaw
+      : (typeof maxRecentTurnsRaw === 'string' && maxRecentTurnsRaw.trim() ? Number(maxRecentTurnsRaw) : null)
+    summaries.push({
+      state,
+      teamName: cleanText(team.team_name || `${state} team`) || `${state} team`,
+      compositionMode: cleanText(team.composition_mode || teamConfig?.composition_mode || 'structured') || 'structured',
+      proposalMode: cleanText(team.proposal_mode || teamConfig?.proposal_mode || '-') || '-',
+      agentCount: toArray(team.agents).length,
+      executionPattern: cleanText(interactionSpec.execution_pattern) || '-',
+      finalOwner: cleanText(interactionSpec.final_answer_owner) || '-',
+      shortcutEnabled: shortcutPolicy.enabled == null ? null : Boolean(shortcutPolicy.enabled),
+      maxRecentTurns: Number.isFinite(maxRecentTurns as number) ? Number(maxRecentTurns) : null,
+      handoffs,
+    })
+  })
+  return summaries
+}
+
 export default function AgentTeamPanel({
   teamView,
   legacyTeam,
@@ -48,6 +106,7 @@ export default function AgentTeamPanel({
   const runtimeCount = teamView?.count ?? items.length
   const presetCount = teamView?.preset_count ?? items.filter((item) => item.preset_id).length
   const synthesizedCount = teamView?.synthesized_count ?? items.filter((item) => item.synthesized).length
+  const configuredOnlyCount = items.filter((item) => item.configured_only).length
   const parallelGroupCount = orchestration?.parallel_group_count ?? orchestration?.parallel_groups?.length ?? 0
   const collaborationCount = collaboration?.count ?? collaboration?.items?.length ?? 0
   const supervisorEnabled = Boolean(
@@ -61,13 +120,7 @@ export default function AgentTeamPanel({
   const { reviewerPresent, synthesizerPresent } = selectTeamViewFlags(teamView)
   const degradedMode = Boolean(authority?.degraded_mode ?? legacyTeam?.degraded_mode)
   const fallbackReason = String(authority?.fallback_reason || legacyTeam?.fallback_reason || '').trim()
-
-  const interactionSpec = legacyTeam?.team_config?.active_team && typeof legacyTeam.team_config.active_team === 'object'
-    ? ((legacyTeam.team_config.active_team as { interaction_spec?: Record<string, unknown> }).interaction_spec || null)
-    : null
-  const interactionHandoffs = Array.isArray((interactionSpec as { handoffs?: unknown[] } | null)?.handoffs)
-    ? (((interactionSpec as { handoffs?: Array<{ from?: string; to?: string; payload?: string }> }).handoffs) || []).slice(0, 4)
-    : []
+  const teamContracts = summarizeTeamContracts(legacyTeam?.team_config)
 
   const grouped = new Map<string, RuntimeAgentInstanceV2[]>()
   items.forEach((item) => {
@@ -85,12 +138,13 @@ export default function AgentTeamPanel({
       <div className="runStudioPanelHeader">
         <div>
           <h3 style={{ margin: 0 }}>Runtime Agents</h3>
-          <div className="muted">Preset-backed or synthesized workers that currently make up the team, with their attached skills visible on each card.</div>
+          <div className="muted">Runtime team, configured team proposal, and per-agent context policy summarized together.</div>
         </div>
         <div className="runStudioMetaRow">
           <span className="pill">runtime agents: {runtimeCount}</span>
           <span className="pill">preset-backed: {presetCount}</span>
           <span className="pill">synthesized: {synthesizedCount}</span>
+          {configuredOnlyCount > 0 && <span className="pill">configured only: {configuredOnlyCount}</span>}
           <span className="pill">parallel groups: {parallelGroupCount}</span>
           <span className="pill">collaboration cells: {collaborationCount}</span>
           {reviewerPresent && <span className="pill">reviewer present</span>}
@@ -104,26 +158,42 @@ export default function AgentTeamPanel({
           <b>Fallback reason:</b> {fallbackReason}
         </div>
       )}
-      {interactionSpec && (
-        <div className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>
-          <div><b>Locked team contract</b></div>
-          <div className="muted">composition mode: {String(legacyTeam?.team_config?.composition_mode || ((legacyTeam?.team_config?.active_team as { composition_mode?: string } | undefined)?.composition_mode) || 'structured')}</div>
-          <div className="muted">proposal mode: {String(legacyTeam?.team_config?.proposal_mode || ((legacyTeam?.team_config?.active_team as { proposal_mode?: string } | undefined)?.proposal_mode) || '-')}</div>
-          <div className="muted">execution pattern: {String((interactionSpec as { execution_pattern?: string }).execution_pattern || '-')}</div>
-          <div className="muted">final owner: {String((interactionSpec as { final_answer_owner?: string }).final_answer_owner || '-')}</div>
-          {interactionHandoffs.length > 0 && (
-            <div className="muted" style={{ marginTop: 6 }}>
-              {interactionHandoffs.map((handoff, index) => (
-                <div key={`handoff-${index}`}>{handoff.from || '-'} → {handoff.to || '-'} ({handoff.payload || 'summary_only'})</div>
-              ))}
-            </div>
-          )}
+
+      {teamContracts.length > 0 && (
+        <div className="runStudioAgentCardGrid" style={{ marginBottom: 12 }}>
+          {teamContracts.map((contract) => (
+            <section key={contract.state} className="runStudioPanelSubcard">
+              <div className="row" style={{ marginBottom: 6 }}>
+                <b>{contract.state === 'active' ? 'Active team contract' : 'Pending team proposal'}</b>
+                <span className="pill">{contract.state}</span>
+              </div>
+              <div className="muted">team: {contract.teamName}</div>
+              <div className="muted">composition mode: {contract.compositionMode}</div>
+              <div className="muted">proposal mode: {contract.proposalMode}</div>
+              <div className="muted">agents: {contract.agentCount}</div>
+              <div className="muted">execution pattern: {contract.executionPattern}</div>
+              <div className="muted">final owner: {contract.finalOwner}</div>
+              {contract.shortcutEnabled != null && (
+                <div className="muted">
+                  shortcut follow-up: {contract.shortcutEnabled ? 'enabled' : 'disabled'}
+                  {contract.maxRecentTurns != null ? ` · recent window=${contract.maxRecentTurns}` : ''}
+                </div>
+              )}
+              {contract.handoffs.length > 0 && (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  {contract.handoffs.map((handoff, index) => (
+                    <div key={`${contract.state}-handoff-${index}`}>{handoff.from || '-'} → {handoff.to || '-'} ({handoff.payload || 'summary_only'})</div>
+                  ))}
+                </div>
+              )}
+            </section>
+          ))}
         </div>
       )}
 
       {items.length === 0 && (
         <div className="muted">
-          No runtime agents are visible yet. Legacy team detail will appear after execution emits runtime members.
+          No runtime or configured agents are visible yet. Once `/team create` or execution emits team data, cards will appear here.
         </div>
       )}
 
@@ -162,16 +232,24 @@ export default function AgentTeamPanel({
                     <div className="runStudioMetaRow" style={{ marginBottom: 6 }}>
                       {item.preset_id && <span className="pill">preset-backed</span>}
                       {!item.preset_id && item.synthesized && <span className="pill">synthesized</span>}
+                      {item.configured_only && <span className="pill">configured only</span>}
+                      {item.config_state && <span className="pill">{item.config_state}</span>}
+                      {item.team_name && <span className="pill">team: {item.team_name}</span>}
                       {item.slot_label && <span className="pill">slot: {item.slot_label}</span>}
                       {!item.slot_label && item.slot_id && <span className="pill">slot: {item.slot_id}</span>}
                       {item.scope_id && <span className="pill">scope: {item.scope_id}</span>}
                       {item.visibility_mode && <span className="pill">{item.visibility_mode}</span>}
+                      {item.shortcut_eligible === true && <span className="pill">shortcut reply</span>}
+                      {item.only_for_followups && <span className="pill">follow-up only</span>}
                     </div>
                     <div className="muted">role: {item.role_label || item.role_id || '-'}</div>
                     {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
+                    {item.purpose && item.purpose !== item.selection_reason && <div className="muted">purpose: {item.purpose}</div>}
                     {item.authority_profile_id && <div className="muted">authority: {item.authority_profile_id}</div>}
                     {(item.provider || item.model) && <div className="muted">model: {item.provider || '-'} / {item.model || '-'}</div>}
-                    {typeof item.scope_token_estimate === "number" && <div className="muted">scope budget est: {item.scope_token_estimate}</div>}
+                    {typeof item.scope_token_estimate === 'number' && <div className="muted">scope budget est: {item.scope_token_estimate}</div>}
+                    {item.query_template && <div className="muted">scope query: {item.query_template}</div>}
+                    {item.context_policy_summary && <div className="muted">context policy: {item.context_policy_summary}</div>}
 
                     {(item.grant_labels || []).length > 0 && (
                       <div className="runStudioAgentSkillSection">
@@ -181,6 +259,28 @@ export default function AgentTeamPanel({
                             <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:grant:${grant}`} className="pill">
                               {grant}
                             </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {(item.context_types || []).length > 0 && (
+                      <div className="runStudioAgentSkillSection">
+                        <div className="runStudioAgentSkillSectionLabel">Context types</div>
+                        <div className="runStudioMetaRow">
+                          {(item.context_types || []).map((entry) => (
+                            <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:ctx:${entry}`} className="pill">{entry}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {(item.publish_targets || []).length > 0 && (
+                      <div className="runStudioAgentSkillSection">
+                        <div className="runStudioAgentSkillSectionLabel">Publishes</div>
+                        <div className="runStudioMetaRow">
+                          {(item.publish_targets || []).map((entry) => (
+                            <span key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:publish:${entry}`} className="pill">{entry}</span>
                           ))}
                         </div>
                       </div>

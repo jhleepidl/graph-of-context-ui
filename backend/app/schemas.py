@@ -385,6 +385,19 @@ class ConversationTeamConfigRequest(BaseModel):
     team_config: dict[str, Any]
 
 
+
+
+class ConversationTeamAgentContextPolicyPatchRequest(BaseModel):
+    team_state: str
+    agent_id: str
+    visibility_mode: Optional[str] = None
+    grants: List[str] = Field(default_factory=list)
+    context_types: List[str] = Field(default_factory=list)
+    publish_targets: List[str] = Field(default_factory=list)
+    query_template: Optional[str] = None
+    soft_tokens: Optional[int] = None
+    hard_tokens: Optional[int] = None
+
 class ConversationTeamConfigRead(BaseModel):
     thread_id: str
     conversation_id: str

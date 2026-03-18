@@ -23,6 +23,7 @@ from app.schemas import (
     NodeCreateResponse,
     ConversationTeamConfigRequest,
     ConversationTeamConfigRead,
+    ConversationTeamAgentContextPolicyPatchRequest,
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
@@ -37,7 +38,7 @@ from app.services.run_studio import (
 )
 from app.services.scope_materializer import materialize_runtime_scopes
 from app.services.scope_registry import get_scope_spec
-from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload
+from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -1075,4 +1076,27 @@ def put_thread_team_config(thread_id: str, body: ConversationTeamConfigRequest):
             payload = save_team_config_payload(session, thread_id=thread_id, payload=body.team_config or {})
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc
+        return ConversationTeamConfigRead(**payload)
+
+
+@router.patch("/{thread_id}/team/config/agents/context_policy", response_model=ConversationTeamConfigRead)
+def patch_thread_team_agent_context_policy(thread_id: str, body: ConversationTeamAgentContextPolicyPatchRequest):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        try:
+            payload = patch_team_config_agent_context_policy(
+                session,
+                thread_id=thread_id,
+                team_state=body.team_state,
+                agent_id=body.agent_id,
+                visibility_mode=body.visibility_mode,
+                grants=list(body.grants or []),
+                context_types=list(body.context_types or []),
+                publish_targets=list(body.publish_targets or []),
+                query_template=body.query_template,
+                soft_tokens=body.soft_tokens,
+                hard_tokens=body.hard_tokens,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
         return ConversationTeamConfigRead(**payload)

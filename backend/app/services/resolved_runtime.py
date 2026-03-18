@@ -389,6 +389,183 @@ def _friendly_runtime_label(*, display_label: Any = None, role_id: Any = None, s
     return label or _title_case_identifier(role) or None
 
 
+def _configured_team_sections(team_config: dict[str, Any] | None) -> list[tuple[str, dict[str, Any]]]:
+    payload = team_config if isinstance(team_config, dict) else {}
+    sections: list[tuple[str, dict[str, Any]]] = []
+    for state in ("active", "pending"):
+        team = payload.get(f"{state}_team")
+        if isinstance(team, dict) and team:
+            sections.append((state, team))
+    return sections
+
+
+def _configured_scope_id(state: str, agent_id: str, index: int) -> str:
+    clean_state = _clean_text(state) or "configured"
+    clean_agent_id = _clean_text(agent_id) or f"agent_{index + 1}"
+    return f"{clean_state}_scope_{re.sub(r'[^a-zA-Z0-9_]+', '_', clean_agent_id)}_{index + 1}"
+
+
+
+def _configured_runtime_instance_id(state: str, agent_id: str, index: int) -> str:
+    clean_state = _clean_text(state) or "configured"
+    clean_agent_id = _clean_text(agent_id) or f"agent_{index + 1}"
+    return f"{clean_state}_team_{re.sub(r'[^a-zA-Z0-9_]+', '_', clean_agent_id)}_{index + 1}"
+
+
+
+def _build_configured_team_projection(
+    *,
+    team_config: dict[str, Any] | None,
+    skill_registry: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    configured_items: list[dict[str, Any]] = []
+    configured_scope_items: list[dict[str, Any]] = []
+
+    for state, team in _configured_team_sections(team_config):
+        team_name = _clean_text(team.get("team_name") or team.get("name"))
+        composition_mode = _clean_text(team.get("composition_mode") or team.get("compositionMode"))
+        proposal_mode = _clean_text(team.get("proposal_mode") or team.get("proposalMode"))
+        shortcut_policy = team.get("shortcut_policy") or team.get("shortcutPolicy") or {}
+        shortcut_enabled = None
+        shortcut_max_recent_turns = None
+        if isinstance(shortcut_policy, dict):
+            if "enabled" in shortcut_policy:
+                shortcut_enabled = _boolish(shortcut_policy.get("enabled"))
+            shortcut_max_recent_turns = _intish(
+                shortcut_policy.get("max_recent_turns") or shortcut_policy.get("maxRecentTurns")
+            )
+
+        interaction_spec = team.get("interaction_spec") or team.get("interactionSpec") or {}
+        interaction_contracts = (
+            interaction_spec.get("local_contracts")
+            if isinstance(interaction_spec, dict)
+            else {}
+        )
+        if not isinstance(interaction_contracts, dict):
+            interaction_contracts = {}
+
+        for index, raw_agent in enumerate(list(team.get("agents") or [])):
+            if not isinstance(raw_agent, dict):
+                continue
+            agent_id = _clean_text(raw_agent.get("agent_id") or raw_agent.get("agentId") or raw_agent.get("id") or raw_agent.get("name"))
+            if not agent_id:
+                continue
+            agent_name = _clean_text(raw_agent.get("name")) or agent_id
+            role_id = _clean_text(raw_agent.get("role") or raw_agent.get("role_id") or raw_agent.get("roleId")) or "researcher"
+            provider = _clean_text(raw_agent.get("provider"))
+            model = _clean_text(raw_agent.get("model"))
+            purpose = _clean_text(raw_agent.get("purpose") or raw_agent.get("why") or raw_agent.get("selection_reason") or raw_agent.get("selectionReason"))
+            context_policy = raw_agent.get("context_policy") or raw_agent.get("contextPolicy") or {}
+            if not isinstance(context_policy, dict):
+                context_policy = {}
+            reads = context_policy.get("reads") if isinstance(context_policy.get("reads"), dict) else {}
+            writes = context_policy.get("writes") if isinstance(context_policy.get("writes"), dict) else {}
+            read_grants = _clean_list(reads.get("grants"), limit=12)
+            context_types = _clean_list(reads.get("context_types") or reads.get("contextTypes"), limit=12)
+            publish_targets = _clean_list(writes.get("publish_targets") or writes.get("publishTargets"), limit=12)
+            query_template = _clean_text(reads.get("query_template") or reads.get("queryTemplate"))
+            attached_skills = extract_attached_skills(raw_agent, skill_lookup=skill_registry)
+            runtime_instance_id = _configured_runtime_instance_id(state, agent_id, index)
+            scope_id = _configured_scope_id(state, agent_id, index)
+            local_contract = interaction_contracts.get(agent_name) if isinstance(interaction_contracts, dict) else None
+            context_policy_summary = _structured_summary(context_policy)
+
+            configured_items.append(
+                {
+                    "agent_id": agent_id,
+                    "name": agent_name,
+                    "runtime_instance_id": runtime_instance_id,
+                    "display_label": _friendly_runtime_label(
+                        display_label=agent_name,
+                        role_id=role_id,
+                        selection_reason=purpose,
+                        synthesized=True,
+                    )
+                    or agent_name,
+                    "role_label": _title_case_identifier(role_id) or role_id,
+                    "role_id": role_id,
+                    "template_id": _clean_text(raw_agent.get("template_id") or raw_agent.get("templateId")),
+                    "provider": provider,
+                    "model": model,
+                    "enabled": raw_agent.get("enabled") is not False,
+                    "order_index": index,
+                    "runtime_status": "configured" if state == "pending" else "ready",
+                    "status_counts": {},
+                    "responsibilities": _clean_list(raw_agent.get("responsibilities") or purpose, limit=8),
+                    "capability_tags": _clean_list(raw_agent.get("capability_tags") or raw_agent.get("capabilityTags"), limit=10),
+                    "ephemeral": _boolish(raw_agent.get("ephemeral")),
+                    "description": purpose,
+                    "visibility": _clean_text(context_policy.get("base_mode") or context_policy.get("baseMode")) or "scoped_context",
+                    "source": f"team_config_{state}",
+                    "source_key": f"team_config.{state}_team",
+                    "attached_skills": attached_skills,
+                    "attached_skill_ids": [
+                        str(item.get("skill_id") or "").strip()
+                        for item in attached_skills
+                        if str(item.get("skill_id") or "").strip()
+                    ],
+                    "context_pack_id": None,
+                    "config_state": state,
+                    "configured_only": True,
+                    "team_name": team_name,
+                    "composition_mode": composition_mode,
+                    "proposal_mode": proposal_mode,
+                    "purpose": purpose,
+                    "selection_reason": purpose,
+                    "context_policy": context_policy,
+                    "context_policy_summary": context_policy_summary,
+                    "grant_labels": read_grants,
+                    "context_types": context_types,
+                    "publish_targets": publish_targets,
+                    "query_template": query_template,
+                    "scope_id": scope_id,
+                    "shortcut_eligible": shortcut_enabled,
+                    "shortcut_max_recent_turns": shortcut_max_recent_turns,
+                    "only_for_followups": _boolish(raw_agent.get("only_for_followups") or raw_agent.get("onlyForFollowups")),
+                    "interaction_contract": local_contract if isinstance(local_contract, dict) else None,
+                }
+            )
+            configured_scope_items.append(
+                {
+                    "scope_id": scope_id,
+                    "runtime_instance_id": runtime_instance_id,
+                    "slot_id": None,
+                    "display_label": agent_name,
+                    "visibility_mode": _clean_text(context_policy.get("base_mode") or context_policy.get("baseMode")) or "scoped_context",
+                    "context_types": context_types,
+                    "memory_grants": {grant: True for grant in read_grants},
+                    "grant_labels": read_grants,
+                    "selection_reason": purpose,
+                    "context_set_id": None,
+                    "token_estimate": _intish((context_policy.get("default_budget") or {}).get("soft_tokens")) if isinstance(context_policy.get("default_budget"), dict) else None,
+                    "scope_version": None,
+                    "active_node_ids": [],
+                    "active_node_count": None,
+                    "active_type_labels": [],
+                    "visibility_rationale": _clean_text(context_policy.get("base_mode") or context_policy.get("baseMode")),
+                    "compiler": "team_config_context_policy",
+                    "selection_strategy": "team_config_context_policy",
+                    "selection_summary": query_template or context_policy_summary,
+                    "matched_query_terms": [],
+                    "matched_context_types": context_types,
+                    "seed_node_count": None,
+                    "candidate_node_count": None,
+                    "positive_candidate_count": None,
+                    "rejected_positive_node_ids": [],
+                    "selection_confidence": "configured",
+                    "truncated": False,
+                    "authoritative_scope": False,
+                    "empty_scope": False,
+                    "soft_budget_exceeded": False,
+                    "configured_only": True,
+                    "config_state": state,
+                    "publish_targets": publish_targets,
+                }
+            )
+
+    return configured_items, configured_scope_items
+
+
 def _slot_indexes(runtime_snapshot: dict[str, Any] | None) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     slots = list(((runtime_snapshot or {}).get("team_plan") or {}).get("slots") or [])
     slot_by_id: dict[str, dict[str, Any]] = {}
@@ -954,6 +1131,8 @@ class ResolvedConversationTeam:
     active_count: int
     updated_at: str
     team_config: dict[str, Any] | None = None
+    configured_items: list[dict[str, Any]] | None = None
+    configured_scope_items: list[dict[str, Any]] | None = None
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -967,6 +1146,8 @@ class ResolvedConversationTeam:
             "active_count": self.active_count,
             "updated_at": self.updated_at,
             "team_config": dict(self.team_config or {}),
+            "configured_items": list(self.configured_items or []),
+            "configured_scope_items": list(self.configured_scope_items or []),
         }
 
 
@@ -1174,6 +1355,8 @@ class ResolvedRuntimeProjection:
             "active_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
             "team_config": {},
+            "configured_items": [],
+            "configured_scope_items": [],
         }
         if not list(payload.get("items") or []) and self.capabilities and list(self.capabilities.runtime_agents or []):
             payload = {
@@ -1181,6 +1364,12 @@ class ResolvedRuntimeProjection:
                 "items": list(self.capabilities.runtime_agents or []),
                 "active_count": len(list(self.capabilities.runtime_agents or [])),
                 "fallback_reason": payload.get("fallback_reason") or "runtime_agents_fallback",
+            }
+        if not list(payload.get("items") or []) and list(payload.get("configured_items") or []):
+            payload = {
+                **payload,
+                "items": list(payload.get("configured_items") or []),
+                "fallback_reason": payload.get("fallback_reason") or "team_config_fallback",
             }
         return self.apply_authority(payload)
 
@@ -1217,6 +1406,11 @@ def resolve_conversation_team(
     step_activity_by_agent = _step_activity_index(nodes_list)
     step_activity_sources_by_agent = _step_activity_source_index(nodes_list)
     skill_registry = build_skill_registry(nodes=nodes_list, include_defaults=True)
+    team_config_payload = get_team_config_payload(session, thread_id=thread_id)
+    configured_items, configured_scope_items = _build_configured_team_projection(
+        team_config=team_config_payload,
+        skill_registry=skill_registry,
+    )
 
     runtime_snapshot = extract_runtime_team_snapshot(nodes_list)
     if runtime_snapshot and list(runtime_snapshot.get("members") or []):
@@ -1324,7 +1518,9 @@ def resolve_conversation_team(
             skill_packages=_skill_packages_for_team_items(team_items=runtime_items, skill_registry=skill_registry),
             active_count=sum(1 for item in runtime_items if item["runtime_status"] in {"running", "queued"}),
             updated_at=updated_at,
-            team_config=get_team_config_payload(session, thread_id=thread_id),
+            team_config=team_config_payload,
+            configured_items=configured_items,
+            configured_scope_items=configured_scope_items,
         )
 
     if not conversation:
@@ -1365,6 +1561,9 @@ def resolve_conversation_team(
             skill_packages=[],
             active_count=sum(1 for item in inferred_items if item["runtime_status"] in {"running", "queued"}),
             updated_at=updated_at,
+            team_config=team_config_payload,
+            configured_items=configured_items,
+            configured_scope_items=configured_scope_items,
         )
 
     memberships = session.exec(
@@ -1400,20 +1599,29 @@ def resolve_conversation_team(
         if not capability_tags and agent:
             capability_tags = _clean_list_of_text(_jload(getattr(agent, "tools_json", "[]"), []))
 
+        configured_context_policy = overrides.get("context_policy") or overrides.get("contextPolicy") or {}
+        if not isinstance(configured_context_policy, dict):
+            configured_context_policy = {}
+        configured_reads = configured_context_policy.get("reads") if isinstance(configured_context_policy.get("reads"), dict) else {}
+        configured_writes = configured_context_policy.get("writes") if isinstance(configured_context_policy.get("writes"), dict) else {}
+        attached_skills = extract_attached_skills(overrides, skill_lookup=skill_registry)
+
         items.append(
             {
                 "membership_id": membership.id,
                 "agent_id": membership.agent_id,
-                "name": agent.name if agent else membership.agent_id,
+                "name": _clean_text(overrides.get("name") or (agent.name if agent else membership.agent_id)) or membership.agent_id,
                 "runtime_instance_id": None,
                 "role_label": _clean_text(
-                    overrides.get("role_label")
+                    overrides.get("configured_role")
+                    or overrides.get("role_label")
                     or overrides.get("role")
                     or overrides.get("title")
                     or (agent.name if agent else None)
                 ),
+                "role_id": _clean_text(overrides.get("configured_role") or overrides.get("role")),
                 "template_id": _clean_text(overrides.get("template_id") or overrides.get("agent_template_id")),
-                "provider": _clean_text(overrides.get("provider") or overrides.get("llm_provider")),
+                "provider": _clean_text(overrides.get("configured_provider") or overrides.get("provider") or overrides.get("llm_provider")),
                 "enabled": bool(membership.enabled),
                 "order_index": int(membership.order_index),
                 "runtime_status": _runtime_status_from_counts(status_counts),
@@ -1421,13 +1629,24 @@ def resolve_conversation_team(
                 "responsibilities": responsibilities,
                 "capability_tags": capability_tags,
                 "ephemeral": bool(overrides.get("ephemeral") or False),
-                "description": agent.description if agent else "",
-                "model": agent.model if agent else "",
-                "visibility": agent.visibility if agent else "",
+                "description": _clean_text(overrides.get("purpose") or overrides.get("description") or (agent.description if agent else "")) or "",
+                "model": _clean_text(overrides.get("configured_model") or (agent.model if agent else "")) or "",
+                "visibility": _clean_text(overrides.get("visibility") or (agent.visibility if agent else "")) or "",
                 "source": "conversation_membership",
                 "source_key": "conversation_agents",
-                "attached_skills": extract_attached_skills(overrides, skill_lookup=skill_registry),
+                "attached_skills": attached_skills,
+                "attached_skill_ids": [
+                    str(item.get("skill_id") or "").strip()
+                    for item in attached_skills
+                    if str(item.get("skill_id") or "").strip()
+                ],
                 "context_pack_id": _clean_text(overrides.get("context_pack_id") or overrides.get("contextPackId")),
+                "context_policy": configured_context_policy,
+                "context_policy_summary": _structured_summary(configured_context_policy),
+                "grant_labels": _clean_list(configured_reads.get("grants"), limit=12),
+                "context_types": _clean_list(configured_reads.get("context_types") or configured_reads.get("contextTypes"), limit=12),
+                "publish_targets": _clean_list(configured_writes.get("publish_targets") or configured_writes.get("publishTargets"), limit=12),
+                "interaction_contract": overrides.get("local_interaction_contract") if isinstance(overrides.get("local_interaction_contract"), dict) else None,
             }
         )
 
@@ -1442,7 +1661,9 @@ def resolve_conversation_team(
         skill_packages=_skill_packages_for_team_items(team_items=items, skill_registry=skill_registry),
         active_count=sum(1 for item in items if item["runtime_status"] in {"running", "queued"}),
         updated_at=updated_at,
-        team_config=get_team_config_payload(session, thread_id=thread_id),
+        team_config=team_config_payload,
+        configured_items=configured_items,
+        configured_scope_items=configured_scope_items,
     )
 
 

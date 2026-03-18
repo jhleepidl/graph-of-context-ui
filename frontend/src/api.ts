@@ -427,6 +427,25 @@ export const api = {
   },
   runStudioAgentTeam: (threadId: string) =>
     j<any>(apiFetch(`/api/threads/${threadId}/run_studio/agent_team`)),
+  patchThreadTeamAgentContextPolicy: (
+    threadId: string,
+    body: {
+      team_state: string
+      agent_id: string
+      visibility_mode?: string | null
+      grants?: string[]
+      context_types?: string[]
+      publish_targets?: string[]
+      query_template?: string | null
+      soft_tokens?: number | null
+      hard_tokens?: number | null
+    },
+  ) =>
+    j<any>(apiFetch(`/api/threads/${threadId}/team/config/agents/context_policy`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
   runStudioContextDecisions: (threadId: string, contextSetId?: string | null) => {
     const q = new URLSearchParams()
     const clean = (contextSetId || '').trim()

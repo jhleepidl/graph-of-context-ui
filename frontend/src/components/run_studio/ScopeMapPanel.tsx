@@ -60,6 +60,8 @@ export default function ScopeMapPanel({ scopeProjection }: Props) {
                 {typeof item.token_estimate === 'number' && <span className="pill">tokens: {item.token_estimate}</span>}
                 {typeof item.active_node_count === 'number' && <span className="pill">active nodes: {item.active_node_count}</span>}
                 {item.authoritative_scope === true && <span className="pill">authoritative</span>}
+                {(item as { configured_only?: boolean }).configured_only === true && <span className="pill">configured only</span>}
+                {(item as { config_state?: string | null }).config_state && <span className="pill">{(item as { config_state?: string | null }).config_state}</span>}
                 {item.selection_strategy && <span className="pill">strategy: {item.selection_strategy}</span>}
                 {typeof item.seed_node_count === 'number' && item.seed_node_count > 0 && <span className="pill">seeds: {item.seed_node_count}</span>}
                 {typeof item.candidate_node_count === 'number' && item.candidate_node_count > 0 && <span className="pill">candidates: {item.candidate_node_count}</span>}
@@ -88,6 +90,16 @@ export default function ScopeMapPanel({ scopeProjection }: Props) {
                   <div className="runStudioMetaRow">
                     {(item.grant_labels || []).map((entry) => (
                       <span key={`${item.scope_id || 'scope'}:grant:${entry}`} className="pill">{entry}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {((item as { publish_targets?: string[] }).publish_targets || []).length > 0 && (
+                <div className="runStudioAgentSkillSection">
+                  <div className="runStudioAgentSkillSectionLabel">Publishes</div>
+                  <div className="runStudioMetaRow">
+                    {(((item as { publish_targets?: string[] }).publish_targets) || []).map((entry) => (
+                      <span key={`${item.scope_id || 'scope'}:publish:${entry}`} className="pill">{entry}</span>
                     ))}
                   </div>
                 </div>
