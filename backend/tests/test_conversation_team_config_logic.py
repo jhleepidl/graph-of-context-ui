@@ -24,12 +24,16 @@ class ConversationTeamConfigLogicTests(unittest.TestCase):
             session.commit()
             payload = save_team_config_payload(session, thread_id='thread-1', payload={
                 'status': 'active',
-                'active_team': {'team_name': 'demo', 'agents': [{'agent_id': 'researcher'}]},
+                'composition_mode': 'freeform',
+                'proposal_mode': 'create',
+                'active_team': {'team_name': 'demo', 'composition_mode': 'freeform', 'proposal_mode': 'create', 'agents': [{'agent_id': 'researcher'}]},
                 'pending_team': {},
             })
             self.assertEqual(payload['status'], 'active')
+            self.assertEqual(payload['composition_mode'], 'freeform')
             loaded = get_team_config_payload(session, thread_id='thread-1')
             self.assertEqual(loaded['active_team'].get('team_name'), 'demo')
+            self.assertEqual(loaded['composition_mode'], 'freeform')
             revisions = session.query(ConversationTeamConfigRevision).all()
             self.assertEqual(len(revisions), 1)
 
@@ -55,3 +59,14 @@ class TeamConfigNormalizationTests(unittest.TestCase):
         payload = normalize({'status': 'weird', 'active_team': {'team_name': 'x'}})
         self.assertEqual(payload['status'], 'active')
         self.assertEqual(payload['active_team']['team_name'], 'x')
+
+
+class TeamConfigModeNormalizationTests(unittest.TestCase):
+    def test_normalizes_modes_from_team_payload(self):
+        if conversation_team_config is None:
+            self.skipTest('sqlmodel unavailable')
+        normalize = getattr(conversation_team_config, '_normalize_team_config_payload')
+        payload = normalize({'status': 'active', 'active_team': {'composition_mode': 'freeform', 'proposal_mode': 'create'}})
+        self.assertEqual(payload['composition_mode'], 'freeform')
+        self.assertEqual(payload['proposal_mode'], 'create')
+

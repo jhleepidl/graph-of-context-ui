@@ -107,6 +107,8 @@ export default function AgentTeamPanel({
       {interactionSpec && (
         <div className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>
           <div><b>Locked team contract</b></div>
+          <div className="muted">composition mode: {String(legacyTeam?.team_config?.composition_mode || ((legacyTeam?.team_config?.active_team as { composition_mode?: string } | undefined)?.composition_mode) || 'structured')}</div>
+          <div className="muted">proposal mode: {String(legacyTeam?.team_config?.proposal_mode || ((legacyTeam?.team_config?.active_team as { proposal_mode?: string } | undefined)?.proposal_mode) || '-')}</div>
           <div className="muted">execution pattern: {String((interactionSpec as { execution_pattern?: string }).execution_pattern || '-')}</div>
           <div className="muted">final owner: {String((interactionSpec as { final_answer_owner?: string }).final_answer_owner || '-')}</div>
           {interactionHandoffs.length > 0 && (

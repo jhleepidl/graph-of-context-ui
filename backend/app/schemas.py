@@ -389,6 +389,8 @@ class ConversationTeamConfigRead(BaseModel):
     thread_id: str
     conversation_id: str
     status: str = "none"
+    composition_mode: str = "structured"
+    proposal_mode: str = "suggest"
     active_team: dict[str, Any] = Field(default_factory=dict)
     pending_team: dict[str, Any] = Field(default_factory=dict)
     updated_at: Optional[datetime] = None

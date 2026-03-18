@@ -651,6 +651,8 @@ export type RunStudioAgentTeam = {
   fallback_reason?: string | null
   team_config?: {
     status?: string | null
+    composition_mode?: string | null
+    proposal_mode?: string | null
     active_team?: Record<string, unknown>
     pending_team?: Record<string, unknown>
   }
