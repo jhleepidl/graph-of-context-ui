@@ -649,6 +649,11 @@ export type RunStudioAgentTeam = {
   skill_catalog_source?: 'local' | 'goc' | 'mixed'
   degraded_mode?: boolean
   fallback_reason?: string | null
+  team_config?: {
+    status?: string | null
+    active_team?: Record<string, unknown>
+    pending_team?: Record<string, unknown>
+  }
 }
 
 export type RunStudioContextDecisions = {

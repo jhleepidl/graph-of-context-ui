@@ -379,3 +379,16 @@ class RunCapabilityProjection(BaseModel):
     checkpoints: CheckpointsProjection = Field(default_factory=CheckpointsProjection)
     counts: dict[str, int] = Field(default_factory=dict)
     planning_boundary: Optional[dict[str, Any]] = None
+
+
+class ConversationTeamConfigRequest(BaseModel):
+    team_config: dict[str, Any]
+
+
+class ConversationTeamConfigRead(BaseModel):
+    thread_id: str
+    conversation_id: str
+    status: str = "none"
+    active_team: dict[str, Any] = Field(default_factory=dict)
+    pending_team: dict[str, Any] = Field(default_factory=dict)
+    updated_at: Optional[datetime] = None

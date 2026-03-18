@@ -62,6 +62,13 @@ export default function AgentTeamPanel({
   const degradedMode = Boolean(authority?.degraded_mode ?? legacyTeam?.degraded_mode)
   const fallbackReason = String(authority?.fallback_reason || legacyTeam?.fallback_reason || '').trim()
 
+  const interactionSpec = legacyTeam?.team_config?.active_team && typeof legacyTeam.team_config.active_team === 'object'
+    ? ((legacyTeam.team_config.active_team as { interaction_spec?: Record<string, unknown> }).interaction_spec || null)
+    : null
+  const interactionHandoffs = Array.isArray((interactionSpec as { handoffs?: unknown[] } | null)?.handoffs)
+    ? (((interactionSpec as { handoffs?: Array<{ from?: string; to?: string; payload?: string }> }).handoffs) || []).slice(0, 4)
+    : []
+
   const grouped = new Map<string, RuntimeAgentInstanceV2[]>()
   items.forEach((item) => {
     const role = String(item.role_id || item.role_label || 'runtime').trim().toLowerCase() || 'runtime'
@@ -95,6 +102,20 @@ export default function AgentTeamPanel({
       {degradedMode && fallbackReason && (
         <div className="runStudioWarning">
           <b>Fallback reason:</b> {fallbackReason}
+        </div>
+      )}
+      {interactionSpec && (
+        <div className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>
+          <div><b>Locked team contract</b></div>
+          <div className="muted">execution pattern: {String((interactionSpec as { execution_pattern?: string }).execution_pattern || '-')}</div>
+          <div className="muted">final owner: {String((interactionSpec as { final_answer_owner?: string }).final_answer_owner || '-')}</div>
+          {interactionHandoffs.length > 0 && (
+            <div className="muted" style={{ marginTop: 6 }}>
+              {interactionHandoffs.map((handoff, index) => (
+                <div key={`handoff-${index}`}>{handoff.from || '-'} → {handoff.to || '-'} ({handoff.payload || 'summary_only'})</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

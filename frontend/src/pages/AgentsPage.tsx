@@ -234,11 +234,12 @@ function creatorMeta(agent: AgentRecord): string {
   return out.join(' · ')
 }
 
-function readLinkedThreadId(): string | null {
-  if (typeof window === 'undefined') return null
+function readLinkedSelection(): { threadId: string | null; ctxId: string | null } {
+  if (typeof window === 'undefined') return { threadId: null, ctxId: null }
   const params = new URLSearchParams(window.location.search)
-  const fromLink = (params.get('thread') || '').trim()
-  return fromLink || null
+  const threadId = (params.get('thread') || '').trim() || null
+  const ctxId = (params.get('ctx') || '').trim() || null
+  return { threadId, ctxId }
 }
 
 export default function AgentsPage({ onNavigate }: Props) {
@@ -258,7 +259,8 @@ export default function AgentsPage({ onNavigate }: Props) {
   const [bootstrappingDefaults, setBootstrappingDefaults] = useState(false)
   const [threadTeamRefreshKey, setThreadTeamRefreshKey] = useState(0)
 
-  const [linkedThreadId, setLinkedThreadId] = useState<string | null>(() => readLinkedThreadId())
+  const [linkedThreadId, setLinkedThreadId] = useState<string | null>(() => readLinkedSelection().threadId)
+  const [linkedCtxId, setLinkedCtxId] = useState<string | null>(() => readLinkedSelection().ctxId)
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [threadsLoading, setThreadsLoading] = useState(true)
   const [selectedThreadId, setSelectedThreadId] = useState<string>('')
@@ -367,9 +369,10 @@ export default function AgentsPage({ onNavigate }: Props) {
 
   useEffect(() => {
     function handlePopState() {
-      const nextLinkedThreadId = readLinkedThreadId()
-      setLinkedThreadId(nextLinkedThreadId)
-      if (!nextLinkedThreadId) {
+      const nextSelection = readLinkedSelection()
+      setLinkedThreadId(nextSelection.threadId)
+      setLinkedCtxId(nextSelection.ctxId)
+      if (!nextSelection.threadId) {
         setSelectedThreadId('')
       }
     }
@@ -396,13 +399,14 @@ export default function AgentsPage({ onNavigate }: Props) {
     const currentUrlThread = readLinkedThreadId() || ''
     if (selected === currentUrlThread) return
     if (selected) {
-      onNavigate(`/agents?thread=${encodeURIComponent(selected)}`)
+      const suffix = linkedCtxId ? `&ctx=${encodeURIComponent(linkedCtxId)}` : ''
+      onNavigate(`/agents?thread=${encodeURIComponent(selected)}${suffix}`)
       setLinkedThreadId(selected)
       return
     }
     onNavigate('/agents')
     setLinkedThreadId(null)
-  }, [selectedThreadId, threadSelectionInitialized, onNavigate])
+  }, [selectedThreadId, threadSelectionInitialized, onNavigate, linkedCtxId])
 
   useEffect(() => {
     void reloadMembership(selectedThreadId || null)
@@ -605,14 +609,15 @@ export default function AgentsPage({ onNavigate }: Props) {
       onNavigate('/')
       return
     }
-    onNavigate(`/?thread=${encodeURIComponent(targetThreadId)}`)
+    const suffix = linkedCtxId ? `&ctx=${encodeURIComponent(linkedCtxId)}` : ''
+    onNavigate(`/?thread=${encodeURIComponent(targetThreadId)}${suffix}`)
   }
 
   function handleClearTargetThread() {
     setSelectedThreadId('')
     setMembershipByLineageKey({})
     setLinkedThreadId(null)
-    onNavigate('/agents')
+    onNavigate(linkedCtxId ? `/agents?ctx=${encodeURIComponent(linkedCtxId)}` : '/agents')
   }
 
   const selectedThreadNotListed = Boolean(selectedThreadId && !selectedThread)

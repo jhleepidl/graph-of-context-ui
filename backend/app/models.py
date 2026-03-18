@@ -178,3 +178,27 @@ class ConversationAgent(SQLModel, table=True):
     overrides_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ConversationTeamConfig(SQLModel, table=True):
+    __tablename__ = "conversation_team_configs"
+    __table_args__ = (UniqueConstraint("conversation_id", name="uq_conversation_team_configs_conversation"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    conversation_id: str = Field(index=True)
+    thread_id: str = Field(index=True)
+    status: str = Field(default="none", index=True)
+    active_team_json: str = Field(default="{}")
+    pending_team_json: str = Field(default="{}")
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ConversationTeamConfigRevision(SQLModel, table=True):
+    __tablename__ = "conversation_team_config_revisions"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    conversation_id: str = Field(index=True)
+    thread_id: str = Field(index=True)
+    revision_kind: str = Field(default="update", index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)

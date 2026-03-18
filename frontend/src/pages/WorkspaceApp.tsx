@@ -852,7 +852,8 @@ export default function WorkspaceApp() {
         <button
           onClick={() => {
             if (!threadId) return
-            const target = `/agents?thread=${encodeURIComponent(threadId)}`
+            const suffix = ctxId ? `&ctx=${encodeURIComponent(ctxId)}` : ''
+            const target = `/agents?thread=${encodeURIComponent(threadId)}${suffix}`
             window.history.pushState(null, '', target)
             window.dispatchEvent(new Event('popstate'))
           }}

@@ -33,6 +33,13 @@ function parseRouteTarget(target: string): { pathname: string; search: string } 
   }
 }
 
+
+function pickWorkspaceSearch(currentSearch: string, lastWorkspaceSearch: string): string {
+  if (currentSearch && /(?:^|[?&])(thread|ctx)=/.test(currentSearch)) return currentSearch
+  if (lastWorkspaceSearch && /(?:^|[?&])(thread|ctx)=/.test(lastWorkspaceSearch)) return lastWorkspaceSearch
+  return ''
+}
+
 function captureTokenFromHash(): void {
   if (typeof window === 'undefined') return
   const rawHash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : window.location.hash
@@ -53,13 +60,17 @@ export default function App() {
   const [pathname, setPathname] = useState<string>(() => normalizePathname(window.location.pathname))
   const [search, setSearch] = useState<string>(() => window.location.search || '')
   const [hasAdminKey, setHasAdminKey] = useState<boolean>(() => !!getStoredAdminKey())
+  const [lastWorkspaceSearch, setLastWorkspaceSearch] = useState<string>(() => window.location.search || '')
 
   useEffect(() => {
     captureTokenFromHash()
 
     function handlePopState() {
-      setPathname(normalizePathname(window.location.pathname))
-      setSearch(window.location.search || '')
+      const nextPath = normalizePathname(window.location.pathname)
+      const nextSearch = window.location.search || ''
+      if (nextPath === '/' && nextSearch) setLastWorkspaceSearch(nextSearch)
+      setPathname(nextPath)
+      setSearch(nextSearch)
       setHasAdminKey(!!getStoredAdminKey())
     }
 
@@ -80,10 +91,19 @@ export default function App() {
 
   function navigate(nextPath: string) {
     const next = parseRouteTarget(nextPath)
-    if (next.pathname === pathname && next.search === search) return
-    window.history.pushState(null, '', `${next.pathname}${next.search}`)
+    let nextSearch = next.search
+    if (pathname === '/' && search) setLastWorkspaceSearch(search)
+    if ((next.pathname === '/agents' || next.pathname === '/tools' || next.pathname === '/library') && !nextSearch) {
+      nextSearch = pickWorkspaceSearch(search, lastWorkspaceSearch)
+    }
+    if (next.pathname === '/' && !nextSearch) {
+      nextSearch = pickWorkspaceSearch(search, lastWorkspaceSearch)
+    }
+    if (next.pathname === '/' && nextSearch) setLastWorkspaceSearch(nextSearch)
+    if (next.pathname === pathname && nextSearch === search) return
+    window.history.pushState(null, '', `${next.pathname}${nextSearch}`)
     setPathname(next.pathname)
-    setSearch(next.search)
+    setSearch(nextSearch)
     setHasAdminKey(!!getStoredAdminKey())
   }
 

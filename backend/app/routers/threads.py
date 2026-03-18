@@ -21,6 +21,8 @@ from app.schemas import (
     EdgeCreate,
     NodeCreate,
     NodeCreateResponse,
+    ConversationTeamConfigRequest,
+    ConversationTeamConfigRead,
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
@@ -35,6 +37,7 @@ from app.services.run_studio import (
 )
 from app.services.scope_materializer import materialize_runtime_scopes
 from app.services.scope_registry import get_scope_spec
+from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -1054,3 +1057,22 @@ def rebuild_index(thread_id: str):
         require_thread_write_access(s, thread_id)
         stats = rebuild_thread_index(s, thread_id)
         return {"ok": True, "rebuild": stats}
+
+
+@router.get("/{thread_id}/team/config", response_model=ConversationTeamConfigRead)
+def get_thread_team_config(thread_id: str):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        payload = get_team_config_payload(session, thread_id=thread_id)
+        return ConversationTeamConfigRead(**payload)
+
+
+@router.put("/{thread_id}/team/config", response_model=ConversationTeamConfigRead)
+def put_thread_team_config(thread_id: str, body: ConversationTeamConfigRequest):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        try:
+            payload = save_team_config_payload(session, thread_id=thread_id, payload=body.team_config or {})
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return ConversationTeamConfigRead(**payload)

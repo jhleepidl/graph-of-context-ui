@@ -19,6 +19,7 @@ from app.services.runtime_authority import (
     extract_authority_profile_id,
 )
 from app.services.runtime_scope import resolve_run_scoped_nodes
+from app.services.conversation_team_config import get_team_config_payload
 from app.services.runtime_snapshot import (
     clean_list_of_text as _clean_list_of_text,
     clean_text as _snapshot_clean_text,
@@ -952,6 +953,7 @@ class ResolvedConversationTeam:
     skill_packages: list[dict[str, Any]]
     active_count: int
     updated_at: str
+    team_config: dict[str, Any] | None = None
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -964,6 +966,7 @@ class ResolvedConversationTeam:
             "skill_packages": list(self.skill_packages),
             "active_count": self.active_count,
             "updated_at": self.updated_at,
+            "team_config": dict(self.team_config or {}),
         }
 
 
@@ -1170,7 +1173,15 @@ class ResolvedRuntimeProjection:
             "skill_packages": [],
             "active_count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            "team_config": {},
         }
+        if not list(payload.get("items") or []) and self.capabilities and list(self.capabilities.runtime_agents or []):
+            payload = {
+                **payload,
+                "items": list(self.capabilities.runtime_agents or []),
+                "active_count": len(list(self.capabilities.runtime_agents or [])),
+                "fallback_reason": payload.get("fallback_reason") or "runtime_agents_fallback",
+            }
         return self.apply_authority(payload)
 
 
@@ -1313,6 +1324,7 @@ def resolve_conversation_team(
             skill_packages=_skill_packages_for_team_items(team_items=runtime_items, skill_registry=skill_registry),
             active_count=sum(1 for item in runtime_items if item["runtime_status"] in {"running", "queued"}),
             updated_at=updated_at,
+            team_config=get_team_config_payload(session, thread_id=thread_id),
         )
 
     if not conversation:
@@ -1430,6 +1442,7 @@ def resolve_conversation_team(
         skill_packages=_skill_packages_for_team_items(team_items=items, skill_registry=skill_registry),
         active_count=sum(1 for item in items if item["runtime_status"] in {"running", "queued"}),
         updated_at=updated_at,
+        team_config=get_team_config_payload(session, thread_id=thread_id),
     )
 
 
