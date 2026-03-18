@@ -10,6 +10,14 @@ import {
   type RuntimeAgentInstanceV2,
   type TeamViewProjection,
 } from './types'
+import {
+  humanizeExecutionPattern,
+  humanizeModel,
+  humanizePayload,
+  humanizeSkill,
+  humanizeVisibility,
+  roleLabel,
+} from './teamPresentation'
 
 type Props = {
   teamView: TeamViewProjection | null
@@ -28,6 +36,8 @@ type TeamContractSummary = {
   finalOwner: string
   shortcutEnabled: boolean | null
   maxRecentTurns: number | null
+  reviewerVisibility: string
+  synthesizerVisibility: string
   handoffs: Array<{ from?: string; to?: string; payload?: string }>
 }
 
@@ -55,11 +65,11 @@ function runtimeClass(status: string): string {
 
 function laneLabel(roleId: string): string {
   const clean = String(roleId || '').trim().toLowerCase()
-  if (clean === 'researcher') return 'Research lanes'
-  if (clean === 'reviewer') return 'Review gate'
-  if (clean === 'synthesizer') return 'Final synthesis'
-  if (clean === 'builder') return 'Build lane'
-  if (clean === 'operator') return 'Runtime ops'
+  if (clean === 'researcher') return '조사 레인'
+  if (clean === 'reviewer') return '검토 게이트'
+  if (clean === 'synthesizer') return '최종 정리'
+  if (clean === 'builder') return '구현 레인'
+  if (clean === 'operator') return '운영 레인'
   return 'Runtime agents'
 }
 
@@ -73,7 +83,7 @@ function summarizeTeamContracts(teamConfig: RunStudioAgentTeam['team_config'] | 
     const handoffs = toArray<Record<string, unknown>>(interactionSpec.handoffs).slice(0, 6).map((handoff) => ({
       from: cleanText(handoff.from) || undefined,
       to: cleanText(handoff.to) || undefined,
-      payload: cleanText(handoff.payload) || undefined,
+      payload: humanizePayload(handoff.payload) || undefined,
     }))
     const maxRecentTurnsRaw = shortcutPolicy.max_recent_turns
     const maxRecentTurns = typeof maxRecentTurnsRaw === 'number'
@@ -85,10 +95,12 @@ function summarizeTeamContracts(teamConfig: RunStudioAgentTeam['team_config'] | 
       compositionMode: cleanText(team.composition_mode || teamConfig?.composition_mode || 'structured') || 'structured',
       proposalMode: cleanText(team.proposal_mode || teamConfig?.proposal_mode || '-') || '-',
       agentCount: toArray(team.agents).length,
-      executionPattern: cleanText(interactionSpec.execution_pattern) || '-',
+      executionPattern: humanizeExecutionPattern(interactionSpec.execution_pattern),
       finalOwner: cleanText(interactionSpec.final_answer_owner) || '-',
       shortcutEnabled: shortcutPolicy.enabled == null ? null : Boolean(shortcutPolicy.enabled),
       maxRecentTurns: Number.isFinite(maxRecentTurns as number) ? Number(maxRecentTurns) : null,
+      reviewerVisibility: humanizeVisibility(asObject(interactionSpec.policies).reviewer_visibility),
+      synthesizerVisibility: humanizeVisibility(asObject(interactionSpec.policies).synthesizer_visibility),
       handoffs,
     })
   })
@@ -168,21 +180,23 @@ export default function AgentTeamPanel({
                 <span className="pill">{contract.state}</span>
               </div>
               <div className="muted">team: {contract.teamName}</div>
-              <div className="muted">composition mode: {contract.compositionMode}</div>
-              <div className="muted">proposal mode: {contract.proposalMode}</div>
-              <div className="muted">agents: {contract.agentCount}</div>
-              <div className="muted">execution pattern: {contract.executionPattern}</div>
-              <div className="muted">final owner: {contract.finalOwner}</div>
+              <div className="muted">구성 방식: {contract.compositionMode}</div>
+              <div className="muted">제안 모드: {contract.proposalMode}</div>
+              <div className="muted">agent 수: {contract.agentCount}</div>
+              <div className="muted">흐름: {contract.executionPattern}</div>
+              <div className="muted">최종 답변 담당: {contract.finalOwner}</div>
+              <div className="muted">검토자 입력: {contract.reviewerVisibility}</div>
+              <div className="muted">최종 정리자 입력: {contract.synthesizerVisibility}</div>
               {contract.shortcutEnabled != null && (
                 <div className="muted">
-                  shortcut follow-up: {contract.shortcutEnabled ? 'enabled' : 'disabled'}
-                  {contract.maxRecentTurns != null ? ` · recent window=${contract.maxRecentTurns}` : ''}
+                  shortcut 후속응답: {contract.shortcutEnabled ? '켜짐' : '꺼짐'}
+                  {contract.maxRecentTurns != null ? ` · 최근 ${contract.maxRecentTurns}턴` : ''}
                 </div>
               )}
               {contract.handoffs.length > 0 && (
                 <div className="muted" style={{ marginTop: 6 }}>
                   {contract.handoffs.map((handoff, index) => (
-                    <div key={`${contract.state}-handoff-${index}`}>{handoff.from || '-'} → {handoff.to || '-'} ({handoff.payload || 'summary_only'})</div>
+                    <div key={`${contract.state}-handoff-${index}`}>{handoff.from || '-'} → {handoff.to || '-'} · {handoff.payload || '요약'}</div>
                   ))}
                 </div>
               )}
@@ -217,8 +231,8 @@ export default function AgentTeamPanel({
                 }))
                 const skillChips = explicitSkills.length > 0 ? explicitSkills : fallbackSkillIds
                 const highlightSkills = dominantSkills.length > 0
-                  ? dominantSkills.map((skill) => skill.skill_name || skill.skill_id)
-                  : skillChips.slice(0, 3).map((skill) => skill.name)
+                  ? dominantSkills.map((skill) => humanizeSkill(skill.skill_name || skill.skill_id))
+                  : skillChips.slice(0, 3).map((skill) => humanizeSkill(skill.name))
                 const status = String(item.runtime_status || 'idle')
                 return (
                   <article
@@ -238,15 +252,15 @@ export default function AgentTeamPanel({
                       {item.slot_label && <span className="pill">slot: {item.slot_label}</span>}
                       {!item.slot_label && item.slot_id && <span className="pill">slot: {item.slot_id}</span>}
                       {item.scope_id && <span className="pill">scope: {item.scope_id}</span>}
-                      {item.visibility_mode && <span className="pill">{item.visibility_mode}</span>}
+                      {item.visibility_mode && <span className="pill">{humanizeVisibility(item.visibility_mode)}</span>}
                       {item.shortcut_eligible === true && <span className="pill">shortcut reply</span>}
                       {item.only_for_followups && <span className="pill">follow-up only</span>}
                     </div>
-                    <div className="muted">role: {item.role_label || item.role_id || '-'}</div>
-                    {item.selection_reason && <div className="muted">selection: {item.selection_reason}</div>}
-                    {item.purpose && item.purpose !== item.selection_reason && <div className="muted">purpose: {item.purpose}</div>}
+                    <div className="muted">역할: {roleLabel(item.role_label || item.role_id || '-')}</div>
+                    {item.selection_reason && <div className="muted">선정 이유: {item.selection_reason}</div>}
+                    {item.purpose && item.purpose !== item.selection_reason && <div className="muted">맡은 일: {item.purpose}</div>}
                     {item.authority_profile_id && <div className="muted">authority: {item.authority_profile_id}</div>}
-                    {(item.provider || item.model) && <div className="muted">model: {item.provider || '-'} / {item.model || '-'}</div>}
+                    {(item.provider || item.model) && <div className="muted">모델: {humanizeModel(item.provider, item.model)}</div>}
                     {typeof item.scope_token_estimate === 'number' && <div className="muted">scope budget est: {item.scope_token_estimate}</div>}
                     {item.query_template && <div className="muted">scope query: {item.query_template}</div>}
                     {item.context_policy_summary && <div className="muted">context policy: {item.context_policy_summary}</div>}
@@ -305,7 +319,7 @@ export default function AgentTeamPanel({
                         <div className="runStudioSkillStack">
                           {skillChips.map((skill) => (
                             <div key={`${item.runtime_instance_id || item.agent_id || 'runtime'}:${skill.name}:${skill.level}`} className="runStudioSkillRow">
-                              <span className="runStudioSkillName">{skill.name}</span>
+                              <span className="runStudioSkillName">{humanizeSkill(skill.name)}</span>
                               <span className="pill">{skill.level}</span>
                             </div>
                           ))}
