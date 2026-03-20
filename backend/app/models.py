@@ -190,6 +190,7 @@ class ConversationTeamConfig(SQLModel, table=True):
     status: str = Field(default="none", index=True)
     active_team_json: str = Field(default="{}")
     pending_team_json: str = Field(default="{}")
+    state_json: str = Field(default="{}")
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 

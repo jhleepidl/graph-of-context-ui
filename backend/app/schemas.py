@@ -387,6 +387,21 @@ class ConversationTeamConfigRequest(BaseModel):
 
 
 
+class TeamManifestValidateRequest(BaseModel):
+    manifest: dict[str, Any]
+    apply_state: Optional[Literal["active", "pending"]] = "active"
+
+
+class TeamManifestInstallRequest(BaseModel):
+    manifest: dict[str, Any]
+    apply_state: Optional[Literal["active", "pending"]] = "active"
+
+
+class TeamManifestDiffRequest(BaseModel):
+    manifest: dict[str, Any]
+    apply_state: Optional[Literal["active", "pending"]] = "active"
+
+
 class ConversationTeamAgentContextPolicyPatchRequest(BaseModel):
     team_state: str
     agent_id: str

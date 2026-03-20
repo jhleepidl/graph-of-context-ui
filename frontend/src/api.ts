@@ -191,6 +191,44 @@ function parseDownloadFilename(contentDisposition: string | null, fallback: stri
   return fallback
 }
 
+
+export function exportThreadTeamManifest(threadId: string) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/manifest`))
+}
+
+export function validateThreadTeamManifest(
+  threadId: string,
+  body: { manifest: Record<string, any>; apply_state?: "active" | "pending" },
+) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/manifest/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function diffThreadTeamManifest(
+  threadId: string,
+  body: { manifest: Record<string, any>; apply_state?: "active" | "pending" },
+) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/manifest/diff`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function installThreadTeamManifest(
+  threadId: string,
+  body: { manifest: Record<string, any>; apply_state?: "active" | "pending" },
+) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
 export const api = {
   telegramWebAppLogin: (body: { init_data: string; max_age_sec?: number; ttl_sec?: number }) =>
     j<any>(apiFetch('/api/auth/telegram/webapp', {
@@ -337,8 +375,52 @@ export const api = {
         body: JSON.stringify({ thread_id: threadId }),
       }),
     ),
+  threadTeam: (threadId: string) =>
+    j<any>(apiFetch(`/api/threads/${threadId}/team`)),
+  addThreadTeamMember: (
+    threadId: string,
+    body: {
+      agent_id: string
+      enabled?: boolean
+      order_index?: number
+      overrides_json?: Record<string, unknown> | null
+    },
+  ) =>
+    j<any>(
+      apiFetch(`/api/threads/${threadId}/team/members`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    ),
+  patchThreadTeamMember: (
+    threadId: string,
+    agentId: string,
+    body: {
+      enabled?: boolean
+      order_index?: number
+      overrides_json?: Record<string, unknown> | null
+    },
+  ) =>
+    j<any>(
+      apiFetch(`/api/threads/${threadId}/team/members/${agentId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    ),
+  removeThreadTeamMember: (threadId: string, agentId: string) =>
+    j<any>(apiFetch(`/api/threads/${threadId}/team/members/${agentId}`, { method: 'DELETE' })),
+  reorderThreadTeam: (threadId: string, agentIds: string[]) =>
+    j<any>(
+      apiFetch(`/api/threads/${threadId}/team/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent_ids: agentIds }),
+      }),
+    ),
   conversationAgents: (threadId: string) =>
-    j<any>(apiFetch(`/api/conversations/${threadId}/agents`)),
+    j<any>(apiFetch(`/api/threads/${threadId}/team`)),
   addConversationAgent: (
     threadId: string,
     body: {
@@ -349,7 +431,7 @@ export const api = {
     },
   ) =>
     j<any>(
-      apiFetch(`/api/conversations/${threadId}/agents`, {
+      apiFetch(`/api/threads/${threadId}/team/members`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -365,17 +447,17 @@ export const api = {
     },
   ) =>
     j<any>(
-      apiFetch(`/api/conversations/${threadId}/agents/${agentId}`, {
+      apiFetch(`/api/threads/${threadId}/team/members/${agentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }),
     ),
   removeConversationAgent: (threadId: string, agentId: string) =>
-    j<any>(apiFetch(`/api/conversations/${threadId}/agents/${agentId}`, { method: 'DELETE' })),
+    j<any>(apiFetch(`/api/threads/${threadId}/team/members/${agentId}`, { method: 'DELETE' })),
   reorderConversationAgents: (threadId: string, agentIds: string[]) =>
     j<any>(
-      apiFetch(`/api/conversations/${threadId}/agents/reorder`, {
+      apiFetch(`/api/threads/${threadId}/team/reorder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_ids: agentIds }),

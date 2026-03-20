@@ -48,6 +48,29 @@ def _clean_text(value: Any) -> str | None:
     return clean or None
 
 
+def _clean_list(value: Any, *, limit: int = 24) -> list[str]:
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        clean = _clean_text(item)
+        if not clean:
+            continue
+        key = clean.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(clean)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _first_present_value(mapping: dict[str, Any], keys: Iterable[str]) -> Any:
     for key in keys:
         if key in mapping and mapping.get(key) is not None:
@@ -321,7 +344,7 @@ def _team_view_labels_by_instance(team_view: dict[str, Any] | None) -> dict[str,
 
 def _generic_runtime_label(label: Any, role_id: Any = None) -> bool:
     clean_label = _clean_text(label).lower()
-    clean_role = _clean_text(role_id).lower()
+    clean_role = (_clean_text(role_id) or '').lower()
     if not clean_label:
         return True
     if clean_role and clean_label in {clean_role, _clean_text(_title_case_identifier(clean_role)).lower()}:
@@ -332,7 +355,7 @@ def _generic_runtime_label(label: Any, role_id: Any = None) -> bool:
 def _friendly_runtime_label(*, display_label: Any = None, role_id: Any = None, slot: dict[str, Any] | None = None, selection_reason: Any = None, synthesized: Any = None) -> str | None:
     slot = slot or {}
     label = _clean_text(display_label)
-    role = _clean_text(role_id).lower()
+    role = (_clean_text(role_id) or '').lower()
     slot_text = " ".join(
         filter(
             None,
@@ -1154,6 +1177,7 @@ class ResolvedConversationTeam:
 @dataclass(slots=True)
 class ResolvedRunCapabilities:
     run_id: str | None
+    action_source: str | None
     runtime_agents: list[dict[str, Any]]
     attached_skills: list[dict[str, Any]]
     skill_packages: list[dict[str, Any]]
@@ -1175,6 +1199,7 @@ class ResolvedRunCapabilities:
     def as_payload(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "action_source": self.action_source,
             "runtime_agents": list(self.runtime_agents),
             "attached_skills": list(self.attached_skills),
             "skill_packages": list(self.skill_packages),
@@ -1197,6 +1222,7 @@ class ResolvedRunCapabilities:
     def context_pack_payload(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "action_source": self.action_source,
             "items": list(self.context_packs),
             "count": len(self.context_packs),
             "updated_at": self.updated_at,
@@ -1205,6 +1231,7 @@ class ResolvedRunCapabilities:
     def skill_usage_payload(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
+            "action_source": self.action_source,
             "items": list(self.skill_usage),
             "count": len(self.skill_usage),
             "updated_at": self.updated_at,
@@ -1229,6 +1256,7 @@ class ResolvedRuntimeProjection:
     def capability_payload(self) -> dict[str, Any]:
         payload = self.capabilities.as_payload() if self.capabilities else {
             "run_id": self.run_id,
+            "action_source": None,
             "runtime_agents": [],
             "attached_skills": [],
             "skill_packages": [],
@@ -1324,6 +1352,7 @@ class ResolvedRuntimeProjection:
     def context_pack_payload(self) -> dict[str, Any]:
         payload = self.capabilities.context_pack_payload() if self.capabilities else {
             "run_id": self.run_id,
+            "action_source": None,
             "items": [],
             "count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1335,6 +1364,7 @@ class ResolvedRuntimeProjection:
     def skill_usage_payload(self) -> dict[str, Any]:
         payload = self.capabilities.skill_usage_payload() if self.capabilities else {
             "run_id": self.run_id,
+            "action_source": None,
             "items": [],
             "count": 0,
             "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -1734,6 +1764,7 @@ def resolve_run_capabilities(
     updated_at = datetime.now(timezone.utc).isoformat()
     return ResolvedRunCapabilities(
         run_id=scope_state.run_id,
+        action_source=_clean_text(runtime_snapshot.get("action_source")),
         runtime_agents=runtime_agents,
         attached_skills=attached_skill_summaries,
         skill_packages=skill_packages,

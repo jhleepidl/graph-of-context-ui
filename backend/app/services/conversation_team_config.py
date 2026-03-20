@@ -19,6 +19,17 @@ from sqlmodel import Session, select
 from app.models import Conversation, ConversationTeamConfig, ConversationTeamConfigRevision
 
 
+_TEAM_CONFIG_STATE_KEYS = (
+    'install_proposal',
+    'install_proposal_state',
+    'credential_binding_state',
+    'pattern_conflict',
+    'temporary_execution_override',
+    'pattern_recovery',
+    'structure_v2',
+)
+
+
 def _jload(raw: str | None, default: Any) -> Any:
     try:
         return json.loads(raw or "")
@@ -56,7 +67,8 @@ def _normalize_team_config_payload(payload: dict[str, Any] | None) -> dict[str, 
     if status == 'none':
         active_team = {}
         pending_team = {}
-    return {'status': status, 'composition_mode': composition_mode, 'proposal_mode': proposal_mode, 'active_team': active_team, 'pending_team': pending_team}
+    state = {key: raw.get(key) for key in _TEAM_CONFIG_STATE_KEYS if raw.get(key) is not None}
+    return {'status': status, 'composition_mode': composition_mode, 'proposal_mode': proposal_mode, 'active_team': active_team, 'pending_team': pending_team, 'state': state}
 
 
 
@@ -207,6 +219,7 @@ def get_team_config_payload(session: Session, *, thread_id: str) -> dict[str, An
             "proposal_mode": "suggest",
             "active_team": {},
             "pending_team": {},
+            **{key: None for key in _TEAM_CONFIG_STATE_KEYS},
             "updated_at": None,
         }
     row = session.exec(
@@ -221,8 +234,12 @@ def get_team_config_payload(session: Session, *, thread_id: str) -> dict[str, An
             "proposal_mode": "suggest",
             "active_team": {},
             "pending_team": {},
+            **{key: None for key in _TEAM_CONFIG_STATE_KEYS},
             "updated_at": None,
         }
+    state = _jload(getattr(row, 'state_json', '{}'), {})
+    if not isinstance(state, dict):
+        state = {}
     return {
         "thread_id": row.thread_id,
         "conversation_id": row.conversation_id,
@@ -231,6 +248,7 @@ def get_team_config_payload(session: Session, *, thread_id: str) -> dict[str, An
         "proposal_mode": _normalize_proposal_mode((_jload(row.active_team_json, {}) or {}).get('proposal_mode') or (_jload(row.pending_team_json, {}) or {}).get('proposal_mode') or 'suggest'),
         "active_team": _jload(row.active_team_json, {}),
         "pending_team": _jload(row.pending_team_json, {}),
+        **{key: state.get(key) for key in _TEAM_CONFIG_STATE_KEYS},
         "updated_at": row.updated_at,
     }
 
@@ -248,6 +266,7 @@ def save_team_config_payload(session: Session, *, thread_id: str, payload: dict[
     row.status = normalized['status']
     row.active_team_json = _jdump(normalized['active_team'])
     row.pending_team_json = _jdump(normalized['pending_team'])
+    row.state_json = _jdump(normalized.get('state') or {})
     session.add(row)
     session.flush()
     session.add(ConversationTeamConfigRevision(
@@ -260,6 +279,7 @@ def save_team_config_payload(session: Session, *, thread_id: str, payload: dict[
             "proposal_mode": normalized['proposal_mode'],
             "active_team": _jload(row.active_team_json, {}),
             "pending_team": _jload(row.pending_team_json, {}),
+            **(_jload(getattr(row, 'state_json', '{}'), {}) if isinstance(_jload(getattr(row, 'state_json', '{}'), {}), dict) else {}),
         }),
     ))
     session.commit()
@@ -272,5 +292,6 @@ def save_team_config_payload(session: Session, *, thread_id: str, payload: dict[
         "proposal_mode": normalized['proposal_mode'],
         "active_team": _jload(row.active_team_json, {}),
         "pending_team": _jload(row.pending_team_json, {}),
+        **{key: (normalized.get('state') or {}).get(key) for key in _TEAM_CONFIG_STATE_KEYS},
         "updated_at": row.updated_at,
     }

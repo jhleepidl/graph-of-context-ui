@@ -295,13 +295,38 @@ def _merge_skill_items(base_items: list[dict[str, Any]], incoming_items: list[di
     return sorted(merged.values(), key=lambda item: (str(item.get("skill_id") or ""),))
 
 
+def _scope_rank(value: Any) -> int:
+    clean = _clean_text(value)
+    if not clean:
+        return 0
+    if clean == "runtime":
+        return 1
+    return 2
+
+
+
+def _context_pack_merge_key(row: dict[str, Any]) -> tuple[str, str, str]:
+    context_pack_id = str(row.get("context_pack_id") or "").strip()
+    target_runtime_agent_instance_id = str(row.get("target_runtime_agent_instance_id") or "").strip()
+    scope = str(row.get("scope") or "runtime").strip() or "runtime"
+    if context_pack_id:
+        return ("by_id", context_pack_id, target_runtime_agent_instance_id)
+    return ("by_scope", target_runtime_agent_instance_id, scope)
+
+
+
 def _merge_context_pack_summary(base: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
 
-    for key in ("context_pack_id", "scope", "target_runtime_agent_instance_id", "source", "run_id", "node_id", "node_type"):
+    for key in ("context_pack_id", "target_runtime_agent_instance_id", "source", "run_id", "node_id", "node_type"):
         value = incoming.get(key)
         if value is not None and str(value).strip():
             merged[key] = value
+
+    incoming_scope = incoming.get("scope")
+    if _scope_rank(incoming_scope) >= _scope_rank(merged.get("scope")):
+        if incoming_scope is not None and str(incoming_scope).strip():
+            merged["scope"] = incoming_scope
 
     merged["shared_items_count"] = max(
         _count_from_value(merged.get("shared_items_count")),
@@ -398,11 +423,7 @@ def extract_context_pack_summaries(
 
     merged_rows: dict[tuple[str, str, str], dict[str, Any]] = {}
     for row in rows:
-        key = (
-            str(row.get("context_pack_id") or ""),
-            str(row.get("target_runtime_agent_instance_id") or ""),
-            str(row.get("scope") or "runtime"),
-        )
+        key = _context_pack_merge_key(row)
         if key not in merged_rows:
             merged_rows[key] = row
             continue

@@ -3,7 +3,8 @@
 This guide is for operators using Run Studio day-to-day.
 
 ## Read This First
-- `Thread Team` is configuration.
+- `Thread Team Config` is configuration. Its manifest editor is the primary control surface for ddalggak team state.
+- The lower roster editor in `Thread Team Config` is a compatibility membership editor, not the canonical structure_v2 editor.
 - `Team View` shows the runtime agents that actually executed for the run scope.
 - Team changes alone do not prove execution happened.
 - `ddalggak` is the execution runtime; GoC is the graph-first projection/control layer.

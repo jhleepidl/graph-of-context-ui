@@ -48,6 +48,7 @@ RUNTIME_MEMBER_HINT_KEYS = (
 RUNTIME_NESTED_BLOCK_KEYS = ("runtime", "meta", "result", "output", "state", "data")
 TASK_INTERPRETATION_KEYS = ("task_interpretation", "taskInterpretation")
 TEAM_PLAN_KEYS = ("team_plan", "teamPlan")
+ACTION_SOURCE_KEYS = ("action_source", "actionSource")
 COLLABORATION_CELL_KEYS = ("collaboration_cells", "collaborationCells")
 AUTHORITY_GRAPH_KEYS = ("authority_graph", "authorityGraph")
 CHECKPOINT_KEYS = ("checkpoints",)
@@ -712,6 +713,10 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
         return {}
 
     out: dict[str, Any] = {}
+
+    action_source = clean_text(first_present(raw, ACTION_SOURCE_KEYS))
+    if action_source:
+        out["action_source"] = action_source
 
     task_interpretation = normalize_task_interpretation(first_present(raw, TASK_INTERPRETATION_KEYS))
     if task_interpretation:

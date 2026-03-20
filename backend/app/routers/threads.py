@@ -24,6 +24,9 @@ from app.schemas import (
     ConversationTeamConfigRequest,
     ConversationTeamConfigRead,
     ConversationTeamAgentContextPolicyPatchRequest,
+    TeamManifestValidateRequest,
+    TeamManifestInstallRequest,
+    TeamManifestDiffRequest,
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
@@ -39,6 +42,7 @@ from app.services.run_studio import (
 from app.services.scope_materializer import materialize_runtime_scopes
 from app.services.scope_registry import get_scope_spec
 from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy
+from app.services.team_manifest import export_thread_team_manifest, install_thread_team_manifest, validate_team_manifest_payload, diff_team_manifest_payload
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -1100,3 +1104,49 @@ def patch_thread_team_agent_context_policy(thread_id: str, body: ConversationTea
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return ConversationTeamConfigRead(**payload)
+
+
+@router.get("/{thread_id}/team/manifest")
+def get_thread_team_manifest(thread_id: str):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        manifest = export_thread_team_manifest(session, thread)
+        return {"ok": True, "manifest": manifest}
+
+
+@router.post("/{thread_id}/team/manifest/validate")
+def validate_thread_team_manifest(thread_id: str, body: TeamManifestValidateRequest):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        result = validate_team_manifest_payload(body.manifest or {}, apply_state=body.apply_state or "active")
+        return {"ok": bool(result.get("ok")), **result}
+
+
+
+
+@router.post("/{thread_id}/team/manifest/diff")
+def diff_thread_team_manifest(thread_id: str, body: TeamManifestDiffRequest):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        current_manifest = export_thread_team_manifest(session, thread)
+        result = diff_team_manifest_payload(current_manifest, body.manifest or {}, apply_state=body.apply_state or "active")
+        return {"ok": True, **result}
+
+@router.post("/{thread_id}/team/install")
+def install_team_manifest(thread_id: str, body: TeamManifestInstallRequest):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        try:
+            manifest = install_thread_team_manifest(session, thread, body.manifest or {}, apply_state=body.apply_state or "active")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "manifest": manifest, "team_config": manifest.get("team_config") or {}}
