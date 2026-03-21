@@ -45,17 +45,49 @@ def _build_capability_contract(team: dict[str, Any], blueprint: dict[str, Any]) 
     existing = _as_dict(blueprint.get('capability_contract'))
     if existing:
         return existing
-    required: list[str] = []
-    optional: list[str] = []
+
+    required: set[str] = set(_unique_tool_ids(team.get('required_tool_ids') or team.get('requiredToolIds') or []))
+    optional: set[str] = set(_unique_tool_ids(team.get('optional_tool_ids') or team.get('optionalToolIds') or team.get('recommended_tool_ids') or team.get('recommendedToolIds') or []))
     agent_contracts: list[dict[str, Any]] = []
+
+    for requirement in team.get('requirements') or []:
+        row = _as_dict(requirement)
+        tool_id = _clean_id(row.get('tool_id') or row.get('toolId'), 64)
+        if not tool_id:
+            continue
+        if _clean_id(row.get('severity') or 'blocking', 32) == 'blocking':
+            required.add(tool_id)
+        else:
+            optional.add(tool_id)
+
     for agent in team.get('agents') or []:
-        required_tools = _unique_tool_ids(agent.get('required_tool_ids') or agent.get('requiredToolIds') or [])
-        optional_tools = _unique_tool_ids(agent.get('optional_tool_ids') or agent.get('optionalToolIds') or agent.get('recommended_tool_ids') or agent.get('recommendedToolIds') or [])
-        optional_tools = [tool_id for tool_id in optional_tools if tool_id not in required_tools]
-        required.extend(required_tools); optional.extend(optional_tools)
-        agent_contracts.append({'agent_id': _clean_id(agent.get('agent_id') or agent.get('id') or agent.get('name') or 'agent'), 'agent_name': _clean_text(agent.get('name') or agent.get('agent_id') or 'agent', 120) or 'agent', 'role': _clean_id(agent.get('role') or 'agent', 64) or 'agent', 'required_tools': required_tools, 'optional_tools': optional_tools})
-    required = _unique_tool_ids(required); optional = [tool_id for tool_id in _unique_tool_ids(optional) if tool_id not in required]
-    return {'version': 'capability_contract_v1', 'runtime_bound': False, 'runtime_source': 'template', 'status': 'unbound', 'required_tools': required, 'optional_tools': optional, 'available_tools': [], 'missing_required_tools': required, 'missing_optional_tools': optional, 'auto_installable_missing_tools': [], 'mismatch_count': len(required) + len(optional), 'agent_contracts': agent_contracts}
+        agent_row = _as_dict(agent)
+        role = _clean_id(agent_row.get('role') or 'agent', 64) or 'agent'
+        purpose_text = f"{_clean_text(agent_row.get('purpose'), 256)} {_clean_text(agent_row.get('name'), 256)}".lower()
+        explicit_required = _unique_tool_ids(agent_row.get('required_tool_ids') or agent_row.get('requiredToolIds') or [])
+        explicit_optional = _unique_tool_ids(agent_row.get('optional_tool_ids') or agent_row.get('optionalToolIds') or agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or [])
+        inferred_required = list(explicit_required)
+        inferred_optional = [tool_id for tool_id in explicit_optional if tool_id not in explicit_required]
+        code_like = any(token in purpose_text for token in ['ipynb', 'notebook', 'jupyter', 'file', 'json', 'python', 'script', 'workspace', 'code', '코드', '노트북', '파일'])
+        if role == 'builder' and code_like and 'workspace_fs' not in inferred_required:
+            inferred_required.append('workspace_fs')
+        if role == 'builder' and 'shell' not in inferred_required and 'shell' not in inferred_optional:
+            inferred_optional.append('shell')
+        if role in {'researcher', 'reviewer'} and any(token in purpose_text for token in ['research', 'review', 'evidence', 'fact', '검토', '조사']) and 'web' not in inferred_required and 'web' not in inferred_optional:
+            inferred_optional.append('web')
+        required.update(inferred_required)
+        optional.update(tool_id for tool_id in inferred_optional if tool_id not in required)
+        agent_contracts.append({
+            'agent_id': _clean_id(agent_row.get('agent_id') or agent_row.get('id') or agent_row.get('name') or 'agent'),
+            'agent_name': _clean_text(agent_row.get('name') or agent_row.get('agent_id') or 'agent', 120) or 'agent',
+            'role': role,
+            'required_tools': _unique_tool_ids(inferred_required),
+            'optional_tools': [tool_id for tool_id in _unique_tool_ids(inferred_optional) if tool_id not in inferred_required],
+        })
+
+    required_list = _unique_tool_ids(list(required))
+    optional_list = [tool_id for tool_id in _unique_tool_ids(list(optional)) if tool_id not in required_list]
+    return {'version': 'capability_contract_v1', 'runtime_bound': False, 'runtime_source': 'template', 'status': 'unbound', 'required_tools': required_list, 'optional_tools': optional_list, 'available_tools': [], 'missing_required_tools': required_list, 'missing_optional_tools': optional_list, 'auto_installable_missing_tools': [], 'mismatch_count': len(required_list) + len(optional_list), 'agent_contracts': agent_contracts}
 
 
 def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:

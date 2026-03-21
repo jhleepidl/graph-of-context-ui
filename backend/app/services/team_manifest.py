@@ -1329,10 +1329,14 @@ def validate_team_manifest_payload(manifest: Any, apply_state: str = "active") -
     normalized = _normalize_manifest(manifest, fallback_apply_state=clean_state)
     team = normalized.get("team") if isinstance(normalized.get("team"), dict) else {}
     agents = _as_list(team.get("agents"))
+    structure = _as_dict(normalized.get('structure_v2') or normalized.get('structureV2') or team.get('structure_v2') or team.get('structureV2'))
+    topology = _as_dict(structure.get('topology'))
+    memory_plan = _as_dict(normalized.get('memory_plan') or normalized.get('memoryPlan') or structure.get('memory_plan') or structure.get('memoryPlan') or team.get('memory_plan') or team.get('memoryPlan'))
     errors: list[str] = []
     if not agents:
         errors.append("team manifest must include at least one agent")
     seen_ids: set[str] = set()
+    role_ids: set[str] = set()
     for raw_agent in agents:
         agent = _as_dict(raw_agent)
         agent_id = _clean_text(agent.get("agent_id") or agent.get("name"), max_len=128)
@@ -1343,6 +1347,44 @@ def validate_team_manifest_payload(manifest: Any, apply_state: str = "active") -
             errors.append(f"duplicate agent_id: {agent_id}")
             continue
         seen_ids.add(agent_id)
+        role_id = _clean_text(agent.get('role') or '', max_len=64).lower()
+        if role_id:
+            role_ids.add(role_id)
+    participant_ids = {_clean_text(_as_dict(item).get('participant_id') or _as_dict(item).get('id'), max_len=128) for item in _as_list(structure.get('participants'))}
+    participant_ids = {value for value in participant_ids if value}
+    node_ids = {_clean_text(_as_dict(item).get('node_id') or _as_dict(item).get('id'), max_len=128) for item in _as_list(topology.get('nodes'))}
+    node_ids = {value for value in node_ids if value}
+    final_participant_id = _clean_text(topology.get('final_participant_id') or topology.get('finalParticipantId'), max_len=128)
+    if final_participant_id and participant_ids and final_participant_id not in participant_ids:
+        errors.append(f"final_participant_id references an unknown participant: {final_participant_id}")
+    for raw_edge in _as_list(topology.get('edges')):
+        edge = _as_dict(raw_edge)
+        src = _clean_text(edge.get('from') or edge.get('source') or edge.get('from_node_id'), max_len=128)
+        dst = _clean_text(edge.get('to') or edge.get('target') or edge.get('to_node_id'), max_len=128)
+        if src and node_ids and src not in node_ids:
+            errors.append(f"topology edge references unknown source node: {src}")
+        if dst and node_ids and dst not in node_ids:
+            errors.append(f"topology edge references unknown target node: {dst}")
+    surface_ids: set[str] = set()
+    for raw_surface in _as_list(memory_plan.get('surfaces')):
+        surface = _as_dict(raw_surface)
+        surface_id = _clean_text(surface.get('surface_id') or surface.get('id'), max_len=64).lower()
+        if not surface_id:
+            errors.append('memory_plan contains a surface without surface_id')
+            continue
+        if surface_id in surface_ids:
+            errors.append(f"duplicate memory surface_id: {surface_id}")
+            continue
+        surface_ids.add(surface_id)
+        for raw_role in _as_list(surface.get('target_roles') or surface.get('targetRoles')):
+            target_role = _clean_text(raw_role, max_len=64).lower()
+            if target_role and role_ids and target_role not in role_ids:
+                errors.append(f"memory surface {surface_id} targets an unknown role: {target_role}")
+    for raw_tool in _as_list(_as_dict(normalized.get('requirements')).get('tools')):
+        tool = _as_dict(raw_tool)
+        tool_id = _clean_text(tool.get('tool_id') or tool.get('toolId'), max_len=64).lower()
+        if not tool_id:
+            errors.append('tool requirement is missing tool_id')
     return {
         "ok": not errors,
         "errors": errors,
@@ -1619,6 +1661,12 @@ def install_thread_team_manifest(session: Session, thread: Thread, manifest: Any
     saved = save_team_config_payload(session, thread_id=thread.id, payload=next_payload)
     return _normalize_manifest(saved, fallback_thread=thread, fallback_apply_state=clean_state)
 
+def _normalize_memory_write_policy(value: Any) -> str:
+    clean = _clean_text(value, max_len=64).lower()
+    mapping = {'owner_only': 'shared', 'shared_append': 'append_only', 'final_owner': 'final', 'read_only': 'read_only', 'none': 'none', 'shared': 'shared', 'append_only': 'append_only', 'final': 'final', 'index': 'index'}
+    return mapping.get(clean, clean or 'shared')
+
+
 def _normalize_memory_plan(raw: Any, *, knowledge_surface: Any = None, memory_policy: Any = None) -> dict[str, Any]:
     row = _as_dict(raw)
     clean_surface = _as_dict(knowledge_surface)
@@ -1637,7 +1685,7 @@ def _normalize_memory_plan(raw: Any, *, knowledge_surface: Any = None, memory_po
             'kind': _clean_text(surface.get('kind') or 'shared_doc', max_len=64).lower() or 'shared_doc',
             'file_name': _clean_text(surface.get('file_name') or surface.get('fileName') or f'{surface_id}.md', max_len=160) or f'{surface_id}.md',
             'load': _clean_text(surface.get('load') or 'on_demand', max_len=64).lower() or 'on_demand',
-            'write_policy': _clean_text(surface.get('write_policy') or surface.get('writePolicy') or 'owner_only', max_len=64).lower() or 'owner_only',
+            'write_policy': _normalize_memory_write_policy(surface.get('write_policy') or surface.get('writePolicy') or 'shared'),
             'target_roles': [_clean_text(v, max_len=64).lower() for v in _as_list(surface.get('target_roles') or surface.get('targetRoles')) if _clean_text(v, max_len=64)][:8],
         })
     if not surfaces:
@@ -1654,7 +1702,7 @@ def _normalize_memory_plan(raw: Any, *, knowledge_surface: Any = None, memory_po
                 'kind': 'shared_doc',
                 'file_name': _clean_text(doc.get('file_name') or doc.get('fileName') or f'{doc_id}.md', max_len=160) or f'{doc_id}.md',
                 'load': 'always' if doc_id in {'mission_brief', 'working_memory', 'final_answer', 'artifact_index'} else 'on_demand',
-                'write_policy': 'shared_append' if doc_id in {'working_memory', 'artifact_index'} else ('final_owner' if doc_id == 'final_answer' else 'owner_only'),
+                'write_policy': 'append_only' if doc_id in {'working_memory'} else ('index' if doc_id == 'artifact_index' else ('final' if doc_id == 'final_answer' else 'shared')),
                 'target_roles': [],
             })
     default_load_surface_ids = [_clean_text(v, max_len=64).lower() for v in _as_list(row.get('default_load_surface_ids') or row.get('defaultLoadSurfaceIds')) if _clean_text(v, max_len=64)][:12]
