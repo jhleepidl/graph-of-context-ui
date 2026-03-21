@@ -690,11 +690,13 @@ def build_team_view_projection(
 
     synthesized_count = sum(1 for item in items if bool(item.get("synthesized")))
     preset_count = sum(1 for item in items if str(item.get("preset_id") or "").strip())
+    blueprint_summary = (runtime_snapshot or {}).get("blueprint_summary") if isinstance(runtime_snapshot, dict) else None
     return {
         "items": items,
         "count": len(items),
         "preset_count": preset_count,
         "synthesized_count": synthesized_count,
+        "blueprint_summary": blueprint_summary if isinstance(blueprint_summary, dict) else None,
     }
 
 
@@ -737,6 +739,7 @@ def build_why_this_team_projection(
         "conversation_preferences": snapshot.get("conversation_preferences"),
         "preset_count": int(team_view.get("preset_count") or 0),
         "synthesized_count": int(team_view.get("synthesized_count") or 0),
+        "blueprint_summary": snapshot.get("blueprint_summary") if isinstance(snapshot.get("blueprint_summary"), dict) else None,
     }
 
 

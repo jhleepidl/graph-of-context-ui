@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, diffThreadTeamManifest, exportThreadTeamManifest, installThreadTeamManifest, validateThreadTeamManifest } from '../api'
+import { api, diffThreadTeamManifest, exportThreadTeamManifest, installThreadTeamManifest, listThreadTeamBlueprintTemplates, validateThreadTeamManifest } from '../api'
 import { copyText } from '../utils/clipboard'
 import TopologyCanvasEditor from './TopologyCanvasEditor'
 
@@ -130,6 +130,16 @@ type TeamCatalogItem = {
   manifest: Record<string, any>
 }
 
+type TeamBlueprintTemplateItem = {
+  taskArchetype: string
+  title: string
+  description: string
+  tags: string[]
+  goodFor: string[]
+  badFor: string[]
+  blueprintDocument: Record<string, any>
+}
+
 function asString(value: unknown): string {
   if (typeof value === 'string') return value.trim()
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
@@ -185,8 +195,9 @@ function toStringList(value: unknown): string[] {
 }
 
 function deriveTeamBlueprintTitle(manifest: Record<string, any> | null): string {
-  const team = asObject(manifest?.team || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
-  const structure = asObject(manifest?.structure_v2 || asObject(team).structure_v2)
+  const blueprint = asObject(manifest?.blueprint)
+  const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
+  const structure = asObject(blueprint?.structure || manifest?.structure || manifest?.structure_v2 || asObject(team).structure || asObject(team).structure_v2)
   const participants = Array.isArray(structure?.participants) ? structure.participants : []
   return (
     asString(manifest?.title)
@@ -198,8 +209,9 @@ function deriveTeamBlueprintTitle(manifest: Record<string, any> | null): string 
 }
 
 function deriveTeamBlueprintSummary(manifest: Record<string, any> | null): string {
-  const team = asObject(manifest?.team || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
-  const structure = asObject(manifest?.structure_v2 || asObject(team).structure_v2)
+  const blueprint = asObject(manifest?.blueprint)
+  const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
+  const structure = asObject(blueprint?.structure || manifest?.structure || manifest?.structure_v2 || asObject(team).structure || asObject(team).structure_v2)
   const pattern = asString(structure?.topology?.pattern || structure?.execution_pattern || team?.interaction_spec?.execution_pattern)
   const participants = Array.isArray(structure?.participants) ? structure.participants : []
   const labels = participants
@@ -228,6 +240,22 @@ function resourceNodeToTeamCatalogItem(node: GraphResourceNode): TeamCatalogItem
     tags: [...new Set(toStringList(payload.tags))],
     recommendedFor: [...new Set(toStringList(payload.recommended_for || payload.good_for || payload.use_cases))],
     manifest,
+  }
+}
+
+
+function normalizeTemplateItem(raw: any): TeamBlueprintTemplateItem | null {
+  if (!raw || typeof raw !== 'object') return null
+  const blueprintDocument = asObject(raw.blueprint_document || raw.blueprintDocument)
+  if (!Object.keys(blueprintDocument).length) return null
+  return {
+    taskArchetype: asString(raw.task_archetype || raw.taskArchetype) || 'implementation',
+    title: asString(raw.title) || 'Blueprint Template',
+    description: asString(raw.description),
+    tags: [...new Set(toStringList(raw.tags))],
+    goodFor: [...new Set(toStringList(raw.good_for || raw.goodFor))],
+    badFor: [...new Set(toStringList(raw.bad_for || raw.badFor))],
+    blueprintDocument: blueprintDocument as Record<string, any>,
   }
 }
 
@@ -329,7 +357,7 @@ function parseJsonObjectDraft(raw: string, label: string): Record<string, any> {
 }
 
 function extractKnowledgeEditorsFromManifest(manifest: Record<string, any> | null): { knowledgeSurface: Record<string, any>; memoryPolicy: Record<string, any> } {
-  const structure = asObject(manifest?.structure_v2 || manifest?.team?.structure_v2)
+  const structure = asObject(manifest?.blueprint?.structure || manifest?.structure || manifest?.structure_v2 || manifest?.team?.structure || manifest?.team?.structure_v2)
   const knowledgeSurface = asObject(structure?.knowledge_surface || structure?.knowledgeSurface || manifest?.team?.knowledge_surface || manifest?.team?.knowledgeSurface || manifest?.team?.knowledge_base_profile)
   const memoryPolicy = asObject(structure?.memory_policy || structure?.memoryPolicy || manifest?.team?.memory_policy || manifest?.team?.memoryPolicy || knowledgeSurface?.memory_policy)
   return { knowledgeSurface, memoryPolicy }
@@ -509,7 +537,7 @@ function applyKnowledgeEditorsToManifest(
 }
 
 function extractTopologyFormState(manifest: Record<string, any> | null): TopologyEditorFormState {
-  const structure = asObject(manifest?.structure_v2 || manifest?.team?.structure_v2)
+  const structure = asObject(manifest?.blueprint?.structure || manifest?.structure || manifest?.structure_v2 || manifest?.team?.structure || manifest?.team?.structure_v2)
   const participantsRaw = Array.isArray(structure?.participants) ? structure.participants : []
   const topology = asObject(structure?.topology)
   const nodesRaw = Array.isArray(topology?.nodes) ? topology.nodes : []
@@ -635,7 +663,7 @@ function applyTopologyEditorsToManifest(
 }
 
 function extractRuntimeExecutionFormState(manifest: Record<string, any> | null): RuntimeExecutionEditorFormState {
-  const structure = asObject(manifest?.structure_v2 || manifest?.team?.structure_v2)
+  const structure = asObject(manifest?.blueprint?.structure || manifest?.structure || manifest?.structure_v2 || manifest?.team?.structure || manifest?.team?.structure_v2)
   const controlPolicy = asObject(structure?.control_policy || structure?.controlPolicy)
   const runtimeExecution = asObject(controlPolicy?.runtime_execution || controlPolicy?.runtimeExecution || manifest?.team?.runtime_execution || manifest?.team?.runtimeExecution)
   const checkpointing = asObject(runtimeExecution?.checkpointing)
@@ -827,6 +855,8 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const [teamBlueprintSummary, setTeamBlueprintSummary] = useState('')
   const [teamBlueprintTagsDraft, setTeamBlueprintTagsDraft] = useState('')
   const [teamBlueprintGoodForDraft, setTeamBlueprintGoodForDraft] = useState('')
+  const [teamBlueprintTemplates, setTeamBlueprintTemplates] = useState<TeamBlueprintTemplateItem[]>([])
+  const [teamBlueprintTemplateError, setTeamBlueprintTemplateError] = useState('')
 
   const memberLineageKeySet = useMemo(() => {
     const out = new Set<string>()
@@ -839,6 +869,24 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
     () => availableAgents.filter((agent) => !memberLineageKeySet.has(lineageKeyForAgent(agent))),
     [availableAgents, memberLineageKeySet],
   )
+
+
+  const reloadBlueprintTemplates = useCallback(async () => {
+    if (!threadId) {
+      setTeamBlueprintTemplates([])
+      setTeamBlueprintTemplateError('')
+      return
+    }
+    try {
+      const out = await listThreadTeamBlueprintTemplates(threadId)
+      const rows = Array.isArray(out?.items) ? out.items : []
+      setTeamBlueprintTemplates(rows.map((row: any) => normalizeTemplateItem(row)).filter(Boolean) as TeamBlueprintTemplateItem[])
+      setTeamBlueprintTemplateError('')
+    } catch (e) {
+      setTeamBlueprintTemplates([])
+      setTeamBlueprintTemplateError(e instanceof Error ? e.message : String(e))
+    }
+  }, [threadId])
 
   const refresh = useCallback(async () => {
     if (!threadId) {
@@ -888,6 +936,10 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   useEffect(() => {
     void refresh()
   }, [threadId, refreshKey, refresh])
+
+  useEffect(() => {
+    void reloadBlueprintTemplates()
+  }, [threadId, refreshKey, reloadBlueprintTemplates])
 
   function applyConversationResponse(raw: any) {
     const next = normalizeConversation(raw)
@@ -1012,20 +1064,29 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   function parseManifestDraft(): Record<string, any> | null {
     const raw = manifestDraft.trim()
     if (!raw) {
-      setManifestError('manifest JSON을 먼저 불러오거나 입력하세요.')
+      setManifestError('blueprint JSON을 먼저 불러오거나 입력하세요.')
       return null
     }
     try {
       const value = JSON.parse(raw)
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        setManifestError('manifest는 JSON object여야 합니다.')
+        setManifestError('blueprint는 JSON object여야 합니다.')
         return null
       }
       return value as Record<string, any>
     } catch {
-      setManifestError('manifest JSON 파싱에 실패했습니다.')
+      setManifestError('blueprint JSON 파싱에 실패했습니다.')
       return null
     }
+  }
+
+
+  function handleLoadBlueprintTemplate(template: TeamBlueprintTemplateItem) {
+    setManifestError('')
+    setManifestStatus(`template blueprint를 draft에 불러왔습니다: ${template.title}`)
+    setManifestValidation(null)
+    setManifestDiff(null)
+    setManifestDraft(JSON.stringify(template.blueprintDocument, null, 2))
   }
 
   async function handleExportManifest() {
@@ -1038,7 +1099,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       const manifest = out?.manifest || out || {}
       setManifestDraft(JSON.stringify(manifest, null, 2))
       setManifestValidation(null)
-      setManifestStatus('현재 thread team을 manifest로 불러왔습니다.')
+      setManifestStatus('현재 thread team blueprint를 불러왔습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1057,7 +1118,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       const out = await diffThreadTeamManifest(threadId, { manifest, apply_state: manifestApplyState })
       setManifestDiff(out)
       if (out?.candidate_manifest) setManifestDraft(JSON.stringify(out.candidate_manifest, null, 2))
-      setManifestStatus('manifest diff preview를 갱신했습니다.')
+      setManifestStatus('blueprint diff preview를 갱신했습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1077,7 +1138,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestValidation(out)
       setManifestDiff(null)
       if (out?.manifest) setManifestDraft(JSON.stringify(out.manifest, null, 2))
-      setManifestStatus(out?.ok ? 'manifest validation 성공' : 'manifest validation에서 수정이 필요합니다.')
+      setManifestStatus(out?.ok ? 'blueprint validation 성공' : 'blueprint validation에서 수정이 필요합니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1098,7 +1159,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestDraft(JSON.stringify(normalizedManifest, null, 2))
       setManifestValidation({ ok: true, manifest: normalizedManifest, apply_state: manifestApplyState })
       setManifestDiff(null)
-      setManifestStatus(`manifest를 ${manifestApplyState === 'active' ? 'active' : 'pending'} team에 설치했습니다.`)
+      setManifestStatus(`blueprint를 ${manifestApplyState === 'active' ? 'active' : 'pending'} team에 설치했습니다.`)
       await refresh()
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
@@ -1162,7 +1223,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
         manifest = ((await exportThreadTeamManifest(threadId))?.manifest || {}) as Record<string, any>
       }
       if (!manifest || Object.keys(manifest).length === 0) {
-        throw new Error('저장할 manifest를 준비하지 못했습니다.')
+        throw new Error('저장할 blueprint를 준비하지 못했습니다.')
       }
       const title = teamBlueprintTitle.trim() || deriveTeamBlueprintTitle(manifest)
       const summary = teamBlueprintSummary.trim() || deriveTeamBlueprintSummary(manifest)
@@ -1178,7 +1239,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
         recommended_for: recommendedFor,
         exported_from_thread_id: threadId,
         exported_at: new Date().toISOString(),
-        schema_kind: asString(manifest?.kind) || 'ddalggak_team_manifest',
+        schema_kind: asString(manifest?.kind) || 'ddalggak_team_blueprint',
       }
       await api.createResource(catalogThreadId, {
         name: title,
@@ -1247,7 +1308,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const patternRecoverySummary = effectiveManifest?.pattern_recovery || null
   const teamConfigSummary = effectiveManifest?.team_config || null
   const compatibilityTeamSummary = effectiveManifest?.team || null
-  const manifestPrimarySchema = asString(effectiveManifest?.primary_schema || 'structure_v2') || 'structure_v2'
+  const manifestPrimarySchema = asString(effectiveManifest?.primary_schema || 'team_blueprint_v1') || 'team_blueprint_v1'
   const validationSummary = structureSummary?.validation || {}
   const topologyNodes = Array.isArray(structureSummary?.topology?.nodes) ? structureSummary.topology.nodes : []
   const topologyEdges = Array.isArray(structureSummary?.topology?.edges) ? structureSummary.topology.edges : []
@@ -1336,7 +1397,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestDraft(JSON.stringify(nextManifest, null, 2))
       setManifestValidation(null)
       setManifestDiff(null)
-      setManifestStatus('knowledge surface / memory policy를 manifest draft에 반영했습니다.')
+      setManifestStatus('memory plan / knowledge settings를 blueprint draft에 반영했습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     }
@@ -1361,7 +1422,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestDraft(JSON.stringify(nextManifest, null, 2))
       setManifestValidation(null)
       setManifestDiff(null)
-      setManifestStatus('structure_v2 topology / participants를 manifest draft에 반영했습니다.')
+      setManifestStatus('topology / participants를 blueprint draft에 반영했습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     }
@@ -1400,7 +1461,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestDraft(JSON.stringify(nextManifest, null, 2))
       setManifestValidation(null)
       setManifestDiff(null)
-      setManifestStatus('runtime_execution policy를 manifest draft에 반영했습니다.')
+      setManifestStatus('runtime_execution policy를 blueprint draft에 반영했습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     }
@@ -1417,7 +1478,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
         <button onClick={() => void refresh()} disabled={loading}>{loading ? 'Loading...' : 'Refresh'}</button>
       </div>
       <div className="muted" style={{ marginBottom: 8 }}>
-        이 패널은 두 층을 함께 다룹니다. 위의 manifest editor는 ddalggak의 canonical team/structure_v2를 다루고, 아래 roster editor는 compatibility membership를 빠르게 조정하는 용도입니다.
+        이 패널은 canonical Team Blueprint를 편집하고, 아래 roster editor는 빠른 membership 조정을 위한 보조 도구입니다.
       </div>
       {error && <div className="routeStatus routeStatusError">{error}</div>}
       {status && <div className="routeStatus">{status}</div>}
@@ -1442,7 +1503,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <b>ddalggak Team Manifest</b>
+          <b>ddalggak Team Blueprint</b>
           <div className="row" style={{ gap: 8 }}>
             <select value={manifestApplyState} onChange={(e) => setManifestApplyState((e.target.value === 'pending' ? 'pending' : 'active'))}>
               <option value="active">install as active</option>
@@ -1457,19 +1518,19 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
           </div>
         </div>
         <div className="muted" style={{ marginTop: 6, marginBottom: 8 }}>
-          Thread team을 ddalggak manifest로 export/validate/install 합니다. structure_v2가 이제 primary schema이고, legacy team payload는 compatibility용으로 함께 유지됩니다.
+          Thread team을 ddalggak blueprint로 export/validate/install 합니다. team_blueprint_v1가 canonical schema입니다.
         </div>
         {manifestError && <div className="routeStatus routeStatusError">{manifestError}</div>}
         {manifestStatus && <div className="routeStatus">{manifestStatus}</div>}
         <label className="routeLabel" style={{ marginTop: 8 }}>
-          manifest JSON
+          blueprint JSON
           <textarea
             value={manifestDraft}
             onChange={(e) => setManifestDraft(e.target.value)}
             style={{ minHeight: 220, fontFamily: 'monospace' }}
             placeholder={`{
-  "kind": "ddalggak_team_manifest",
-  "primary_schema": "structure_v2",
+  "kind": "ddalggak_team_blueprint",
+  "primary_schema": "team_blueprint_v1",
   "structure_v2": {
     "kind": "team_structure_v2",
     "version": 2,
@@ -1539,7 +1600,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
           <div style={{ marginTop: 10 }}>
             <div><b>Manifest runtime summary</b></div>
             <div className="muted" style={{ marginTop: 4 }}>
-              kind={String(effectiveManifest?.kind || 'ddalggak_team_manifest')} · version={String(effectiveManifest?.version || '1')} · apply_state={String(effectiveManifest?.apply_state || manifestApplyState)} · primary_schema={manifestPrimarySchema}
+              kind={String(effectiveManifest?.kind || 'ddalggak_team_blueprint')} · version={String(effectiveManifest?.version || '1')} · apply_state={String(effectiveManifest?.apply_state || manifestApplyState)} · primary_schema={manifestPrimarySchema}
             </div>
             <div className="muted" style={{ marginTop: 4 }}>
               team_config status={String(teamConfigSummary?.status || '(unknown)')} · active_agents={Number(teamConfigSummary?.active_team?.agents?.length || 0)} · pending_agents={Number(teamConfigSummary?.pending_team?.agents?.length || 0)}
@@ -1678,7 +1739,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                 }}>
                   Reload from manifest
                 </button>
-                <button onClick={() => void handleApplyKnowledgeEditors()} disabled={manifestBusy !== null}>Apply KB to manifest draft</button>
+                <button onClick={() => void handleApplyKnowledgeEditors()} disabled={manifestBusy !== null}>Apply KB to blueprint draft</button>
               </div>
             </div>
           </div>
@@ -1818,7 +1879,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                   setGeminiExtraEnvDraft(formState.geminiExtraEnvDraft)
                   setGeminiMcpServersDraft(formState.geminiMcpServersDraft)
                 }}>Reload runtime policy from manifest</button>
-                <button onClick={() => void handleApplyRuntimeExecutionEditors()} disabled={manifestBusy !== null}>Apply runtime policy to manifest draft</button>
+                <button onClick={() => void handleApplyRuntimeExecutionEditors()} disabled={manifestBusy !== null}>Apply runtime policy to blueprint draft</button>
               </div>
             </div>
           </div>
@@ -1982,7 +2043,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                   setTopologyNodeRows(formState.nodes)
                   setTopologyEdgeRows(formState.edges)
                 }}>Reload topology from manifest</button>
-                <button onClick={() => void handleApplyTopologyEditors()} disabled={manifestBusy !== null}>Apply topology to manifest draft</button>
+                <button onClick={() => void handleApplyTopologyEditors()} disabled={manifestBusy !== null}>Apply topology to blueprint draft</button>
               </div>
             </div>
             {Array.isArray(structureSummary?.participants) && structureSummary.participants.length > 0 && (
@@ -2156,9 +2217,9 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
         )}
       </div>
 
-      <div style={{ marginTop: 16 }}><b>Agent Team catalog</b></div>
+      <div style={{ marginTop: 16 }}><b>Agent Team blueprint catalog</b></div>
       <div className="muted" style={{ marginTop: 4 }}>
-        현재 thread의 manifest를 재사용 가능한 team card로 저장하고, 같은 서비스의 다른 thread에 다시 설치할 수 있습니다.
+        현재 thread의 blueprint를 재사용 가능한 team card로 저장하고, 같은 서비스의 다른 thread에 다시 설치할 수 있습니다.
       </div>
       {teamCatalogError && <div className="routeStatus routeStatusError" style={{ marginTop: 8 }}>{teamCatalogError}</div>}
       {teamCatalogStatus && <div className="routeStatus" style={{ marginTop: 8 }}>{teamCatalogStatus}</div>}
@@ -2235,7 +2296,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
 
       <div style={{ marginTop: 16 }}><b>Compatibility roster editor</b></div>
       <div className="muted" style={{ marginTop: 4, marginBottom: 8 }}>
-        아래 편집기는 빠른 membership 조정용입니다. structure_v2가 있는 팀에서는 manifest export/validate/install이 기준 경로입니다.
+        아래 편집기는 빠른 membership 조정용입니다. structure_v2가 있는 팀에서는 blueprint export/validate/install이 기준 경로입니다.
       </div>
       <div className="routeTableWrap">
         <table className="routeTable">

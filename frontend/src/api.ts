@@ -192,15 +192,20 @@ function parseDownloadFilename(contentDisposition: string | null, fallback: stri
 }
 
 
+
+export function listThreadTeamBlueprintTemplates(threadId: string) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/blueprint/templates`))
+}
+
 export function exportThreadTeamManifest(threadId: string) {
-  return j<any>(apiFetch(`/api/threads/${threadId}/team/manifest`))
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/blueprint`))
 }
 
 export function validateThreadTeamManifest(
   threadId: string,
   body: { manifest: Record<string, any>; apply_state?: "active" | "pending" },
 ) {
-  return j<any>(apiFetch(`/api/threads/${threadId}/team/manifest/validate`, {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/blueprint/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -211,7 +216,7 @@ export function diffThreadTeamManifest(
   threadId: string,
   body: { manifest: Record<string, any>; apply_state?: "active" | "pending" },
 ) {
-  return j<any>(apiFetch(`/api/threads/${threadId}/team/manifest/diff`, {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/blueprint/diff`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -222,7 +227,7 @@ export function installThreadTeamManifest(
   threadId: string,
   body: { manifest: Record<string, any>; apply_state?: "active" | "pending" },
 ) {
-  return j<any>(apiFetch(`/api/threads/${threadId}/team/install`, {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/blueprint/install`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),

@@ -163,6 +163,25 @@ export type RuntimeAgentWithSkills = {
   interaction_contract?: Record<string, unknown> | null
 }
 
+export type TeamBlueprintSummary = {
+  source?: string | null
+  blueprint_id?: string | null
+  title?: string | null
+  task_archetype?: string | null
+  description?: string | null
+  topology_pattern?: string | null
+  execution_pattern?: string | null
+  memory_surface_count?: number | null
+  memory_map?: Array<{
+    surface_id?: string | null
+    file_name?: string | null
+    load_policy?: string | null
+    write_policy?: string | null
+    target_roles?: string[]
+    semantic_slots?: string[]
+  }>
+}
+
 export type RuntimeAgentInstanceV2 = RuntimeAgentWithSkills & {
   display_label?: string | null
   role_label?: string | null
@@ -181,6 +200,7 @@ export type TeamViewProjection = {
   count?: number
   preset_count?: number
   synthesized_count?: number
+  blueprint_summary?: TeamBlueprintSummary | null
 }
 
 export type ScopeProjection = {
@@ -241,6 +261,7 @@ export type VisibilityProjection = {
 }
 
 export type WhyThisTeamProjection = {
+  blueprint_summary?: TeamBlueprintSummary | null
   selection_explanations?: Array<Record<string, unknown>>
   slot_reasons?: Array<{
     slot_id?: string | null

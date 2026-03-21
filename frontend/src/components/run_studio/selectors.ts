@@ -513,6 +513,7 @@ export function selectEffectiveTeamView(summary: RunStudioSummary | null, detail
     count: rawProjection?.count ?? items.length,
     preset_count: presetCount,
     synthesized_count: synthesizedCount,
+    blueprint_summary: rawProjection?.blueprint_summary || runSkills?.team_view?.blueprint_summary || null,
   }
 }
 
@@ -585,6 +586,7 @@ export function selectEffectiveWhyThisTeam(
     .filter((item): item is NonNullable<typeof item> => Boolean(item))
 
   return {
+    blueprint_summary: rawProjection?.blueprint_summary || teamView?.blueprint_summary || null,
     selection_explanations: rawProjection?.selection_explanations || [],
     slot_reasons: rawProjection?.slot_reasons?.length ? rawProjection.slot_reasons : derivedSlotReasons,
     agent_reasons: rawProjection?.agent_reasons?.length ? rawProjection.agent_reasons : derivedAgentReasons,

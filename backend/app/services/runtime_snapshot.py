@@ -680,6 +680,50 @@ def normalize_sequential_after(value: Any) -> dict[str, list[str]]:
     return out
 
 
+def normalize_memory_map_summary(value: Any) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    out: list[dict[str, Any]] = []
+    for raw in rows:
+        row = normalize_mapping(raw)
+        if not row:
+            continue
+        surface_id = clean_text(row.get("surface_id") or row.get("surfaceId") or row.get("file_name") or row.get("fileName"))
+        if not surface_id:
+            continue
+        target_roles = clean_list_of_text(row.get("target_roles") or row.get("targetRoles"), limit=8)
+        semantic_slots = clean_list_of_text(row.get("semantic_slots") or row.get("semanticSlots"), limit=8)
+        out.append({
+            "surface_id": surface_id,
+            "file_name": clean_text(row.get("file_name") or row.get("fileName")) or None,
+            "load_policy": clean_text(row.get("load_policy") or row.get("loadPolicy")) or None,
+            "write_policy": clean_text(row.get("write_policy") or row.get("writePolicy")) or None,
+            "target_roles": target_roles,
+            "semantic_slots": semantic_slots,
+        })
+        if len(out) >= 12:
+            break
+    return out
+
+
+def normalize_blueprint_summary(value: Any) -> dict[str, Any] | None:
+    row = normalize_mapping(value)
+    if not row:
+        return None
+    memory_map = normalize_memory_map_summary(row.get("memory_map") or row.get("memoryMap"))
+    out = {
+        "source": clean_text(row.get("source")) or None,
+        "blueprint_id": clean_text(row.get("blueprint_id") or row.get("blueprintId")) or None,
+        "title": clean_text(row.get("title")) or None,
+        "task_archetype": clean_text(row.get("task_archetype") or row.get("taskArchetype")) or None,
+        "description": clean_text(row.get("description")) or None,
+        "topology_pattern": clean_text(row.get("topology_pattern") or row.get("topologyPattern")) or None,
+        "execution_pattern": clean_text(row.get("execution_pattern") or row.get("executionPattern")) or None,
+        "memory_surface_count": int(row.get("memory_surface_count") or row.get("memorySurfaceCount") or len(memory_map) or 0),
+        "memory_map": memory_map,
+    }
+    return {key: value for key, value in out.items() if value not in (None, [], {}, "")} or None
+
+
 def normalize_execution_graph(value: Any) -> dict[str, Any] | None:
     raw = normalize_mapping(value)
     if not raw:
@@ -722,6 +766,10 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
     if task_interpretation:
         out["task_interpretation"] = task_interpretation
 
+    blueprint_summary = normalize_blueprint_summary(first_present(raw, ("blueprint_summary", "blueprintSummary")))
+    if blueprint_summary:
+        out["blueprint_summary"] = blueprint_summary
+
     raw_team_plan = parse_jsonish(first_present(raw, TEAM_PLAN_KEYS))
     team_plan: dict[str, Any] | None = None
     if isinstance(raw_team_plan, dict) and team_plan_v2_hints(raw_team_plan):
@@ -758,6 +806,10 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
         context_runtime_mode = clean_text(first_present(team_plan, CONTEXT_RUNTIME_MODE_KEYS))
         normalized_team_plan = dict(team_plan)
         normalized_team_plan["slots"] = normalized_slots
+        normalized_blueprint_summary = normalize_blueprint_summary(team_plan.get("blueprint_summary") or team_plan.get("blueprintSummary"))
+        if normalized_blueprint_summary:
+            normalized_team_plan["blueprint_summary"] = normalized_blueprint_summary
+            out.setdefault("blueprint_summary", normalized_blueprint_summary)
         normalized_team_plan["supervisor_runtime"] = supervisor_runtime
         if normalized_scope_specs:
             normalized_team_plan["scope_specs"] = normalized_scope_specs

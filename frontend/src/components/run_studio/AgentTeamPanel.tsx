@@ -133,6 +133,7 @@ export default function AgentTeamPanel({
   const degradedMode = Boolean(authority?.degraded_mode ?? legacyTeam?.degraded_mode)
   const fallbackReason = String(authority?.fallback_reason || legacyTeam?.fallback_reason || '').trim()
   const teamContracts = summarizeTeamContracts(legacyTeam?.team_config)
+  const blueprintSummary = teamView?.blueprint_summary || null
 
   const grouped = new Map<string, RuntimeAgentInstanceV2[]>()
   items.forEach((item) => {
@@ -169,6 +170,32 @@ export default function AgentTeamPanel({
         <div className="runStudioWarning">
           <b>Fallback reason:</b> {fallbackReason}
         </div>
+      )}
+
+
+      {blueprintSummary && (
+        <section className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>
+          <div className="row" style={{ marginBottom: 6 }}>
+            <b>Selected Team Template</b>
+            {blueprintSummary.task_archetype && <span className="pill">{blueprintSummary.task_archetype}</span>}
+            {blueprintSummary.execution_pattern && <span className="pill">pattern: {blueprintSummary.execution_pattern}</span>}
+          </div>
+          <div className="muted">template: {cleanText(blueprintSummary.title) || '-'}</div>
+          {cleanText(blueprintSummary.source) && <div className="muted">source: {cleanText(blueprintSummary.source)}</div>}
+          {cleanText(blueprintSummary.description) && <div className="muted">{cleanText(blueprintSummary.description)}</div>}
+          <div className="muted">memory surfaces: {Number(blueprintSummary.memory_surface_count || blueprintSummary.memory_map?.length || 0)}</div>
+          {(blueprintSummary.memory_map || []).length > 0 && (
+            <div className="muted" style={{ marginTop: 6 }}>
+              {(blueprintSummary.memory_map || []).slice(0, 6).map((surface, index) => (
+                <div key={`bp-surface-${index}`}>
+                  {cleanText(surface.surface_id || surface.file_name) || 'surface'}
+                  {cleanText(surface.load_policy) ? ` · load=${cleanText(surface.load_policy)}` : ''}
+                  {cleanText(surface.write_policy) ? ` · write=${cleanText(surface.write_policy)}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {teamContracts.length > 0 && (

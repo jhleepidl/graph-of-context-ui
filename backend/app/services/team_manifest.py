@@ -912,6 +912,11 @@ def _build_structure_v2_from_team(team_payload: Any, *, apply_state: str = 'pend
         _as_dict(_as_dict(team.get('structure_v2')).get('memory_policy')) or team.get('memory_policy') or team.get('memoryPolicy'),
         knowledge_surface=knowledge_surface,
     )
+    memory_plan = _normalize_memory_plan(
+        _as_dict(_as_dict(team.get('structure_v2')).get('memory_plan')) or team.get('memory_plan') or team.get('memoryPlan'),
+        knowledge_surface=knowledge_surface,
+        memory_policy=memory_policy,
+    )
     return {
         'kind': 'team_structure_v2',
         'version': 2,
@@ -976,6 +981,7 @@ def _build_structure_v2_from_team(team_payload: Any, *, apply_state: str = 'pend
         },
         'knowledge_surface': knowledge_surface,
         'memory_policy': memory_policy,
+        'memory_plan': memory_plan,
         'requirements': _normalize_requirements(team.get('requirements'), team),
         'runtime_state': {
             'apply_state': 'active' if _clean_text(apply_state, max_len=16).lower() == 'active' else 'pending',
@@ -1026,6 +1032,11 @@ def _normalize_structure_v2(raw: Any, *, team_payload: Any = None, apply_state: 
     memory_policy = _normalize_memory_policy(
         row.get('memory_policy') or row.get('memoryPolicy') or (_as_dict(team_payload).get('memory_policy') if isinstance(team_payload, dict) else None),
         knowledge_surface=knowledge_surface,
+    )
+    memory_plan = _normalize_memory_plan(
+        row.get('memory_plan') or row.get('memoryPlan') or (_as_dict(team_payload).get('memory_plan') if isinstance(team_payload, dict) else None),
+        knowledge_surface=knowledge_surface,
+        memory_policy=memory_policy,
     )
     return {
         'kind': 'team_structure_v2',
@@ -1168,11 +1179,13 @@ def _derive_team_from_structure_v2(raw: Any) -> dict[str, Any]:
         },
         'knowledge_surface': _as_dict(structure.get('knowledge_surface')),
         'memory_policy': _as_dict(structure.get('memory_policy')),
+        'memory_plan': _as_dict(structure.get('memory_plan')),
         'knowledge_base_profile': {
             'profile_id': _clean_text(_as_dict(structure.get('knowledge_surface')).get('profile_id') or 'default_kb', max_len=128) or 'default_kb',
             'display_name': _clean_text(_as_dict(structure.get('knowledge_surface')).get('display_name') or 'Default Knowledge Base', max_len=160) or 'Default Knowledge Base',
             'docs': _as_list(_as_dict(structure.get('knowledge_surface')).get('docs'))[:16],
             'memory_policy': _as_dict(structure.get('memory_policy')),
+        'memory_plan': _as_dict(structure.get('memory_plan')),
             'stable_memory_files': _as_list(_as_dict(structure.get('knowledge_surface')).get('stable_memory_files'))[:16],
         },
         'requirements': _normalize_requirements(structure.get('requirements'), {}),
@@ -1257,6 +1270,7 @@ def _normalize_manifest(manifest: Any, *, fallback_thread: Thread | None = None,
         "temporary_execution_override": _clean_text((temporary_execution_override or {}).get('effective_pattern') or (temporary_execution_override or {}).get('mode'), max_len=64) or None,
         "pattern_recovery": _clean_text((pattern_recovery or {}).get('recovery_mode') or (pattern_recovery or {}).get('original_pattern'), max_len=64) or None,
         "knowledge_doc_count": len(_as_list(_as_dict(structure_v2.get('knowledge_surface')).get('docs'))),
+        "memory_surface_count": len(_as_list(_as_dict(structure_v2.get('memory_plan')).get('surfaces'))),
         "stable_memory_slot_count": len(_as_list(_as_dict(structure_v2.get('memory_policy')).get('stable_semantic_slots'))),
         "continuous_improvement_enabled": _as_dict(_as_dict(structure_v2.get('control_policy')).get('runtime_execution')).get('continuous_improvement', {}).get('enabled') is True,
         "codex_sandbox_mode": _clean_text(_as_dict(_as_dict(_as_dict(structure_v2.get('control_policy')).get('runtime_execution')).get('providers')).get('codex').get('sandbox_mode'), max_len=64) or None,
@@ -1265,9 +1279,9 @@ def _normalize_manifest(manifest: Any, *, fallback_thread: Thread | None = None,
     }
 
     manifest_out = {
-        "kind": "ddalggak_team_manifest",
-        "version": 2,
-        "primary_schema": "structure_v2",
+        "kind": "ddalggak_team_blueprint",
+        "version": 1,
+        "primary_schema": "team_blueprint_v1",
         "thread_id": _clean_text(raw.get("thread_id") or (fallback_thread.id if fallback_thread else ""), max_len=128) or None,
         "service_id": _clean_text(raw.get("service_id") or (fallback_thread.service_id if fallback_thread else ""), max_len=128) or None,
         "status": status,
@@ -1604,3 +1618,57 @@ def install_thread_team_manifest(session: Session, thread: Thread, manifest: Any
     }
     saved = save_team_config_payload(session, thread_id=thread.id, payload=next_payload)
     return _normalize_manifest(saved, fallback_thread=thread, fallback_apply_state=clean_state)
+
+def _normalize_memory_plan(raw: Any, *, knowledge_surface: Any = None, memory_policy: Any = None) -> dict[str, Any]:
+    row = _as_dict(raw)
+    clean_surface = _as_dict(knowledge_surface)
+    clean_policy = _as_dict(memory_policy)
+    surfaces = []
+    seen = set()
+    for item in _as_list(row.get('surfaces')):
+        surface = _as_dict(item)
+        surface_id = _clean_text(surface.get('surface_id') or surface.get('id'), max_len=64).lower()
+        if not surface_id or surface_id in seen:
+            continue
+        seen.add(surface_id)
+        surfaces.append({
+            'surface_id': surface_id,
+            'title': _clean_text(surface.get('title') or surface.get('label') or surface_id.replace('_', ' ').title(), max_len=160) or surface_id.replace('_', ' ').title(),
+            'kind': _clean_text(surface.get('kind') or 'shared_doc', max_len=64).lower() or 'shared_doc',
+            'file_name': _clean_text(surface.get('file_name') or surface.get('fileName') or f'{surface_id}.md', max_len=160) or f'{surface_id}.md',
+            'load': _clean_text(surface.get('load') or 'on_demand', max_len=64).lower() or 'on_demand',
+            'write_policy': _clean_text(surface.get('write_policy') or surface.get('writePolicy') or 'owner_only', max_len=64).lower() or 'owner_only',
+            'target_roles': [_clean_text(v, max_len=64).lower() for v in _as_list(surface.get('target_roles') or surface.get('targetRoles')) if _clean_text(v, max_len=64)][:8],
+        })
+    if not surfaces:
+        docs = _as_list(clean_surface.get('docs'))
+        for item in docs[:16]:
+            doc = _as_dict(item)
+            doc_id = _clean_text(doc.get('doc_id') or doc.get('id'), max_len=64).lower()
+            if not doc_id or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            surfaces.append({
+                'surface_id': doc_id,
+                'title': _clean_text(doc.get('title') or doc_id.replace('_', ' ').title(), max_len=160) or doc_id.replace('_', ' ').title(),
+                'kind': 'shared_doc',
+                'file_name': _clean_text(doc.get('file_name') or doc.get('fileName') or f'{doc_id}.md', max_len=160) or f'{doc_id}.md',
+                'load': 'always' if doc_id in {'mission_brief', 'working_memory', 'final_answer', 'artifact_index'} else 'on_demand',
+                'write_policy': 'shared_append' if doc_id in {'working_memory', 'artifact_index'} else ('final_owner' if doc_id == 'final_answer' else 'owner_only'),
+                'target_roles': [],
+            })
+    default_load_surface_ids = [_clean_text(v, max_len=64).lower() for v in _as_list(row.get('default_load_surface_ids') or row.get('defaultLoadSurfaceIds')) if _clean_text(v, max_len=64)][:12]
+    if not default_load_surface_ids:
+        default_load_surface_ids = [surface['surface_id'] for surface in surfaces if surface.get('load') == 'always']
+    writable_surface_ids = [_clean_text(v, max_len=64).lower() for v in _as_list(row.get('writable_surface_ids') or row.get('writableSurfaceIds')) if _clean_text(v, max_len=64)][:12]
+    if not writable_surface_ids:
+        writable_surface_ids = [surface['surface_id'] for surface in surfaces if surface.get('write_policy') not in {'read_only', 'none'}]
+    return {
+        'plan_id': _clean_text(row.get('plan_id') or row.get('planId') or clean_surface.get('profile_id') or 'default_memory_plan', max_len=128) or 'default_memory_plan',
+        'display_name': _clean_text(row.get('display_name') or row.get('displayName') or clean_surface.get('display_name') or 'Default Memory Plan', max_len=160) or 'Default Memory Plan',
+        'surfaces': surfaces[:16],
+        'default_load_surface_ids': default_load_surface_ids[:12],
+        'writable_surface_ids': writable_surface_ids[:12],
+        'migration_strategy': _clean_text(row.get('migration_strategy') or row.get('migrationStrategy') or clean_policy.get('migration_strategy') or 'semantic_slot_preserving', max_len=64).lower() or 'semantic_slot_preserving',
+    }
+

@@ -43,6 +43,7 @@ from app.services.scope_materializer import materialize_runtime_scopes
 from app.services.scope_registry import get_scope_spec
 from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy
 from app.services.team_manifest import export_thread_team_manifest, install_thread_team_manifest, validate_team_manifest_payload, diff_team_manifest_payload
+from app.services.team_blueprint import export_thread_team_blueprint, install_thread_team_blueprint, validate_team_blueprint_payload, diff_team_blueprint_payload
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -1104,6 +1105,59 @@ def patch_thread_team_agent_context_policy(thread_id: str, body: ConversationTea
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return ConversationTeamConfigRead(**payload)
+
+
+
+@router.get("/{thread_id}/team/blueprint/templates")
+def get_team_blueprint_templates(thread_id: str):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        return export_team_blueprint_templates()
+
+
+@router.get("/{thread_id}/team/blueprint")
+def get_thread_team_blueprint(thread_id: str):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        blueprint = export_thread_team_blueprint(session, thread)
+        return {"ok": True, "manifest": blueprint}
+
+
+@router.post("/{thread_id}/team/blueprint/validate")
+def validate_thread_team_blueprint(thread_id: str, body: TeamManifestValidateRequest):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        result = validate_team_blueprint_payload(body.manifest or {}, apply_state=body.apply_state or "active")
+        return {"ok": bool(result.get("ok")), **result}
+
+
+@router.post("/{thread_id}/team/blueprint/diff")
+def diff_thread_team_blueprint(thread_id: str, body: TeamManifestDiffRequest):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        current_blueprint = export_thread_team_blueprint(session, thread)
+        result = diff_team_blueprint_payload(current_blueprint, body.manifest or {}, apply_state=body.apply_state or "active")
+        return {"ok": True, **result}
+
+
+@router.post("/{thread_id}/team/blueprint/install")
+def install_team_blueprint(thread_id: str, body: TeamManifestInstallRequest):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        try:
+            manifest = install_thread_team_blueprint(session, thread, body.manifest or {}, apply_state=body.apply_state or "active")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"ok": True, "manifest": manifest, "team_config": manifest.get("team_config") or {}}
 
 
 @router.get("/{thread_id}/team/manifest")

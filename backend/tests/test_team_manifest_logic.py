@@ -48,7 +48,7 @@ class TeamManifestLogicTests(unittest.TestCase):
             })
 
             manifest = export_thread_team_manifest(session, thread)
-            self.assertEqual(manifest['kind'], 'ddalggak_team_manifest')
+            self.assertEqual(manifest['kind'], 'ddalggak_team_blueprint')
             self.assertEqual(manifest['thread_id'], thread.id)
             self.assertEqual(manifest['service_id'], thread.service_id)
             self.assertEqual(manifest['team']['agents'][0]['agent_id'], 'researcher')
