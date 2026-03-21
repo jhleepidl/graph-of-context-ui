@@ -171,6 +171,13 @@ export type TeamBlueprintSummary = {
   description?: string | null
   topology_pattern?: string | null
   execution_pattern?: string | null
+  capability_status?: string | null
+  required_tool_count?: number | null
+  optional_tool_count?: number | null
+  missing_required_tool_count?: number | null
+  missing_optional_tool_count?: number | null
+  missing_required_tools?: string[]
+  missing_optional_tools?: string[]
   memory_surface_count?: number | null
   memory_map?: Array<{
     surface_id?: string | null

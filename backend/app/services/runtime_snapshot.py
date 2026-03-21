@@ -718,6 +718,13 @@ def normalize_blueprint_summary(value: Any) -> dict[str, Any] | None:
         "description": clean_text(row.get("description")) or None,
         "topology_pattern": clean_text(row.get("topology_pattern") or row.get("topologyPattern")) or None,
         "execution_pattern": clean_text(row.get("execution_pattern") or row.get("executionPattern")) or None,
+        "capability_status": clean_text(row.get("capability_status") or row.get("capabilityStatus")) or None,
+        "required_tool_count": int(row.get("required_tool_count") or row.get("requiredToolCount") or 0) or None,
+        "optional_tool_count": int(row.get("optional_tool_count") or row.get("optionalToolCount") or 0) or None,
+        "missing_required_tool_count": int(row.get("missing_required_tool_count") or row.get("missingRequiredToolCount") or 0) or None,
+        "missing_optional_tool_count": int(row.get("missing_optional_tool_count") or row.get("missingOptionalToolCount") or 0) or None,
+        "missing_required_tools": normalize_string_list(row.get("missing_required_tools") or row.get("missingRequiredTools")),
+        "missing_optional_tools": normalize_string_list(row.get("missing_optional_tools") or row.get("missingOptionalTools")),
         "memory_surface_count": int(row.get("memory_surface_count") or row.get("memorySurfaceCount") or len(memory_map) or 0),
         "memory_map": memory_map,
     }

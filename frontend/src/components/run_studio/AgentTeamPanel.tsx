@@ -184,6 +184,12 @@ export default function AgentTeamPanel({
           {cleanText(blueprintSummary.source) && <div className="muted">source: {cleanText(blueprintSummary.source)}</div>}
           {cleanText(blueprintSummary.description) && <div className="muted">{cleanText(blueprintSummary.description)}</div>}
           <div className="muted">memory surfaces: {Number(blueprintSummary.memory_surface_count || blueprintSummary.memory_map?.length || 0)}</div>
+          {cleanText(blueprintSummary.capability_status) && <div className="muted">capability status: {cleanText(blueprintSummary.capability_status)}</div>}
+          {(blueprintSummary.required_tool_count != null || blueprintSummary.optional_tool_count != null) && (
+            <div className="muted">tools: required={Number(blueprintSummary.required_tool_count || 0)} · optional={Number(blueprintSummary.optional_tool_count || 0)}</div>
+          )}
+          {(blueprintSummary.missing_required_tools || []).length > 0 && <div className="muted">missing required: {(blueprintSummary.missing_required_tools || []).join(', ')}</div>}
+          {(blueprintSummary.missing_optional_tools || []).length > 0 && <div className="muted">missing optional: {(blueprintSummary.missing_optional_tools || []).join(', ')}</div>}
           {(blueprintSummary.memory_map || []).length > 0 && (
             <div className="muted" style={{ marginTop: 6 }}>
               {(blueprintSummary.memory_map || []).slice(0, 6).map((surface, index) => (
