@@ -785,6 +785,8 @@ def normalize_execution_feedback(value: Any) -> dict[str, Any] | None:
             "avg_observed_agents": float(row.get("avg_observed_agents") or row.get("avgObservedAgents") or 0) or 0,
             "avg_missing_agents": float(row.get("avg_missing_agents") or row.get("avgMissingAgents") or 0) or 0,
             "completion_rate_pct": float(row.get("completion_rate_pct") or row.get("completionRatePct") or 0) or 0,
+            "recommendation": clean_text(row.get("recommendation")) or None,
+            "reason": (clean_text(row.get("reason")) or "")[:240] or None,
         })
     overlays = []
     for entry in list(raw.get("overlays") or []):
@@ -799,12 +801,39 @@ def normalize_execution_feedback(value: Any) -> dict[str, Any] | None:
             "avg_participation_pct": float(row.get("avg_participation_pct") or row.get("avgParticipationPct") or 0) or 0,
             "avg_overlay_tokens": float(row.get("avg_overlay_tokens") or row.get("avgOverlayTokens") or 0) or 0,
             "avg_overlay_share_pct": float(row.get("avg_overlay_share_pct") or row.get("avgOverlaySharePct") or 0) or 0,
+            "recommendation": clean_text(row.get("recommendation")) or None,
+            "reason": (clean_text(row.get("reason")) or "")[:240] or None,
         })
+
+    def _compact_feedback_entries(items: list[Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for entry in list(items or []):
+            row = normalize_mapping(entry)
+            if not row:
+                continue
+            out.append({
+                "execution_pattern": clean_text(row.get("execution_pattern") or row.get("executionPattern")) or None,
+                "overlay_id": clean_text(row.get("overlay_id") or row.get("overlayId")) or None,
+                "title": clean_text(row.get("title")) or None,
+                "run_count": int(row.get("run_count") or row.get("runCount") or 0) or 0,
+                "avg_participation_pct": float(row.get("avg_participation_pct") or row.get("avgParticipationPct") or 0) or 0,
+                "completion_rate_pct": float(row.get("completion_rate_pct") or row.get("completionRatePct") or 0) or 0,
+                "avg_overlay_tokens": float(row.get("avg_overlay_tokens") or row.get("avgOverlayTokens") or 0) or 0,
+                "avg_overlay_share_pct": float(row.get("avg_overlay_share_pct") or row.get("avgOverlaySharePct") or 0) or 0,
+                "recommendation": clean_text(row.get("recommendation")) or None,
+                "reason": (clean_text(row.get("reason")) or "")[:240] or None,
+            })
+        return out[:8]
+
     out = {
         "updated_at": clean_text(raw.get("updated_at") or raw.get("updatedAt")) or None,
         "run_count": int(raw.get("run_count") or raw.get("runCount") or 0) or 0,
         "patterns": patterns[:8],
         "overlays": overlays[:8],
+        "recommended_patterns": _compact_feedback_entries(raw.get("recommended_patterns") or raw.get("recommendedPatterns") or []),
+        "discouraged_patterns": _compact_feedback_entries(raw.get("discouraged_patterns") or raw.get("discouragedPatterns") or []),
+        "recommended_overlays": _compact_feedback_entries(raw.get("recommended_overlays") or raw.get("recommendedOverlays") or []),
+        "discouraged_overlays": _compact_feedback_entries(raw.get("discouraged_overlays") or raw.get("discouragedOverlays") or []),
     }
     return {key: value for key, value in out.items() if value not in (None, [], {}, "")} or None
 

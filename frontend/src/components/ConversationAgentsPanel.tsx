@@ -148,7 +148,15 @@ type TeamCatalogItem = {
   summary: string
   tags: string[]
   recommendedFor: string[]
+  payload?: Record<string, unknown>
   manifest: Record<string, any>
+}
+
+type CatalogRecommendation = {
+  bucket: 'recommended' | 'neutral' | 'discouraged'
+  reasons: string[]
+  matchedPattern?: string
+  matchedOverlays?: string[]
 }
 
 type TeamBlueprintTemplateItem = {
@@ -245,6 +253,78 @@ function deriveTeamBlueprintSummary(manifest: Record<string, any> | null): strin
   return pattern ? `${pattern} topology team template` : 'Reusable agent team template'
 }
 
+function extractManifestExecutionPattern(manifest: Record<string, any> | null): string {
+  const blueprint = asObject(manifest?.blueprint)
+  const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
+  const structure = asObject(manifest?.structure_v2 || blueprint?.structure || team?.structure_v2 || team?.structure)
+  const topology = asObject(structure?.topology)
+  return asString(topology?.execution_pattern || topology?.executionPattern || structure?.execution_pattern || team?.interaction_spec?.execution_pattern || topology?.pattern)
+}
+
+function collectManifestOverlayKeys(manifest: Record<string, any> | null): string[] {
+  const blueprint = asObject(manifest?.blueprint)
+  const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
+  const structure = asObject(manifest?.structure_v2 || blueprint?.structure || team?.structure_v2 || team?.structure)
+  const rows = [
+    ...(Array.isArray(structure?.participants) ? structure.participants : []),
+    ...(Array.isArray(team?.agents) ? team.agents : []),
+    ...(Array.isArray(blueprint?.participants) ? blueprint.participants : []),
+  ]
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of rows) {
+    const row = asObject(raw)
+    const metadata = asObject(row.metadata)
+    const overlay = asObject(row.agency_overlay || row.agencyOverlay || metadata.agency_overlay)
+    const overlayKey = asString(row.agency_overlay_id || row.agencyOverlayId || overlay.overlay_id || overlay.overlayId || metadata.agency_overlay_id || overlay.title || row.agency_overlay_title || row.agencyOverlayTitle)
+    const cleanKey = overlayKey.toLowerCase()
+    if (!cleanKey || seen.has(cleanKey)) continue
+    seen.add(cleanKey)
+    out.push(overlayKey)
+  }
+  return out.slice(0, 8)
+}
+
+function deriveCatalogRecommendation(manifest: Record<string, any> | null, executionFeedback: any): CatalogRecommendation {
+  const feedback = executionFeedback && typeof executionFeedback === 'object' ? executionFeedback : null
+  if (!feedback) return { bucket: 'neutral', reasons: [] }
+  const pattern = extractManifestExecutionPattern(manifest).toLowerCase()
+  const overlays = collectManifestOverlayKeys(manifest).map((entry) => entry.toLowerCase())
+  const patternRows = Array.isArray(feedback?.patterns) ? feedback.patterns : []
+  const overlayRows = Array.isArray(feedback?.overlays) ? feedback.overlays : []
+  let score = 0
+  const reasons: string[] = []
+  let matchedPattern = ''
+  const matchedOverlays: string[] = []
+
+  const patternMatch = pattern ? patternRows.find((row: any) => asString(row?.execution_pattern).toLowerCase() === pattern) : null
+  if (patternMatch) {
+    matchedPattern = asString(patternMatch.execution_pattern)
+    const recommendation = asString(patternMatch.recommendation).toLowerCase()
+    if (recommendation === 'recommended') score += 2
+    if (recommendation === 'discouraged') score -= 2
+    reasons.push(`pattern ${matchedPattern}: ${asString(patternMatch.reason) || `${Number(patternMatch.avg_participation_pct || 0)}% avg participation`}`)
+  }
+
+  for (const overlayKey of overlays) {
+    const overlayMatch = overlayRows.find((row: any) => {
+      const rowId = asString(row?.overlay_id).toLowerCase()
+      const rowTitle = asString(row?.title).toLowerCase()
+      return rowId === overlayKey || rowTitle === overlayKey
+    })
+    if (!overlayMatch) continue
+    matchedOverlays.push(asString(overlayMatch.title || overlayMatch.overlay_id || overlayKey))
+    const recommendation = asString(overlayMatch.recommendation).toLowerCase()
+    if (recommendation === 'recommended') score += 1
+    if (recommendation === 'discouraged') score -= 1
+    reasons.push(`overlay ${asString(overlayMatch.title || overlayMatch.overlay_id || overlayKey)}: ${asString(overlayMatch.reason) || `${Number(overlayMatch.avg_participation_pct || 0)}% avg participation`}`)
+    if (matchedOverlays.length >= 2) break
+  }
+
+  const bucket = score >= 2 ? 'recommended' : score <= -2 ? 'discouraged' : 'neutral'
+  return { bucket, reasons: reasons.slice(0, 3), matchedPattern: matchedPattern || undefined, matchedOverlays: matchedOverlays.length ? matchedOverlays : undefined }
+}
+
 function resourceNodeToTeamCatalogItem(node: GraphResourceNode): TeamCatalogItem | null {
   if ((node.type || '') !== 'Resource') return null
   const payload = parsePayloadJson(node.payload_json)
@@ -260,6 +340,7 @@ function resourceNodeToTeamCatalogItem(node: GraphResourceNode): TeamCatalogItem
     summary,
     tags: [...new Set(toStringList(payload.tags))],
     recommendedFor: [...new Set(toStringList(payload.recommended_for || payload.good_for || payload.use_cases))],
+    payload,
     manifest,
   }
 }
@@ -1005,6 +1086,8 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const [teamBlueprintGoodForDraft, setTeamBlueprintGoodForDraft] = useState('')
   const [teamBlueprintTemplates, setTeamBlueprintTemplates] = useState<TeamBlueprintTemplateItem[]>([])
   const [teamBlueprintTemplateError, setTeamBlueprintTemplateError] = useState('')
+  const [runStudioSummary, setRunStudioSummary] = useState<any>(null)
+  const [runStudioSummaryError, setRunStudioSummaryError] = useState('')
 
   const memberLineageKeySet = useMemo(() => {
     const out = new Set<string>()
@@ -1017,6 +1100,23 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
     () => availableAgents.filter((agent) => !memberLineageKeySet.has(lineageKeyForAgent(agent))),
     [availableAgents, memberLineageKeySet],
   )
+  const currentExecutionInsights = runStudioSummary?.current_run_skills?.execution_insights || null
+  const currentExecutionFeedback = runStudioSummary?.current_run_skills?.execution_feedback || null
+  const currentRuntimeAgents = Array.isArray(runStudioSummary?.current_run_skills?.runtime_agents) ? runStudioSummary.current_run_skills.runtime_agents : []
+  const catalogItemsWithRecommendation = useMemo(() => {
+    return [...teamCatalogItems]
+      .map((item) => ({
+        ...item,
+        catalogRecommendation: deriveCatalogRecommendation(item.manifest, currentExecutionFeedback),
+      }))
+      .sort((a: any, b: any) => {
+        const rank = (bucket: string) => (bucket === 'recommended' ? 2 : bucket === 'neutral' ? 1 : 0)
+        const rankDelta = rank(b.catalogRecommendation.bucket) - rank(a.catalogRecommendation.bucket)
+        if (rankDelta !== 0) return rankDelta
+        if (a.createdAt === b.createdAt) return a.nodeId.localeCompare(b.nodeId)
+        return a.createdAt < b.createdAt ? 1 : -1
+      })
+  }, [teamCatalogItems, currentExecutionFeedback])
 
 
   const reloadBlueprintTemplates = useCallback(async () => {
@@ -1088,6 +1188,30 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   useEffect(() => {
     void reloadBlueprintTemplates()
   }, [threadId, refreshKey, reloadBlueprintTemplates])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!threadId) {
+      setRunStudioSummary(null)
+      setRunStudioSummaryError('')
+      return () => { cancelled = true }
+    }
+    void (async () => {
+      try {
+        const out = await api.runStudioSummary(threadId)
+        if (!cancelled) {
+          setRunStudioSummary(out || null)
+          setRunStudioSummaryError('')
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setRunStudioSummary(null)
+          setRunStudioSummaryError(e instanceof Error ? e.message : String(e))
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [threadId, refreshKey])
 
   function applyConversationResponse(raw: any) {
     const next = normalizeConversation(raw)
@@ -1388,6 +1512,16 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
         exported_from_thread_id: threadId,
         exported_at: new Date().toISOString(),
         schema_kind: asString(manifest?.kind) || 'ddalggak_team_blueprint',
+        execution_pattern: extractManifestExecutionPattern(manifest),
+        overlay_keys: collectManifestOverlayKeys(manifest),
+        execution_feedback_snapshot: currentExecutionFeedback ? {
+          updated_at: asString(currentExecutionFeedback?.updated_at),
+          run_count: Number(currentExecutionFeedback?.run_count || 0),
+          recommended_patterns: Array.isArray(currentExecutionFeedback?.recommended_patterns) ? currentExecutionFeedback.recommended_patterns.slice(0, 3) : [],
+          discouraged_patterns: Array.isArray(currentExecutionFeedback?.discouraged_patterns) ? currentExecutionFeedback.discouraged_patterns.slice(0, 3) : [],
+          recommended_overlays: Array.isArray(currentExecutionFeedback?.recommended_overlays) ? currentExecutionFeedback.recommended_overlays.slice(0, 3) : [],
+          discouraged_overlays: Array.isArray(currentExecutionFeedback?.discouraged_overlays) ? currentExecutionFeedback.discouraged_overlays.slice(0, 3) : [],
+        } : undefined,
       }
       await api.createResource(catalogThreadId, {
         name: title,
@@ -1884,6 +2018,58 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             <div className="muted" style={{ marginTop: 4 }}>
               team_config status={String(teamConfigSummary?.status || '(unknown)')} · active_agents={Number(teamConfigSummary?.active_team?.agents?.length || 0)} · pending_agents={Number(teamConfigSummary?.pending_team?.agents?.length || 0)}
             </div>
+          </div>
+        )}
+        {(currentExecutionInsights || runStudioSummaryError) && (
+          <div style={{ marginTop: 10 }}>
+            <div><b>Current runtime selection insight</b></div>
+            {runStudioSummaryError ? (
+              <div className="muted" style={{ marginTop: 4 }}>summary load error: {runStudioSummaryError}</div>
+            ) : null}
+            {currentExecutionInsights?.execution_pattern ? (
+              <div className="muted" style={{ marginTop: 4 }}>pattern={String(currentExecutionInsights.execution_pattern)}</div>
+            ) : null}
+            {Array.isArray(currentExecutionInsights?.selection?.planner_facts) && currentExecutionInsights.selection.planner_facts.length > 0 ? (
+              <div className="muted" style={{ marginTop: 4 }}>planner_facts={currentExecutionInsights.selection.planner_facts.join(', ')}</div>
+            ) : null}
+            {Array.isArray(currentExecutionInsights?.selection?.selected) && currentExecutionInsights.selection.selected.length > 0 ? (
+              <div style={{ marginTop: 6 }}>
+                <div className="muted">selected</div>
+                <ul style={{ marginTop: 4 }}>
+                  {currentExecutionInsights.selection.selected.slice(0, 6).map((entry: string, index: number) => (
+                    <li key={`selected-${index}`}>{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {Array.isArray(currentExecutionInsights?.selection?.suppressed) && currentExecutionInsights.selection.suppressed.length > 0 ? (
+              <div style={{ marginTop: 6 }}>
+                <div className="muted">suppressed</div>
+                <ul style={{ marginTop: 4 }}>
+                  {currentExecutionInsights.selection.suppressed.slice(0, 6).map((entry: string, index: number) => (
+                    <li key={`suppressed-${index}`}>{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {currentExecutionInsights?.execution ? (
+              <div className="muted" style={{ marginTop: 4 }}>
+                participation: planned={Number(currentExecutionInsights.execution.planned_agent_count || 0)} · observed={Number(currentExecutionInsights.execution.observed_agent_count || 0)} · pct={Number(currentExecutionInsights.execution.participation_pct || 0)}
+              </div>
+            ) : null}
+            {Array.isArray(currentExecutionInsights?.execution?.missing_agents) && currentExecutionInsights.execution.missing_agents.length > 0 ? (
+              <div className="muted" style={{ marginTop: 4 }}>missing_agents={currentExecutionInsights.execution.missing_agents.join(', ')}</div>
+            ) : null}
+            {currentRuntimeAgents.length > 0 ? (
+              <div style={{ marginTop: 6 }}>
+                <div className="muted">runtime agent selection reasons</div>
+                <ul style={{ marginTop: 4 }}>
+                  {currentRuntimeAgents.slice(0, 6).map((row: any, index: number) => (
+                    <li key={`runtime-agent-${index}`}>{String(row?.display_label || row?.role_label || row?.role_id || 'agent')} · {String(row?.selection_reason || 'selection reason unavailable')}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         )}
         {operatorCommandSuggestions.length > 0 && (
@@ -2537,11 +2723,12 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
               <th>good for</th>
               <th>tags</th>
               <th>created_at</th>
+              <th>fit</th>
               <th>actions</th>
             </tr>
           </thead>
           <tbody>
-            {teamCatalogItems.map((item) => (
+            {catalogItemsWithRecommendation.map((item: any) => (
               <tr key={item.nodeId}>
                 <td><b>{item.title || '-'}</b></td>
                 <td style={{ maxWidth: 280 }}>{item.summary || '-'}</td>
@@ -2554,6 +2741,17 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                 </td>
                 <td>{item.tags.length > 0 ? item.tags.join(', ') : '-'}</td>
                 <td>{item.createdAt || '-'}</td>
+                <td style={{ maxWidth: 280 }}>
+                  <div className="row" style={{ gap: 6, marginBottom: 4 }}>
+                    <span className="pill">{item.catalogRecommendation.bucket}</span>
+                    {item.catalogRecommendation.matchedPattern ? <span className="pill">pattern: {item.catalogRecommendation.matchedPattern}</span> : null}
+                  </div>
+                  {item.catalogRecommendation.reasons.length > 0 ? (
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {item.catalogRecommendation.reasons.map((entry: string, index: number) => <li key={`${item.nodeId}-fit-${index}`}>{entry}</li>)}
+                    </ul>
+                  ) : <span className="muted">현재 feedback과 직접 매칭된 신호 없음</span>}
+                </td>
                 <td>
                   <div className="row" style={{ marginBottom: 0 }}>
                     <button onClick={() => void handleInstallCatalogItem(item)} disabled={teamCatalogBusy !== null}>
@@ -2564,9 +2762,9 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                 </td>
               </tr>
             ))}
-            {teamCatalogItems.length === 0 && (
+            {catalogItemsWithRecommendation.length === 0 && (
               <tr>
-                <td colSpan={6}><span className="muted">저장된 team card가 없습니다. 현재 thread team을 먼저 catalog에 저장하세요.</span></td>
+                <td colSpan={7}><span className="muted">저장된 team card가 없습니다. 현재 thread team을 먼저 catalog에 저장하세요.</span></td>
               </tr>
             )}
           </tbody>

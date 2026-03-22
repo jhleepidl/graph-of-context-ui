@@ -47,10 +47,15 @@ def _build_capability_contract(team: dict[str, Any], blueprint: dict[str, Any]) 
         return existing
 
     required: set[str] = set(_unique_tool_ids(team.get('required_tool_ids') or team.get('requiredToolIds') or []))
-    optional: set[str] = set(_unique_tool_ids(team.get('optional_tool_ids') or team.get('optionalToolIds') or team.get('recommended_tool_ids') or team.get('recommendedToolIds') or []))
+    optional: set[str] = set(_unique_tool_ids(team.get('optional_tool_ids') or team.get('optionalToolIds') or []))
+    if not required and not optional:
+        optional.update(_unique_tool_ids(team.get('recommended_tool_ids') or team.get('recommendedToolIds') or []))
+    else:
+        optional.update(tool_id for tool_id in _unique_tool_ids(team.get('recommended_tool_ids') or team.get('recommendedToolIds') or []) if tool_id not in required)
     agent_contracts: list[dict[str, Any]] = []
 
-    for requirement in team.get('requirements') or []:
+    requirements = _as_dict(team.get('requirements'))
+    for requirement in _as_list(requirements.get('tools')):
         row = _as_dict(requirement)
         tool_id = _clean_id(row.get('tool_id') or row.get('toolId'), 64)
         if not tool_id:
@@ -65,7 +70,11 @@ def _build_capability_contract(team: dict[str, Any], blueprint: dict[str, Any]) 
         role = _clean_id(agent_row.get('role') or 'agent', 64) or 'agent'
         purpose_text = f"{_clean_text(agent_row.get('purpose'), 256)} {_clean_text(agent_row.get('name'), 256)}".lower()
         explicit_required = _unique_tool_ids(agent_row.get('required_tool_ids') or agent_row.get('requiredToolIds') or [])
-        explicit_optional = _unique_tool_ids(agent_row.get('optional_tool_ids') or agent_row.get('optionalToolIds') or agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or [])
+        explicit_optional = _unique_tool_ids(agent_row.get('optional_tool_ids') or agent_row.get('optionalToolIds') or [])
+        if not explicit_required and not explicit_optional:
+            explicit_optional = _unique_tool_ids(agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or [])
+        else:
+            explicit_optional = _unique_tool_ids(list(explicit_optional) + [tool_id for tool_id in _unique_tool_ids(agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or []) if tool_id not in explicit_required])
         inferred_required = list(explicit_required)
         inferred_optional = [tool_id for tool_id in explicit_optional if tool_id not in explicit_required]
         code_like = any(token in purpose_text for token in ['ipynb', 'notebook', 'jupyter', 'file', 'json', 'python', 'script', 'workspace', 'code', '코드', '노트북', '파일'])

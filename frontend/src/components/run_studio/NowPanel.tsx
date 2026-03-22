@@ -174,6 +174,28 @@ export default function NowPanel({
               {executionFeedback.patterns.slice(0, 3).map((row) => (
                 <div key={`pattern-${row.execution_pattern || 'unknown'}`}>
                   {(row.execution_pattern || 'unspecified')} · runs {row.run_count ?? 0} · avg participation {row.avg_participation_pct ?? 0}% · completion {row.completion_rate_pct ?? 0}%
+                  {row.recommendation ? ` · ${row.recommendation}` : ''}
+                  {row.reason ? ` · ${row.reason}` : ''}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {executionFeedback?.recommended_patterns?.length ? (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted">Recommended patterns</div>
+              {executionFeedback.recommended_patterns.slice(0, 3).map((row) => (
+                <div key={`pattern-reco-${row.execution_pattern || 'unknown'}`}>
+                  {(row.execution_pattern || 'unspecified')} · {row.reason || `runs ${row.run_count ?? 0}`}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {executionFeedback?.discouraged_patterns?.length ? (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted">Discouraged patterns</div>
+              {executionFeedback.discouraged_patterns.slice(0, 3).map((row) => (
+                <div key={`pattern-avoid-${row.execution_pattern || 'unknown'}`}>
+                  {(row.execution_pattern || 'unspecified')} · {row.reason || `runs ${row.run_count ?? 0}`}
                 </div>
               ))}
             </div>
@@ -184,6 +206,28 @@ export default function NowPanel({
               {executionFeedback.overlays.slice(0, 3).map((row) => (
                 <div key={`overlay-${row.overlay_id || row.title || 'overlay'}`}>
                   {(row.title || row.overlay_id || 'overlay')} · runs {row.run_count ?? 0} · avg participation {row.avg_participation_pct ?? 0}% · avg prompt {row.avg_overlay_tokens ?? 0} tok ({row.avg_overlay_share_pct ?? 0}%)
+                  {row.recommendation ? ` · ${row.recommendation}` : ''}
+                  {row.reason ? ` · ${row.reason}` : ''}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {executionFeedback?.recommended_overlays?.length ? (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted">Recommended overlays</div>
+              {executionFeedback.recommended_overlays.slice(0, 3).map((row) => (
+                <div key={`overlay-reco-${row.overlay_id || row.title || 'overlay'}`}>
+                  {(row.title || row.overlay_id || 'overlay')} · {row.reason || `runs ${row.run_count ?? 0}`}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {executionFeedback?.discouraged_overlays?.length ? (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted">Discouraged overlays</div>
+              {executionFeedback.discouraged_overlays.slice(0, 3).map((row) => (
+                <div key={`overlay-avoid-${row.overlay_id || row.title || 'overlay'}`}>
+                  {(row.title || row.overlay_id || 'overlay')} · {row.reason || `runs ${row.run_count ?? 0}`}
                 </div>
               ))}
             </div>

@@ -434,7 +434,7 @@ def _build_install_hints(requirements: dict[str, Any], *, has_thread_target: boo
         keys = ', '.join(_clean_text(row.get('credential_key') or 'API_KEY', max_len=64) for row in credentials[:3] if isinstance(row, dict)) or 'API_KEY'
         hints.append(f'필요한 credential({keys})을 안전한 비밀 저장소나 환경 변수로 제공하세요.')
     if tools or credentials or _as_list(requirements.get('skills')):
-        hints.append('manifest를 ddalggak Telegram의 /team install 또는 /team push 흐름과 함께 사용할 수 있습니다.')
+        hints.append('manifest를 ddalggak Telegram의 /team install 또는 /team push 흐름과 함께 사용할 수 있습니다. 이 단계는 주로 team metadata와 requirement를 동기화합니다.')
     if has_thread_target:
         hints.append('이 thread에서는 Validate 후 active/pending team으로 바로 Install 할 수 있습니다.')
     deduped: list[str] = []
@@ -762,7 +762,9 @@ def _normalize_participant(raw: Any, index: int = 0) -> dict[str, Any] | None:
         'model': _clean_text(row.get('model'), max_len=128),
         'capabilities': [_clean_text(v, max_len=128) for v in _as_list(row.get('capabilities') or row.get('skills')) if _clean_text(v, max_len=128)][:8],
         'attached_skill_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('attached_skill_ids') or row.get('attachedSkillIds')) if _clean_text(v, max_len=128)][:8],
-        'recommended_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('recommended_tool_ids') or row.get('recommendedToolIds')) if _clean_text(v, max_len=128)][:8],
+        'required_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('required_tool_ids') or row.get('requiredToolIds')) if _clean_text(v, max_len=128)][:8],
+        'optional_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('optional_tool_ids') or row.get('optionalToolIds') or row.get('recommended_tool_ids') or row.get('recommendedToolIds')) if _clean_text(v, max_len=128)][:8],
+        'recommended_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('recommended_tool_ids') or row.get('recommendedToolIds') or list(_as_list(row.get('required_tool_ids') or row.get('requiredToolIds')) + _as_list(row.get('optional_tool_ids') or row.get('optionalToolIds')))) if _clean_text(v, max_len=128)][:8],
         'generated_skill_briefs': _as_list(row.get('generated_skill_briefs') or row.get('generatedSkillBriefs'))[:8],
         'context_policy': _as_dict(row.get('context_policy') or row.get('contextPolicy')),
     }
@@ -869,6 +871,8 @@ def _build_structure_v2_from_team(team_payload: Any, *, apply_state: str = 'pend
             'model': _as_dict(item).get('model'),
             'capabilities': _as_dict(item).get('capabilities') or _as_dict(item).get('skills'),
             'attached_skill_ids': _as_dict(item).get('attached_skill_ids') or _as_dict(item).get('attachedSkillIds'),
+            'required_tool_ids': _as_dict(item).get('required_tool_ids') or _as_dict(item).get('requiredToolIds'),
+            'optional_tool_ids': _as_dict(item).get('optional_tool_ids') or _as_dict(item).get('optionalToolIds'),
             'recommended_tool_ids': _as_dict(item).get('recommended_tool_ids') or _as_dict(item).get('recommendedToolIds'),
             'generated_skill_briefs': _as_dict(item).get('generated_skill_briefs') or _as_dict(item).get('generatedSkillBriefs'),
             'context_policy': _as_dict(item).get('context_policy') or _as_dict(item).get('contextPolicy'),
@@ -1125,7 +1129,9 @@ def _derive_team_from_structure_v2(raw: Any) -> dict[str, Any]:
             'capabilities': _as_list(item.get('capabilities'))[:8],
             'skills': _as_list(item.get('capabilities'))[:8],
             'attached_skill_ids': _as_list(item.get('attached_skill_ids'))[:8],
-            'recommended_tool_ids': _as_list(item.get('recommended_tool_ids'))[:8],
+            'required_tool_ids': _as_list(item.get('required_tool_ids'))[:8],
+            'optional_tool_ids': _as_list(item.get('optional_tool_ids') or item.get('recommended_tool_ids'))[:8],
+            'recommended_tool_ids': _as_list(item.get('recommended_tool_ids') or list(_as_list(item.get('required_tool_ids')) + _as_list(item.get('optional_tool_ids'))))[:8],
             'generated_skill_briefs': _as_list(item.get('generated_skill_briefs'))[:8],
             'context_policy': _as_dict(item.get('context_policy')),
         })

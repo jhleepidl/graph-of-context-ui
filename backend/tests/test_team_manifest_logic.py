@@ -423,3 +423,34 @@ class TeamManifestLogicTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+    def test_manifest_roundtrip_preserves_required_and_optional_tools(self):
+        with Session(self.engine) as session:
+            thread = Thread(id='thread-manifest-tools', service_id='svc-tools', title='Tools')
+            session.add(thread)
+            session.add(Conversation(thread_id=thread.id, owner_user_id='user-1', service_id='svc-tools'))
+            session.commit()
+
+            manifest = {
+                'team': {
+                    'team_name': 'Implementation Team',
+                    'agents': [
+                        {
+                            'agent_id': 'builder',
+                            'name': 'Builder',
+                            'role': 'builder',
+                            'required_tool_ids': ['workspace_fs'],
+                            'optional_tool_ids': ['shell'],
+                        },
+                    ],
+                },
+            }
+
+            installed = install_thread_team_manifest(session, thread, manifest, apply_state='active')
+            self.assertEqual(installed['team']['agents'][0]['required_tool_ids'], ['workspace_fs'])
+            self.assertEqual(installed['team']['agents'][0]['optional_tool_ids'], ['shell'])
+
+            exported = export_thread_team_manifest(session, thread)
+            self.assertEqual(exported['team']['agents'][0]['required_tool_ids'], ['workspace_fs'])
+            self.assertEqual(exported['team']['agents'][0]['optional_tool_ids'], ['shell'])

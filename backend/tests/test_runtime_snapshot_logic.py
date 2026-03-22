@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from app.services.runtime_snapshot import (
     extract_runtime_members_from_container,
     extract_runtime_team_snapshot,
+    normalize_execution_feedback,
     normalize_runtime_source_key,
     normalize_status,
 )
@@ -198,6 +199,49 @@ class RuntimeSnapshotHelperTests(unittest.TestCase):
         self.assertEqual((snapshot.get("execution_graph") or {}).get("sequential_after"), {"rt-2": ["rt-1"]})
         self.assertEqual((snapshot.get("selection_explanations") or [])[0]["slot_id"], "slot-analyst")
         self.assertEqual((snapshot.get("conversation_preferences") or {}).get("tone"), "concise")
+
+    def test_normalize_execution_feedback_keeps_recommendation_fields(self) -> None:
+        normalized = normalize_execution_feedback({
+            "run_count": 4,
+            "patterns": [
+                {
+                    "execution_pattern": "builder_reviewer_loop",
+                    "run_count": 4,
+                    "avg_participation_pct": 87.5,
+                    "completion_rate_pct": 100,
+                    "recommendation": "recommended",
+                    "reason": "avg participation 87.5%, completion 100%",
+                }
+            ],
+            "recommended_patterns": [
+                {
+                    "execution_pattern": "builder_reviewer_loop",
+                    "run_count": 4,
+                    "avg_participation_pct": 87.5,
+                    "completion_rate_pct": 100,
+                    "recommendation": "recommended",
+                    "reason": "avg participation 87.5%, completion 100%",
+                }
+            ],
+            "discouraged_overlays": [
+                {
+                    "overlay_id": "agency:engineering/heavy-overlay",
+                    "title": "Heavy Overlay",
+                    "run_count": 3,
+                    "avg_participation_pct": 42,
+                    "avg_overlay_tokens": 320,
+                    "avg_overlay_share_pct": 24,
+                    "recommendation": "discouraged",
+                    "reason": "avg participation 42%, prompt share 24%",
+                }
+            ],
+        })
+
+        self.assertIsNotNone(normalized)
+        assert normalized is not None
+        self.assertEqual((normalized.get("patterns") or [])[0]["recommendation"], "recommended")
+        self.assertEqual((normalized.get("recommended_patterns") or [])[0]["execution_pattern"], "builder_reviewer_loop")
+        self.assertEqual((normalized.get("discouraged_overlays") or [])[0]["recommendation"], "discouraged")
 
 
 if __name__ == "__main__":

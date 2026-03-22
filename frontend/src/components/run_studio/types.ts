@@ -607,6 +607,8 @@ export type RunStudioSummary = {
         avg_observed_agents?: number
         avg_missing_agents?: number
         completion_rate_pct?: number
+        recommendation?: string | null
+        reason?: string | null
       }>
       overlays?: Array<{
         overlay_id?: string | null
@@ -616,6 +618,44 @@ export type RunStudioSummary = {
         avg_participation_pct?: number
         avg_overlay_tokens?: number
         avg_overlay_share_pct?: number
+        recommendation?: string | null
+        reason?: string | null
+      }>
+      recommended_patterns?: Array<{
+        execution_pattern?: string | null
+        run_count?: number
+        avg_participation_pct?: number
+        completion_rate_pct?: number
+        recommendation?: string | null
+        reason?: string | null
+      }>
+      discouraged_patterns?: Array<{
+        execution_pattern?: string | null
+        run_count?: number
+        avg_participation_pct?: number
+        completion_rate_pct?: number
+        recommendation?: string | null
+        reason?: string | null
+      }>
+      recommended_overlays?: Array<{
+        overlay_id?: string | null
+        title?: string | null
+        run_count?: number
+        avg_participation_pct?: number
+        avg_overlay_tokens?: number
+        avg_overlay_share_pct?: number
+        recommendation?: string | null
+        reason?: string | null
+      }>
+      discouraged_overlays?: Array<{
+        overlay_id?: string | null
+        title?: string | null
+        run_count?: number
+        avg_participation_pct?: number
+        avg_overlay_tokens?: number
+        avg_overlay_share_pct?: number
+        recommendation?: string | null
+        reason?: string | null
       }>
     } | null
     team_view?: TeamViewProjection
