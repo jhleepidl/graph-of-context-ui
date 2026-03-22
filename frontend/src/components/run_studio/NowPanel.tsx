@@ -64,6 +64,8 @@ export default function NowPanel({
     authority?.skill_catalog_source || state?.skill_catalog_source || summary?.skill_catalog_source || 'local',
   )
   const scopeProjection = summary?.current_run_skills?.scope_projection || summary?.scope_projection
+  const executionInsights = summary?.current_run_skills?.execution_insights || null
+  const executionFeedback = summary?.current_run_skills?.execution_feedback || null
   const legacyTeamItems = team?.items || []
   const runtimeTeamCount = controlPlaneSummary?.runtimeAgentCount ?? teamView?.count ?? legacyTeamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
   const collaborationCount = controlPlaneSummary?.collaborationCount ?? collaboration?.count ?? collaboration?.items?.length ?? 0
@@ -143,6 +145,51 @@ export default function NowPanel({
           <div className="muted">Latest User Request</div>
           <div>{task?.latest_user_message_text || '-'}</div>
         </div>
+
+      {(executionInsights || executionFeedback) && (
+        <div className="runStudioNowItem" style={{ gridColumn: '1 / -1' }}>
+          <div className="muted">Execution Insight</div>
+          {executionInsights?.execution_pattern && <div><b>Pattern:</b> {executionInsights.execution_pattern}</div>}
+          {executionInsights?.selection?.planner_facts?.length ? (
+            <div><b>Planner facts:</b> {executionInsights.selection.planner_facts.join(', ')}</div>
+          ) : null}
+          {executionInsights?.execution ? (
+            <div>
+              <b>Participation:</b> planned {executionInsights.execution.planned_agent_count ?? 0}, observed {executionInsights.execution.observed_agent_count ?? 0}
+              {typeof executionInsights.execution.participation_pct === 'number' ? ` · ${executionInsights.execution.participation_pct}%` : ''}
+            </div>
+          ) : null}
+          {executionInsights?.execution?.participation_by_role?.length ? (
+            <div><b>By role:</b> {executionInsights.execution.participation_by_role.join(', ')}</div>
+          ) : null}
+          {executionInsights?.execution?.missing_agents?.length ? (
+            <div><b>Missing agents:</b> {executionInsights.execution.missing_agents.join(', ')}</div>
+          ) : null}
+          {executionInsights?.selection?.suppressed?.length ? (
+            <div><b>Suppressed:</b> {executionInsights.selection.suppressed.join(', ')}</div>
+          ) : null}
+          {executionFeedback?.patterns?.length ? (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted">Pattern feedback</div>
+              {executionFeedback.patterns.slice(0, 3).map((row) => (
+                <div key={`pattern-${row.execution_pattern || 'unknown'}`}>
+                  {(row.execution_pattern || 'unspecified')} · runs {row.run_count ?? 0} · avg participation {row.avg_participation_pct ?? 0}% · completion {row.completion_rate_pct ?? 0}%
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {executionFeedback?.overlays?.length ? (
+            <div style={{ marginTop: 8 }}>
+              <div className="muted">Overlay feedback</div>
+              {executionFeedback.overlays.slice(0, 3).map((row) => (
+                <div key={`overlay-${row.overlay_id || row.title || 'overlay'}`}>
+                  {(row.title || row.overlay_id || 'overlay')} · runs {row.run_count ?? 0} · avg participation {row.avg_participation_pct ?? 0}% · avg prompt {row.avg_overlay_tokens ?? 0} tok ({row.avg_overlay_share_pct ?? 0}%)
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
       </div>
 
       {blocked && (

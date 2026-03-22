@@ -577,6 +577,47 @@ export type RunStudioSummary = {
     context_packs?: ContextPackSummary[]
     skill_usage?: SkillUsageEventSummary[]
     task_interpretation?: TaskInterpretation | null
+    execution_insights?: {
+      execution_pattern?: string | null
+      selection?: {
+        selected?: string[]
+        suppressed?: string[]
+        planner_facts?: string[]
+      }
+      execution?: {
+        planned_agent_count?: number
+        observed_agent_count?: number
+        participation_pct?: number
+        planned_agents?: string[]
+        observed_agents?: string[]
+        missing_agents?: string[]
+        extra_agents?: string[]
+        participation_by_role?: string[]
+      }
+      overlays?: string[]
+    } | null
+    execution_feedback?: {
+      updated_at?: string | null
+      run_count?: number
+      patterns?: Array<{
+        execution_pattern?: string | null
+        run_count?: number
+        avg_participation_pct?: number
+        avg_planned_agents?: number
+        avg_observed_agents?: number
+        avg_missing_agents?: number
+        completion_rate_pct?: number
+      }>
+      overlays?: Array<{
+        overlay_id?: string | null
+        title?: string | null
+        run_count?: number
+        prompt_count?: number
+        avg_participation_pct?: number
+        avg_overlay_tokens?: number
+        avg_overlay_share_pct?: number
+      }>
+    } | null
     team_view?: TeamViewProjection
     why_this_team?: WhyThisTeamProjection
     scope_projection?: ScopeProjection

@@ -1376,10 +1376,27 @@ def validate_team_manifest_payload(manifest: Any, apply_state: str = "active") -
             errors.append(f"duplicate memory surface_id: {surface_id}")
             continue
         surface_ids.add(surface_id)
+        load_policy = _clean_text(surface.get('load_policy') or surface.get('loadPolicy') or surface.get('load') or 'on_demand', max_len=64).lower()
+        if load_policy and load_policy not in {'always', 'on_demand', 'lazy', 'never'}:
+            errors.append(f"memory surface {surface_id} uses unknown load_policy: {load_policy}")
+        write_policy = _normalize_memory_write_policy(surface.get('write_policy') or surface.get('writePolicy') or 'shared')
+        if write_policy not in {'shared', 'append_only', 'final', 'index', 'read_only', 'none'}:
+            errors.append(f"memory surface {surface_id} uses unknown write_policy: {write_policy}")
+        semantic_slots = {_clean_text(v, max_len=64).lower() for v in _as_list(surface.get('semantic_slots') or surface.get('semanticSlots')) if _clean_text(v, max_len=64)}
+        if not semantic_slots:
+            errors.append(f"memory surface {surface_id} must include at least one semantic_slot")
         for raw_role in _as_list(surface.get('target_roles') or surface.get('targetRoles')):
             target_role = _clean_text(raw_role, max_len=64).lower()
             if target_role and role_ids and target_role not in role_ids:
                 errors.append(f"memory surface {surface_id} targets an unknown role: {target_role}")
+    for ref in _as_list(memory_plan.get('default_load_surface_ids') or memory_plan.get('defaultLoadSurfaceIds')):
+        surface_id = _clean_text(ref, max_len=64).lower()
+        if surface_id and surface_ids and surface_id not in surface_ids:
+            errors.append(f"default_load_surface_ids references unknown surface: {surface_id}")
+    for ref in _as_list(memory_plan.get('writable_surface_ids') or memory_plan.get('writableSurfaceIds')):
+        surface_id = _clean_text(ref, max_len=64).lower()
+        if surface_id and surface_ids and surface_id not in surface_ids:
+            errors.append(f"writable_surface_ids references unknown surface: {surface_id}")
     for raw_tool in _as_list(_as_dict(normalized.get('requirements')).get('tools')):
         tool = _as_dict(raw_tool)
         tool_id = _clean_text(tool.get('tool_id') or tool.get('toolId'), max_len=64).lower()
@@ -1682,10 +1699,13 @@ def _normalize_memory_plan(raw: Any, *, knowledge_surface: Any = None, memory_po
         surfaces.append({
             'surface_id': surface_id,
             'title': _clean_text(surface.get('title') or surface.get('label') or surface_id.replace('_', ' ').title(), max_len=160) or surface_id.replace('_', ' ').title(),
+            'purpose': _clean_text(surface.get('purpose') or surface.get('description') or 'Team memory surface.', max_len=280) or 'Team memory surface.',
             'kind': _clean_text(surface.get('kind') or 'shared_doc', max_len=64).lower() or 'shared_doc',
             'file_name': _clean_text(surface.get('file_name') or surface.get('fileName') or f'{surface_id}.md', max_len=160) or f'{surface_id}.md',
-            'load': _clean_text(surface.get('load') or 'on_demand', max_len=64).lower() or 'on_demand',
+            'load_policy': _clean_text(surface.get('load_policy') or surface.get('loadPolicy') or surface.get('load') or 'on_demand', max_len=64).lower() or 'on_demand',
             'write_policy': _normalize_memory_write_policy(surface.get('write_policy') or surface.get('writePolicy') or 'shared'),
+            'create_mode': _clean_text(surface.get('create_mode') or surface.get('createMode') or 'lazy', max_len=64).lower() or 'lazy',
+            'semantic_slots': [_clean_text(v, max_len=64).lower() for v in _as_list(surface.get('semantic_slots') or surface.get('semanticSlots') or [surface_id]) if _clean_text(v, max_len=64)][:8],
             'target_roles': [_clean_text(v, max_len=64).lower() for v in _as_list(surface.get('target_roles') or surface.get('targetRoles')) if _clean_text(v, max_len=64)][:8],
         })
     if not surfaces:
@@ -1699,15 +1719,18 @@ def _normalize_memory_plan(raw: Any, *, knowledge_surface: Any = None, memory_po
             surfaces.append({
                 'surface_id': doc_id,
                 'title': _clean_text(doc.get('title') or doc_id.replace('_', ' ').title(), max_len=160) or doc_id.replace('_', ' ').title(),
+                'purpose': _clean_text(doc.get('purpose') or 'Team memory surface.', max_len=280) or 'Team memory surface.',
                 'kind': 'shared_doc',
                 'file_name': _clean_text(doc.get('file_name') or doc.get('fileName') or f'{doc_id}.md', max_len=160) or f'{doc_id}.md',
-                'load': 'always' if doc_id in {'mission_brief', 'working_memory', 'final_answer', 'artifact_index'} else 'on_demand',
+                'load_policy': 'always' if doc_id in {'mission_brief', 'working_memory', 'final_answer', 'artifact_index'} else 'on_demand',
                 'write_policy': 'append_only' if doc_id in {'working_memory'} else ('index' if doc_id == 'artifact_index' else ('final' if doc_id == 'final_answer' else 'shared')),
+                'create_mode': 'lazy',
+                'semantic_slots': [doc_id],
                 'target_roles': [],
             })
     default_load_surface_ids = [_clean_text(v, max_len=64).lower() for v in _as_list(row.get('default_load_surface_ids') or row.get('defaultLoadSurfaceIds')) if _clean_text(v, max_len=64)][:12]
     if not default_load_surface_ids:
-        default_load_surface_ids = [surface['surface_id'] for surface in surfaces if surface.get('load') == 'always']
+        default_load_surface_ids = [surface['surface_id'] for surface in surfaces if surface.get('load_policy') == 'always']
     writable_surface_ids = [_clean_text(v, max_len=64).lower() for v in _as_list(row.get('writable_surface_ids') or row.get('writableSurfaceIds')) if _clean_text(v, max_len=64)][:12]
     if not writable_surface_ids:
         writable_surface_ids = [surface['surface_id'] for surface in surfaces if surface.get('write_policy') not in {'read_only', 'none'}]

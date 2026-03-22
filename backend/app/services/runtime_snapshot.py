@@ -54,6 +54,8 @@ AUTHORITY_GRAPH_KEYS = ("authority_graph", "authorityGraph")
 CHECKPOINT_KEYS = ("checkpoints",)
 EXECUTION_GRAPH_KEYS = ("execution_graph", "executionGraph")
 SELECTION_EXPLANATION_KEYS = ("selection_explanations", "selectionExplanations")
+EXECUTION_INSIGHT_KEYS = ("execution_insights", "executionInsights")
+EXECUTION_FEEDBACK_KEYS = ("execution_feedback", "executionFeedback")
 SCOPE_SPEC_KEYS = ("scope_specs", "scopeSpecs")
 MATERIALIZED_SCOPE_KEYS = ("materialized_scopes", "materializedScopes")
 VISIBILITY_GRAPH_KEYS = ("visibility_graph", "visibilityGraph")
@@ -731,6 +733,82 @@ def normalize_blueprint_summary(value: Any) -> dict[str, Any] | None:
     return {key: value for key, value in out.items() if value not in (None, [], {}, "")} or None
 
 
+def normalize_execution_insights(value: Any) -> dict[str, Any] | None:
+    raw = normalize_mapping(value)
+    if not raw:
+        return None
+
+    selection_raw = normalize_mapping(raw.get("selection"))
+    execution_raw = normalize_mapping(raw.get("execution"))
+    selection = {
+        "selected": clean_list_of_text(selection_raw.get("selected"), limit=12),
+        "suppressed": clean_list_of_text(selection_raw.get("suppressed"), limit=12),
+        "planner_facts": clean_list_of_text(selection_raw.get("planner_facts") or selection_raw.get("plannerFacts"), limit=12),
+    }
+    execution = {
+        "planned_agent_count": int(execution_raw.get("planned_agent_count") or execution_raw.get("plannedAgentCount") or 0) or 0,
+        "observed_agent_count": int(execution_raw.get("observed_agent_count") or execution_raw.get("observedAgentCount") or 0) or 0,
+        "participation_pct": float(execution_raw.get("participation_pct") or execution_raw.get("participationPct") or 0) or 0,
+        "planned_agents": clean_list_of_text(execution_raw.get("planned_agents") or execution_raw.get("plannedAgents"), limit=12),
+        "observed_agents": clean_list_of_text(execution_raw.get("observed_agents") or execution_raw.get("observedAgents"), limit=12),
+        "missing_agents": clean_list_of_text(execution_raw.get("missing_agents") or execution_raw.get("missingAgents"), limit=12),
+        "extra_agents": clean_list_of_text(execution_raw.get("extra_agents") or execution_raw.get("extraAgents"), limit=12),
+        "participation_by_role": clean_list_of_text(execution_raw.get("participation_by_role") or execution_raw.get("participationByRole"), limit=12),
+    }
+    out = {
+        "execution_pattern": clean_text(raw.get("execution_pattern") or raw.get("executionPattern")) or None,
+        "selection": {key: value for key, value in selection.items() if value},
+        "execution": {key: value for key, value in execution.items() if value not in (None, [], {}, "")},
+    }
+    if not out["selection"]:
+        out.pop("selection", None)
+    if not out["execution"]:
+        out.pop("execution", None)
+    return {key: value for key, value in out.items() if value not in (None, [], {}, "")} or None
+
+
+def normalize_execution_feedback(value: Any) -> dict[str, Any] | None:
+    raw = normalize_mapping(value)
+    if not raw:
+        return None
+
+    patterns = []
+    for entry in list(raw.get("patterns") or []):
+        row = normalize_mapping(entry)
+        if not row:
+            continue
+        patterns.append({
+            "execution_pattern": clean_text(row.get("execution_pattern") or row.get("executionPattern")) or None,
+            "run_count": int(row.get("run_count") or row.get("runCount") or 0) or 0,
+            "avg_participation_pct": float(row.get("avg_participation_pct") or row.get("avgParticipationPct") or 0) or 0,
+            "avg_planned_agents": float(row.get("avg_planned_agents") or row.get("avgPlannedAgents") or 0) or 0,
+            "avg_observed_agents": float(row.get("avg_observed_agents") or row.get("avgObservedAgents") or 0) or 0,
+            "avg_missing_agents": float(row.get("avg_missing_agents") or row.get("avgMissingAgents") or 0) or 0,
+            "completion_rate_pct": float(row.get("completion_rate_pct") or row.get("completionRatePct") or 0) or 0,
+        })
+    overlays = []
+    for entry in list(raw.get("overlays") or []):
+        row = normalize_mapping(entry)
+        if not row:
+            continue
+        overlays.append({
+            "overlay_id": clean_text(row.get("overlay_id") or row.get("overlayId")) or None,
+            "title": clean_text(row.get("title")) or None,
+            "run_count": int(row.get("run_count") or row.get("runCount") or 0) or 0,
+            "prompt_count": int(row.get("prompt_count") or row.get("promptCount") or 0) or 0,
+            "avg_participation_pct": float(row.get("avg_participation_pct") or row.get("avgParticipationPct") or 0) or 0,
+            "avg_overlay_tokens": float(row.get("avg_overlay_tokens") or row.get("avgOverlayTokens") or 0) or 0,
+            "avg_overlay_share_pct": float(row.get("avg_overlay_share_pct") or row.get("avgOverlaySharePct") or 0) or 0,
+        })
+    out = {
+        "updated_at": clean_text(raw.get("updated_at") or raw.get("updatedAt")) or None,
+        "run_count": int(raw.get("run_count") or raw.get("runCount") or 0) or 0,
+        "patterns": patterns[:8],
+        "overlays": overlays[:8],
+    }
+    return {key: value for key, value in out.items() if value not in (None, [], {}, "")} or None
+
+
 def normalize_execution_graph(value: Any) -> dict[str, Any] | None:
     raw = normalize_mapping(value)
     if not raw:
@@ -870,6 +948,14 @@ def normalize_runtime_snapshot_metadata(mapping: Any) -> dict[str, Any]:
     )
     if selection_explanations:
         out["selection_explanations"] = selection_explanations
+
+    execution_insights = normalize_execution_insights(first_present(raw, EXECUTION_INSIGHT_KEYS))
+    if execution_insights:
+        out["execution_insights"] = execution_insights
+
+    execution_feedback = normalize_execution_feedback(first_present(raw, EXECUTION_FEEDBACK_KEYS))
+    if execution_feedback:
+        out["execution_feedback"] = execution_feedback
 
     scope_specs = normalize_record_list(
         first_present(raw, SCOPE_SPEC_KEYS)

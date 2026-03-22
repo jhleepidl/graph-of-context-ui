@@ -1188,6 +1188,8 @@ class ResolvedRunCapabilities:
     skill_usage: list[dict[str, Any]]
     lineage: dict[str, Any]
     task_interpretation: dict[str, Any] | None
+    execution_insights: dict[str, Any] | None
+    execution_feedback: dict[str, Any] | None
     team_view: dict[str, Any]
     why_this_team: dict[str, Any]
     scope_projection: dict[str, Any]
@@ -1210,6 +1212,8 @@ class ResolvedRunCapabilities:
             "skill_usage": list(self.skill_usage),
             "lineage": dict(self.lineage),
             "task_interpretation": dict(self.task_interpretation) if self.task_interpretation else None,
+            "execution_insights": dict(self.execution_insights) if self.execution_insights else None,
+            "execution_feedback": dict(self.execution_feedback) if self.execution_feedback else None,
             "team_view": dict(self.team_view),
             "why_this_team": dict(self.why_this_team),
             "scope_projection": dict(self.scope_projection),
@@ -1276,6 +1280,8 @@ class ResolvedRuntimeProjection:
                 },
             },
             "task_interpretation": None,
+            "execution_insights": None,
+            "execution_feedback": None,
             "team_view": {
                 "items": [],
                 "count": 0,
@@ -1775,6 +1781,8 @@ def resolve_run_capabilities(
         skill_usage=usage_events,
         lineage=lineage,
         task_interpretation=runtime_snapshot.get("task_interpretation"),
+        execution_insights=runtime_snapshot.get("execution_insights"),
+        execution_feedback=runtime_snapshot.get("execution_feedback"),
         team_view=team_view,
         why_this_team=why_this_team,
         scope_projection=scope_projection,

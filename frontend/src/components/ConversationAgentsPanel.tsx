@@ -50,6 +50,27 @@ type KnowledgeEditorFormState = {
   immutableFiles: string[]
 }
 
+type MemorySurfaceFormRow = {
+  surface_id: string
+  file_name: string
+  title: string
+  purpose: string
+  semantic_slots: string
+  target_roles: string
+  load_policy: string
+  write_policy: string
+  create_mode: string
+}
+
+type MemoryPlanEditorFormState = {
+  planId: string
+  displayName: string
+  migrationStrategy: string
+  surfaces: MemorySurfaceFormRow[]
+  defaultLoadSurfaceIds: string[]
+  writableSurfaceIds: string[]
+}
+
 type TopologyParticipantFormRow = {
   participant_id: string
   kind: string
@@ -394,6 +415,20 @@ function emptyKnowledgeDocRow(): KnowledgeDocFormRow {
   }
 }
 
+function emptyMemorySurfaceRow(): MemorySurfaceFormRow {
+  return {
+    surface_id: '',
+    file_name: '',
+    title: '',
+    purpose: '',
+    semantic_slots: '',
+    target_roles: '',
+    load_policy: 'on_demand',
+    write_policy: 'shared',
+    create_mode: 'lazy',
+  }
+}
+
 function emptyTopologyParticipantRow(): TopologyParticipantFormRow {
   return {
     participant_id: '',
@@ -477,6 +512,113 @@ function buildKnowledgeEditorsFromForm(form: KnowledgeEditorFormState): { knowle
       immutable_file_names: form.immutableFiles,
     },
   }
+}
+
+
+function extractMemoryPlanFormState(manifest: Record<string, any> | null): MemoryPlanEditorFormState {
+  const blueprint = asObject(manifest?.blueprint)
+  const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
+  const structure = asObject(manifest?.structure_v2 || blueprint?.structure || team?.structure_v2)
+  const plan = asObject(blueprint?.memory_plan || manifest?.memory_plan || manifest?.memoryPlan || structure?.memory_plan || structure?.memoryPlan || team?.memory_plan || team?.memoryPlan)
+  const surfacesRaw = Array.isArray(plan?.surfaces) ? plan.surfaces : []
+  const surfaces = surfacesRaw.length > 0
+    ? surfacesRaw.map((entry: any) => ({
+        surface_id: asString(entry?.surface_id || entry?.surfaceId || entry?.id),
+        file_name: asString(entry?.file_name || entry?.fileName),
+        title: asString(entry?.title),
+        purpose: asString(entry?.purpose),
+        semantic_slots: Array.isArray(entry?.semantic_slots || entry?.semanticSlots) ? (entry?.semantic_slots || entry?.semanticSlots).map((row: any) => asString(row)).filter(Boolean).join(', ') : '',
+        target_roles: Array.isArray(entry?.target_roles || entry?.targetRoles) ? (entry?.target_roles || entry?.targetRoles).map((row: any) => asString(row)).filter(Boolean).join(', ') : '',
+        load_policy: asString(entry?.load_policy || entry?.loadPolicy || entry?.load) || 'on_demand',
+        write_policy: asString(entry?.write_policy || entry?.writePolicy) || 'shared',
+        create_mode: asString(entry?.create_mode || entry?.createMode) || 'lazy',
+      }))
+    : [emptyMemorySurfaceRow()]
+  return {
+    planId: asString(plan?.plan_id || plan?.planId) || 'default_memory_plan',
+    displayName: asString(plan?.display_name || plan?.displayName) || 'Default Memory Plan',
+    migrationStrategy: asString(plan?.migration_strategy || plan?.migrationStrategy) || 'semantic_slot_preserving',
+    surfaces,
+    defaultLoadSurfaceIds: Array.isArray(plan?.default_load_surface_ids || plan?.defaultLoadSurfaceIds) ? (plan?.default_load_surface_ids || plan?.defaultLoadSurfaceIds).map((row: any) => asString(row)).filter(Boolean) : [],
+    writableSurfaceIds: Array.isArray(plan?.writable_surface_ids || plan?.writableSurfaceIds) ? (plan?.writable_surface_ids || plan?.writableSurfaceIds).map((row: any) => asString(row)).filter(Boolean) : [],
+  }
+}
+
+function buildMemoryPlanFromForm(form: MemoryPlanEditorFormState): Record<string, any> {
+  const surfaces = form.surfaces
+    .map((entry) => ({
+      surface_id: asString(entry.surface_id),
+      file_name: asString(entry.file_name),
+      title: asString(entry.title),
+      purpose: asString(entry.purpose),
+      semantic_slots: normalizeListDraft(entry.semantic_slots),
+      target_roles: normalizeListDraft(entry.target_roles),
+      load_policy: asString(entry.load_policy) || 'on_demand',
+      write_policy: asString(entry.write_policy) || 'shared',
+      create_mode: asString(entry.create_mode) || 'lazy',
+    }))
+    .filter((entry) => entry.surface_id && entry.file_name)
+  return {
+    plan_id: asString(form.planId) || 'default_memory_plan',
+    display_name: asString(form.displayName) || 'Default Memory Plan',
+    migration_strategy: asString(form.migrationStrategy) || 'semantic_slot_preserving',
+    surfaces,
+    default_load_surface_ids: normalizeListDraft(form.defaultLoadSurfaceIds.join(', ')),
+    writable_surface_ids: normalizeListDraft(form.writableSurfaceIds.join(', ')),
+  }
+}
+
+function applyMemoryPlanEditorsToManifest(
+  manifest: Record<string, any>,
+  memoryPlan: Record<string, any>,
+  applyState: 'active' | 'pending',
+): Record<string, any> {
+  const next = JSON.parse(JSON.stringify(manifest || {})) as Record<string, any>
+  const structure = asObject(next.structure_v2)
+  next.structure_v2 = {
+    ...structure,
+    memory_plan: memoryPlan,
+  }
+
+  if (next.team && typeof next.team === 'object' && !Array.isArray(next.team)) {
+    next.team = {
+      ...asObject(next.team),
+      memory_plan: memoryPlan,
+      structure_v2: {
+        ...asObject(asObject(next.team).structure_v2),
+        memory_plan: memoryPlan,
+      },
+    }
+  }
+
+  if (next.team_config && typeof next.team_config === 'object' && !Array.isArray(next.team_config)) {
+    const targetKey = applyState === 'active' ? 'active_team' : 'pending_team'
+    const targetTeam = asObject(asObject(next.team_config)[targetKey])
+    next.team_config = {
+      ...asObject(next.team_config),
+      structure_v2: {
+        ...asObject(asObject(next.team_config).structure_v2),
+        memory_plan: memoryPlan,
+      },
+      [targetKey]: {
+        ...targetTeam,
+        memory_plan: memoryPlan,
+        structure_v2: {
+          ...asObject(targetTeam.structure_v2),
+          memory_plan: memoryPlan,
+        },
+      },
+    }
+  }
+
+  if (next.blueprint && typeof next.blueprint === 'object' && !Array.isArray(next.blueprint)) {
+    next.blueprint = {
+      ...asObject(next.blueprint),
+      memory_plan: memoryPlan,
+    }
+  }
+
+  return next
 }
 
 function applyKnowledgeEditorsToManifest(
@@ -819,6 +961,12 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const [stableSlotDraft, setStableSlotDraft] = useState('')
   const [mutableSlotDraft, setMutableSlotDraft] = useState('')
   const [immutableFilesDraft, setImmutableFilesDraft] = useState('')
+  const [memoryPlanId, setMemoryPlanId] = useState('default_memory_plan')
+  const [memoryPlanDisplayName, setMemoryPlanDisplayName] = useState('Default Memory Plan')
+  const [memoryPlanMigrationStrategy, setMemoryPlanMigrationStrategy] = useState('semantic_slot_preserving')
+  const [memorySurfaceRows, setMemorySurfaceRows] = useState<MemorySurfaceFormRow[]>([emptyMemorySurfaceRow()])
+  const [memoryDefaultLoadDraft, setMemoryDefaultLoadDraft] = useState('')
+  const [memoryWritableDraft, setMemoryWritableDraft] = useState('')
   const [topologyPatternDraft, setTopologyPatternDraft] = useState('hybrid')
   const [topologyExecutionPatternDraft, setTopologyExecutionPatternDraft] = useState('')
   const [topologyFinalParticipantDraft, setTopologyFinalParticipantDraft] = useState('')
@@ -1338,6 +1486,16 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   }, [effectiveManifest])
 
   useEffect(() => {
+    const formState = extractMemoryPlanFormState(effectiveManifest)
+    setMemoryPlanId(formState.planId)
+    setMemoryPlanDisplayName(formState.displayName)
+    setMemoryPlanMigrationStrategy(formState.migrationStrategy)
+    setMemorySurfaceRows(formState.surfaces)
+    setMemoryDefaultLoadDraft(formState.defaultLoadSurfaceIds.join(', '))
+    setMemoryWritableDraft(formState.writableSurfaceIds.join(', '))
+  }, [effectiveManifest])
+
+  useEffect(() => {
     if (!effectiveManifest) return
     setTeamBlueprintTitle((prev) => prev.trim() ? prev : deriveTeamBlueprintTitle(effectiveManifest))
     setTeamBlueprintSummary((prev) => prev.trim() ? prev : deriveTeamBlueprintSummary(effectiveManifest))
@@ -1398,6 +1556,30 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestValidation(null)
       setManifestDiff(null)
       setManifestStatus('memory plan / knowledge settings를 blueprint draft에 반영했습니다.')
+    } catch (e) {
+      setManifestError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function handleApplyMemoryPlanEditors() {
+    const manifest = parseManifestDraft()
+    if (!manifest) return
+    setManifestError('')
+    setManifestStatus('')
+    try {
+      const memoryPlan = buildMemoryPlanFromForm({
+        planId: memoryPlanId,
+        displayName: memoryPlanDisplayName,
+        migrationStrategy: memoryPlanMigrationStrategy,
+        surfaces: memorySurfaceRows,
+        defaultLoadSurfaceIds: normalizeListDraft(memoryDefaultLoadDraft),
+        writableSurfaceIds: normalizeListDraft(memoryWritableDraft),
+      })
+      const nextManifest = applyMemoryPlanEditorsToManifest(manifest, memoryPlan, manifestApplyState)
+      setManifestDraft(JSON.stringify(nextManifest, null, 2))
+      setManifestValidation(null)
+      setManifestDiff(null)
+      setManifestStatus('memory plan surfaces를 blueprint draft에 반영했습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     }
@@ -1596,6 +1778,103 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             )}
           </div>
         )}
+
+        <div style={{ marginTop: 10, border: '1px solid var(--border-color, #ddd)', borderRadius: 8, padding: 10 }}>
+          <div><b>Memory plan editor</b></div>
+          <div className="muted" style={{ marginTop: 4 }}>role별 memory surface read/write contract를 직접 편집합니다.</div>
+          <div className="row" style={{ gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+            <label className="routeLabel" style={{ flex: 1 }}>
+              plan_id
+              <input value={memoryPlanId} onChange={(e) => setMemoryPlanId(e.target.value)} />
+            </label>
+            <label className="routeLabel" style={{ flex: 1 }}>
+              display_name
+              <input value={memoryPlanDisplayName} onChange={(e) => setMemoryPlanDisplayName(e.target.value)} />
+            </label>
+            <label className="routeLabel" style={{ flex: 1 }}>
+              migration_strategy
+              <input value={memoryPlanMigrationStrategy} onChange={(e) => setMemoryPlanMigrationStrategy(e.target.value)} />
+            </label>
+          </div>
+          {memorySurfaceRows.map((row, index) => (
+            <div key={`memory-surface-${index}`} style={{ marginTop: 10, border: '1px solid var(--border-color, #eee)', borderRadius: 8, padding: 10 }}>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                <b>Surface #{index + 1}</b>
+                <button onClick={() => setMemorySurfaceRows((prev) => prev.length > 1 ? prev.filter((_, i) => i !== index) : prev)}>Remove</button>
+              </div>
+              <div className="row" style={{ gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  surface_id
+                  <input value={row.surface_id} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, surface_id: e.target.value } : entry))} />
+                </label>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  file_name
+                  <input value={row.file_name} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, file_name: e.target.value } : entry))} />
+                </label>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  title
+                  <input value={row.title} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, title: e.target.value } : entry))} />
+                </label>
+              </div>
+              <label className="routeLabel" style={{ display: 'block', marginTop: 8 }}>
+                purpose
+                <input value={row.purpose} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, purpose: e.target.value } : entry))} />
+              </label>
+              <div className="row" style={{ gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  semantic_slots
+                  <input value={row.semantic_slots} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, semantic_slots: e.target.value } : entry))} placeholder="plan, progress" />
+                </label>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  target_roles
+                  <input value={row.target_roles} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, target_roles: e.target.value } : entry))} placeholder="builder, reviewer" />
+                </label>
+              </div>
+              <div className="row" style={{ gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  load_policy
+                  <input value={row.load_policy} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, load_policy: e.target.value } : entry))} />
+                </label>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  write_policy
+                  <input value={row.write_policy} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, write_policy: e.target.value } : entry))} />
+                </label>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  create_mode
+                  <input value={row.create_mode} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, create_mode: e.target.value } : entry))} />
+                </label>
+              </div>
+            </div>
+          ))}
+          <div className="row" style={{ marginTop: 8 }}>
+            <button onClick={() => setMemorySurfaceRows((prev) => [...prev, emptyMemorySurfaceRow()])}>Add surface</button>
+          </div>
+          <div className="row" style={{ gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+            <label className="routeLabel" style={{ flex: 1 }}>
+              default_load_surface_ids
+              <input value={memoryDefaultLoadDraft} onChange={(e) => setMemoryDefaultLoadDraft(e.target.value)} placeholder="mission_brief, working_memory" />
+            </label>
+            <label className="routeLabel" style={{ flex: 1 }}>
+              writable_surface_ids
+              <input value={memoryWritableDraft} onChange={(e) => setMemoryWritableDraft(e.target.value)} placeholder="working_memory, implementation_notes" />
+            </label>
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button onClick={() => {
+              const formState = extractMemoryPlanFormState(effectiveManifest)
+              setMemoryPlanId(formState.planId)
+              setMemoryPlanDisplayName(formState.displayName)
+              setMemoryPlanMigrationStrategy(formState.migrationStrategy)
+              setMemorySurfaceRows(formState.surfaces)
+              setMemoryDefaultLoadDraft(formState.defaultLoadSurfaceIds.join(', '))
+              setMemoryWritableDraft(formState.writableSurfaceIds.join(', '))
+            }}>
+              Reload from manifest
+            </button>
+            <button onClick={() => void handleApplyMemoryPlanEditors()} disabled={manifestBusy !== null}>Apply MemoryPlan to blueprint draft</button>
+          </div>
+        </div>
+
         {effectiveManifest && (
           <div style={{ marginTop: 10 }}>
             <div><b>Manifest runtime summary</b></div>
