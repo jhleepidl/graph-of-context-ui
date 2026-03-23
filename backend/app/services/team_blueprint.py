@@ -9,12 +9,18 @@ from app.services.team_manifest import (
     validate_team_manifest_payload,
     diff_team_manifest_payload,
     install_thread_team_manifest,
+    _runtime_capability_key,
+    _legacy_capability_id,
 )
 from app.services.team_blueprint_templates import list_team_blueprint_templates
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return list(value) if isinstance(value, list) else []
 
 
 def _clean_text(value: Any, max_len: int = 256) -> str:
@@ -46,57 +52,137 @@ def _build_capability_contract(team: dict[str, Any], blueprint: dict[str, Any]) 
     if existing:
         return existing
 
-    required: set[str] = set(_unique_tool_ids(team.get('required_tool_ids') or team.get('requiredToolIds') or []))
-    optional: set[str] = set(_unique_tool_ids(team.get('optional_tool_ids') or team.get('optionalToolIds') or []))
-    if not required and not optional:
-        optional.update(_unique_tool_ids(team.get('recommended_tool_ids') or team.get('recommendedToolIds') or []))
-    else:
-        optional.update(tool_id for tool_id in _unique_tool_ids(team.get('recommended_tool_ids') or team.get('recommendedToolIds') or []) if tool_id not in required)
+    required_capabilities: set[str] = set()
+    optional_capabilities: set[str] = set()
+    required_external_tools: set[str] = set()
+    optional_external_tools: set[str] = set()
     agent_contracts: list[dict[str, Any]] = []
 
     requirements = _as_dict(team.get('requirements'))
-    for requirement in _as_list(requirements.get('tools')):
+    for requirement in _as_list(requirements.get('capabilities')):
+        row = _as_dict(requirement)
+        capability_id = _runtime_capability_key(row.get('capability_id') or row.get('tool_id') or row.get('toolId'))
+        if not capability_id:
+            continue
+        if _clean_id(row.get('severity') or 'blocking', 32) == 'blocking':
+            required_capabilities.add(capability_id)
+        else:
+            optional_capabilities.add(capability_id)
+    for requirement in _as_list(requirements.get('external_tools')):
         row = _as_dict(requirement)
         tool_id = _clean_id(row.get('tool_id') or row.get('toolId'), 64)
         if not tool_id:
             continue
         if _clean_id(row.get('severity') or 'blocking', 32) == 'blocking':
-            required.add(tool_id)
+            required_external_tools.add(tool_id)
         else:
-            optional.add(tool_id)
+            optional_external_tools.add(tool_id)
+    for requirement in _as_list(requirements.get('tools')):
+        row = _as_dict(requirement)
+        tool_id = _clean_id(row.get('tool_id') or row.get('toolId'), 64)
+        if not tool_id:
+            continue
+        capability_id = _runtime_capability_key(tool_id)
+        if capability_id:
+            if _clean_id(row.get('severity') or 'blocking', 32) == 'blocking':
+                required_capabilities.add(capability_id)
+            else:
+                optional_capabilities.add(capability_id)
+        elif _clean_id(row.get('severity') or 'blocking', 32) == 'blocking':
+            required_external_tools.add(tool_id)
+        else:
+            optional_external_tools.add(tool_id)
 
     for agent in team.get('agents') or []:
         agent_row = _as_dict(agent)
-        role = _clean_id(agent_row.get('role') or 'agent', 64) or 'agent'
-        purpose_text = f"{_clean_text(agent_row.get('purpose'), 256)} {_clean_text(agent_row.get('name'), 256)}".lower()
-        explicit_required = _unique_tool_ids(agent_row.get('required_tool_ids') or agent_row.get('requiredToolIds') or [])
-        explicit_optional = _unique_tool_ids(agent_row.get('optional_tool_ids') or agent_row.get('optionalToolIds') or [])
-        if not explicit_required and not explicit_optional:
-            explicit_optional = _unique_tool_ids(agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or [])
-        else:
-            explicit_optional = _unique_tool_ids(list(explicit_optional) + [tool_id for tool_id in _unique_tool_ids(agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or []) if tool_id not in explicit_required])
-        inferred_required = list(explicit_required)
-        inferred_optional = [tool_id for tool_id in explicit_optional if tool_id not in explicit_required]
+        role = _clean_id(_as_dict(agent_row.get('role_profile')).get('role') or agent_row.get('role') or 'agent', 64) or 'agent'
+        purpose_text = f"{_clean_text(_as_dict(agent_row.get('role_profile')).get('purpose') or agent_row.get('purpose'), 256)} {_clean_text(agent_row.get('name'), 256)}".lower()
+        explicit_required_capabilities = {
+            capability_id
+            for raw_key, enabled in _as_dict(agent_row.get('runtime_capabilities_required') or agent_row.get('runtimeCapabilitiesRequired')).items()
+            for capability_id in [_runtime_capability_key(raw_key)]
+            if enabled is not False and capability_id
+        }
+        explicit_optional_capabilities = {
+            capability_id
+            for raw_key, enabled in _as_dict(agent_row.get('runtime_capabilities_optional') or agent_row.get('runtimeCapabilitiesOptional')).items()
+            for capability_id in [_runtime_capability_key(raw_key)]
+            if enabled is not False and capability_id
+        }
+        explicit_required_external = set(_unique_tool_ids(agent_row.get('external_tool_requirements') or agent_row.get('externalToolRequirements') or []))
+        explicit_optional_external = set(_unique_tool_ids(agent_row.get('external_tool_preferences') or agent_row.get('externalToolPreferences') or []))
+        legacy_required = _unique_tool_ids(agent_row.get('required_tool_ids') or agent_row.get('requiredToolIds') or [])
+        legacy_optional = _unique_tool_ids(agent_row.get('optional_tool_ids') or agent_row.get('optionalToolIds') or agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or [])
+        for tool_id in legacy_required:
+            capability_id = _runtime_capability_key(tool_id)
+            if capability_id:
+                explicit_required_capabilities.add(capability_id)
+            else:
+                explicit_required_external.add(tool_id)
+        for tool_id in legacy_optional:
+            capability_id = _runtime_capability_key(tool_id)
+            if capability_id:
+                explicit_optional_capabilities.add(capability_id)
+            else:
+                explicit_optional_external.add(tool_id)
+
+        inferred_required_capabilities = set(explicit_required_capabilities)
+        inferred_optional_capabilities = {item for item in explicit_optional_capabilities if item not in explicit_required_capabilities}
+        inferred_required_external = set(explicit_required_external)
+        inferred_optional_external = {item for item in explicit_optional_external if item not in explicit_required_external}
+
         code_like = any(token in purpose_text for token in ['ipynb', 'notebook', 'jupyter', 'file', 'json', 'python', 'script', 'workspace', 'code', '코드', '노트북', '파일'])
-        if role == 'builder' and code_like and 'workspace_fs' not in inferred_required:
-            inferred_required.append('workspace_fs')
-        if role == 'builder' and 'shell' not in inferred_required and 'shell' not in inferred_optional:
-            inferred_optional.append('shell')
-        if role in {'researcher', 'reviewer'} and any(token in purpose_text for token in ['research', 'review', 'evidence', 'fact', '검토', '조사']) and 'web' not in inferred_required and 'web' not in inferred_optional:
-            inferred_optional.append('web')
-        required.update(inferred_required)
-        optional.update(tool_id for tool_id in inferred_optional if tool_id not in required)
+        if role == 'builder' and code_like:
+            inferred_required_capabilities.add('filesystem_write')
+            inferred_optional_capabilities.add('shell_exec')
+        if role in {'researcher', 'reviewer'} and any(token in purpose_text for token in ['research', 'review', 'evidence', 'fact', '검토', '조사']):
+            inferred_optional_capabilities.add('web_browse')
+
+        required_capabilities.update(inferred_required_capabilities)
+        optional_capabilities.update(item for item in inferred_optional_capabilities if item not in required_capabilities)
+        required_external_tools.update(inferred_required_external)
+        optional_external_tools.update(item for item in inferred_optional_external if item not in required_external_tools)
+
         agent_contracts.append({
             'agent_id': _clean_id(agent_row.get('agent_id') or agent_row.get('id') or agent_row.get('name') or 'agent'),
             'agent_name': _clean_text(agent_row.get('name') or agent_row.get('agent_id') or 'agent', 120) or 'agent',
             'role': role,
-            'required_tools': _unique_tool_ids(inferred_required),
-            'optional_tools': [tool_id for tool_id in _unique_tool_ids(inferred_optional) if tool_id not in inferred_required],
+            'required_capabilities': sorted(inferred_required_capabilities),
+            'optional_capabilities': sorted(item for item in inferred_optional_capabilities if item not in inferred_required_capabilities),
+            'required_external_tools': sorted(inferred_required_external),
+            'optional_external_tools': sorted(item for item in inferred_optional_external if item not in inferred_required_external),
+            'required_tools': sorted([_legacy_capability_id(item) for item in inferred_required_capabilities] + list(inferred_required_external)),
+            'optional_tools': sorted([_legacy_capability_id(item) for item in inferred_optional_capabilities if item not in inferred_required_capabilities] + list(item for item in inferred_optional_external if item not in inferred_required_external)),
         })
 
-    required_list = _unique_tool_ids(list(required))
-    optional_list = [tool_id for tool_id in _unique_tool_ids(list(optional)) if tool_id not in required_list]
-    return {'version': 'capability_contract_v1', 'runtime_bound': False, 'runtime_source': 'template', 'status': 'unbound', 'required_tools': required_list, 'optional_tools': optional_list, 'available_tools': [], 'missing_required_tools': required_list, 'missing_optional_tools': optional_list, 'auto_installable_missing_tools': [], 'mismatch_count': len(required_list) + len(optional_list), 'agent_contracts': agent_contracts}
+    required_capability_list = sorted(required_capabilities)
+    optional_capability_list = sorted(item for item in optional_capabilities if item not in required_capabilities)
+    required_external_list = sorted(required_external_tools)
+    optional_external_list = sorted(item for item in optional_external_tools if item not in required_external_tools)
+    required_tool_list = sorted([_legacy_capability_id(item) for item in required_capability_list] + required_external_list)
+    optional_tool_list = sorted([_legacy_capability_id(item) for item in optional_capability_list] + optional_external_list)
+    return {
+        'version': 'capability_contract_v2',
+        'runtime_bound': False,
+        'runtime_source': 'template',
+        'status': 'unbound',
+        'required_capabilities': required_capability_list,
+        'optional_capabilities': optional_capability_list,
+        'required_external_tools': required_external_list,
+        'optional_external_tools': optional_external_list,
+        'required_tools': required_tool_list,
+        'optional_tools': optional_tool_list,
+        'available_tools': [],
+        'missing_required_capabilities': required_capability_list,
+        'missing_optional_capabilities': optional_capability_list,
+        'missing_required_external_tools': required_external_list,
+        'missing_optional_external_tools': optional_external_list,
+        'missing_required_tools': required_tool_list,
+        'missing_optional_tools': optional_tool_list,
+        'auto_installable_missing_tools': [],
+        'mismatch_count': len(required_capability_list) + len(optional_capability_list) + len(required_external_list) + len(optional_external_list),
+        'agent_contracts': agent_contracts,
+    }
 
 
 def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:

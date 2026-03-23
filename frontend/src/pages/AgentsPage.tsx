@@ -293,8 +293,8 @@ export default function AgentsPage({ onNavigate }: Props) {
       const out = await api.agents(nextScope, false)
       const rows = Array.isArray(out?.items) ? out.items : []
       const mapped = rows
-        .map((row) => normalizeAgent(row))
-        .filter((row): row is AgentRecord => Boolean(row))
+        .map((row: unknown) => normalizeAgent(row))
+        .filter((row: AgentRecord | null): row is AgentRecord => Boolean(row))
       setAgents(mapped)
     } catch (e) {
       setAgents([])
@@ -396,7 +396,7 @@ export default function AgentsPage({ onNavigate }: Props) {
   useEffect(() => {
     if (!threadSelectionInitialized) return
     const selected = selectedThreadId.trim()
-    const currentUrlThread = readLinkedThreadId() || ''
+    const currentUrlThread = readLinkedSelection().threadId || ''
     if (selected === currentUrlThread) return
     if (selected) {
       const suffix = linkedCtxId ? `&ctx=${encodeURIComponent(linkedCtxId)}` : ''

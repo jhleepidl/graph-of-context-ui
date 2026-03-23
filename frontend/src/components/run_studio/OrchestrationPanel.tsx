@@ -65,7 +65,7 @@ export default function OrchestrationPanel({ orchestration, checkpoints, teamVie
           </span>
         )}
         {Object.entries(orchestration?.checkpoint_status_counts || {}).map(([status, count]) => (
-          <span key={status} className="pill">checkpoint {status}: {count}</span>
+          <span key={status} className="pill">checkpoint {status}: {String(count)}</span>
         ))}
       </div>
 
@@ -92,7 +92,7 @@ export default function OrchestrationPanel({ orchestration, checkpoints, teamVie
               <span className="pill">{target}</span>
               <span className="pill">sequential after</span>
             </div>
-            <div className="muted">{deps.join(' | ') || 'no dependencies listed'}</div>
+            <div className="muted">{(Array.isArray(deps) ? deps.map((dep) => String(dep)) : []).join(' | ') || 'no dependencies listed'}</div>
           </article>
         ))}
 
@@ -100,11 +100,11 @@ export default function OrchestrationPanel({ orchestration, checkpoints, teamVie
           <article key={`supervisor:${index}`} className="runStudioListItem">
             <div className="row" style={{ marginBottom: 4 }}>
               <span className="pill">supervisor edge</span>
-              {edge.from && <span className="pill">from: {String(edge.from)}</span>}
-              {edge.to && <span className="pill">to: {String(edge.to)}</span>}
+              {Boolean(edge.from) && <span className="pill">from: {String(edge.from)}</span>}
+              {Boolean(edge.to) && <span className="pill">to: {String(edge.to)}</span>}
             </div>
-            {edge.edge_summary && <div className="muted">{String(edge.edge_summary)}</div>}
-            {(edge.type || edge.kind || edge.label) && (
+            {Boolean(edge.edge_summary) && <div className="muted">{String(edge.edge_summary)}</div>}
+            {Boolean(edge.type || edge.kind || edge.label) && (
               <div className="muted">{String(edge.type || edge.kind || edge.label)}</div>
             )}
           </article>

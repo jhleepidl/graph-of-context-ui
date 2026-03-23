@@ -3,6 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from app.services.team_manifest import _runtime_capability_key, _legacy_capability_id
+
+
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 def _clean_id(value: Any, max_len: int = 128) -> str:
     text = str(value or '').strip().lower()[:max_len]
@@ -24,17 +31,66 @@ def _unique_tool_ids(values: Any, max_items: int = 24) -> list[str]:
 
 
 def _build_capability_contract(team_seed: dict[str, Any]) -> dict[str, Any]:
-    required: list[str] = []
-    optional: list[str] = []
+    required_capabilities: list[str] = []
+    optional_capabilities: list[str] = []
+    required_external_tools: list[str] = []
+    optional_external_tools: list[str] = []
     agent_contracts: list[dict[str, Any]] = []
     for agent in team_seed.get('agents') or []:
-        required_tools = _unique_tool_ids(agent.get('required_tool_ids') or agent.get('requiredToolIds') or [])
-        optional_tools = _unique_tool_ids(agent.get('optional_tool_ids') or agent.get('optionalToolIds') or agent.get('recommended_tool_ids') or agent.get('recommendedToolIds') or [])
-        optional_tools = [tool_id for tool_id in optional_tools if tool_id not in required_tools]
-        required.extend(required_tools); optional.extend(optional_tools)
-        agent_contracts.append({'agent_id': _clean_id(agent.get('agent_id') or agent.get('id') or agent.get('name') or 'agent'), 'agent_name': str(agent.get('name') or agent.get('agent_id') or 'agent').strip() or 'agent', 'role': _clean_id(agent.get('role') or 'agent', 64) or 'agent', 'required_tools': required_tools, 'optional_tools': optional_tools})
-    required = _unique_tool_ids(required); optional = [tool_id for tool_id in _unique_tool_ids(optional) if tool_id not in required]
-    return {'version': 'capability_contract_v1', 'runtime_bound': False, 'runtime_source': 'template', 'status': 'unbound', 'required_tools': required, 'optional_tools': optional, 'available_tools': [], 'missing_required_tools': required, 'missing_optional_tools': optional, 'auto_installable_missing_tools': [], 'mismatch_count': len(required) + len(optional), 'agent_contracts': agent_contracts}
+        agent_row = _as_dict(agent)
+        required_capabilities_agent = [
+            capability_id
+            for raw_key, enabled in _as_dict(agent_row.get('runtime_capabilities_required') or agent_row.get('runtimeCapabilitiesRequired')).items()
+            for capability_id in [_runtime_capability_key(raw_key)]
+            if enabled is not False and capability_id
+        ]
+        optional_capabilities_agent = [
+            capability_id
+            for raw_key, enabled in _as_dict(agent_row.get('runtime_capabilities_optional') or agent_row.get('runtimeCapabilitiesOptional')).items()
+            for capability_id in [_runtime_capability_key(raw_key)]
+            if enabled is not False and capability_id and capability_id not in required_capabilities_agent
+        ]
+        required_external_tools_agent = _unique_tool_ids(agent_row.get('external_tool_requirements') or agent_row.get('externalToolRequirements') or [])
+        optional_external_tools_agent = [
+            tool_id for tool_id in _unique_tool_ids(agent_row.get('external_tool_preferences') or agent_row.get('externalToolPreferences') or [])
+            if tool_id not in required_external_tools_agent
+        ]
+        for tool_id in _unique_tool_ids(agent_row.get('required_tool_ids') or agent_row.get('requiredToolIds') or []):
+            capability_id = _runtime_capability_key(tool_id)
+            if capability_id:
+                if capability_id not in required_capabilities_agent:
+                    required_capabilities_agent.append(capability_id)
+            elif tool_id not in required_external_tools_agent:
+                required_external_tools_agent.append(tool_id)
+        for tool_id in _unique_tool_ids(agent_row.get('optional_tool_ids') or agent_row.get('optionalToolIds') or agent_row.get('recommended_tool_ids') or agent_row.get('recommendedToolIds') or []):
+            capability_id = _runtime_capability_key(tool_id)
+            if capability_id:
+                if capability_id not in required_capabilities_agent and capability_id not in optional_capabilities_agent:
+                    optional_capabilities_agent.append(capability_id)
+            elif tool_id not in required_external_tools_agent and tool_id not in optional_external_tools_agent:
+                optional_external_tools_agent.append(tool_id)
+        required_capabilities.extend(required_capabilities_agent)
+        optional_capabilities.extend(optional_capabilities_agent)
+        required_external_tools.extend(required_external_tools_agent)
+        optional_external_tools.extend(optional_external_tools_agent)
+        agent_contracts.append({
+            'agent_id': _clean_id(agent_row.get('agent_id') or agent_row.get('id') or agent_row.get('name') or 'agent'),
+            'agent_name': str(agent_row.get('name') or agent_row.get('agent_id') or 'agent').strip() or 'agent',
+            'role': _clean_id(_as_dict(agent_row.get('role_profile')).get('role') or agent_row.get('role') or 'agent', 64) or 'agent',
+            'required_capabilities': required_capabilities_agent,
+            'optional_capabilities': optional_capabilities_agent,
+            'required_external_tools': required_external_tools_agent,
+            'optional_external_tools': optional_external_tools_agent,
+            'required_tools': [_legacy_capability_id(item) for item in required_capabilities_agent] + required_external_tools_agent,
+            'optional_tools': [_legacy_capability_id(item) for item in optional_capabilities_agent] + optional_external_tools_agent,
+        })
+    required_capabilities = _unique_tool_ids(required_capabilities)
+    optional_capabilities = [tool_id for tool_id in _unique_tool_ids(optional_capabilities) if tool_id not in required_capabilities]
+    required_external_tools = _unique_tool_ids(required_external_tools)
+    optional_external_tools = [tool_id for tool_id in _unique_tool_ids(optional_external_tools) if tool_id not in required_external_tools]
+    required_tools = [_legacy_capability_id(item) for item in required_capabilities] + required_external_tools
+    optional_tools = [_legacy_capability_id(item) for item in optional_capabilities] + optional_external_tools
+    return {'version': 'capability_contract_v2', 'runtime_bound': False, 'runtime_source': 'template', 'status': 'unbound', 'required_capabilities': required_capabilities, 'optional_capabilities': optional_capabilities, 'required_external_tools': required_external_tools, 'optional_external_tools': optional_external_tools, 'required_tools': required_tools, 'optional_tools': optional_tools, 'available_tools': [], 'missing_required_capabilities': required_capabilities, 'missing_optional_capabilities': optional_capabilities, 'missing_required_external_tools': required_external_tools, 'missing_optional_external_tools': optional_external_tools, 'missing_required_tools': required_tools, 'missing_optional_tools': optional_tools, 'auto_installable_missing_tools': [], 'mismatch_count': len(required_capabilities) + len(optional_capabilities) + len(required_external_tools) + len(optional_external_tools), 'agent_contracts': agent_contracts}
 
 
 def _doc(kind: str, title: str, description: str, tags: list[str], good_for: list[str], bad_for: list[str], team_seed: dict[str, Any]) -> dict[str, Any]:
@@ -103,9 +159,9 @@ def list_team_blueprint_templates() -> list[dict[str, Any]]:
                 'team_name': 'Research Briefing Team',
                 'task_brief': 'Investigate a topic and deliver a concise recommendation memo.',
                 'agents': [
-                    {'agent_id': 'research_lead', 'name': 'Research Lead', 'role': 'researcher', 'purpose': 'Gather evidence and maintain the evidence ledger.', 'required_tool_ids': ['web'], 'optional_tool_ids': ['read_only_fs']},
-                    {'agent_id': 'analyst', 'name': 'Analyst', 'role': 'synthesizer', 'purpose': 'Draft a concise recommendation memo.', 'optional_tool_ids': ['read_only_fs']},
-                    {'agent_id': 'fact_reviewer', 'name': 'Fact Reviewer', 'role': 'reviewer', 'purpose': 'Challenge unsupported claims before delivery.', 'required_tool_ids': ['web'], 'optional_tool_ids': ['read_only_fs']},
+                    {'agent_id': 'research_lead', 'name': 'Research Lead', 'role': 'researcher', 'purpose': 'Gather evidence and maintain the evidence ledger.', 'runtime_capabilities_required': {'web_browse': True}, 'runtime_capabilities_optional': {'filesystem_read': True}, 'required_tool_ids': ['web'], 'optional_tool_ids': ['read_only_fs']},
+                    {'agent_id': 'analyst', 'name': 'Analyst', 'role': 'synthesizer', 'purpose': 'Draft a concise recommendation memo.', 'runtime_capabilities_optional': {'filesystem_read': True}, 'optional_tool_ids': ['read_only_fs']},
+                    {'agent_id': 'fact_reviewer', 'name': 'Fact Reviewer', 'role': 'reviewer', 'purpose': 'Challenge unsupported claims before delivery.', 'runtime_capabilities_required': {'web_browse': True}, 'runtime_capabilities_optional': {'filesystem_read': True}, 'required_tool_ids': ['web'], 'optional_tool_ids': ['read_only_fs']},
                 ],
                 'memory_plan': {
                     'version': 1,
@@ -184,7 +240,7 @@ def list_team_blueprint_templates() -> list[dict[str, Any]]:
                 'agents': [
                     {'agent_id': 'auditor', 'name': 'Auditor', 'role': 'reviewer', 'purpose': 'Identify the highest-value defects and regressions.'},
                     {'agent_id': 'repair_planner', 'name': 'Repair Planner', 'role': 'researcher', 'purpose': 'Turn review findings into a bounded repair plan.'},
-                    {'agent_id': 'repair_builder', 'name': 'Repair Builder', 'role': 'builder', 'purpose': 'Apply the minimal repair patch.', 'required_tool_ids': ['workspace_fs'], 'optional_tool_ids': ['shell']},
+                    {'agent_id': 'repair_builder', 'name': 'Repair Builder', 'role': 'builder', 'purpose': 'Apply the minimal repair patch.', 'runtime_capabilities_required': {'filesystem_write': True}, 'runtime_capabilities_optional': {'shell_exec': True}, 'required_tool_ids': ['workspace_fs'], 'optional_tool_ids': ['shell']},
                     {'agent_id': 'signoff_owner', 'name': 'Signoff Owner', 'role': 'synthesizer', 'purpose': 'Summarize repaired state and residual risk.'},
                 ],
                 'memory_plan': {

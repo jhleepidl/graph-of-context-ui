@@ -213,9 +213,9 @@ function normalizeVisibility(value: unknown): 'private' | 'unlisted' | 'public' 
   return 'private'
 }
 
-function asObject(value: unknown): Record<string, unknown> {
+function asObject(value: unknown): Record<string, any> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  return value as Record<string, unknown>
+  return value as Record<string, any>
 }
 
 const TEAM_CATALOG_THREAD_TITLES = ['teams:catalog', 'agent-teams'] as const
@@ -283,6 +283,15 @@ function collectParticipantRuntimeCards(structureSummary: Record<string, any> | 
     const requiredTools = normalizeStringList(participant?.required_tool_ids || participant?.requiredToolIds)
     const optionalTools = normalizeStringList(participant?.optional_tool_ids || participant?.optionalToolIds)
     const recommendedTools = normalizeStringList(participant?.recommended_tool_ids || participant?.recommendedToolIds)
+    const runtimeCapabilitiesRequired = normalizeStringList(Object.keys(asObject(participant?.runtime_capabilities_required || participant?.runtimeCapabilitiesRequired)))
+    const runtimeCapabilitiesOptional = normalizeStringList(Object.keys(asObject(participant?.runtime_capabilities_optional || participant?.runtimeCapabilitiesOptional)))
+    const externalToolRequirements = normalizeStringList(participant?.external_tool_requirements || participant?.externalToolRequirements)
+    const externalToolPreferences = normalizeStringList(participant?.external_tool_preferences || participant?.externalToolPreferences)
+    const providerSpec = asObject(participant?.provider_spec || participant?.providerSpec)
+    const providerRuntimeConfig = asObject(participant?.provider_runtime_config || participant?.providerRuntimeConfig)
+    const roleProfile = asObject(participant?.role_profile || participant?.roleProfile)
+    const skillPackage = asObject(participant?.skill_package || participant?.skillPackage)
+    const memoryContract = asObject(participant?.memory_contract || participant?.memoryContract)
     const contextPolicy = asObject(participant?.context_policy || participant?.contextPolicy)
     const writes = asObject(contextPolicy?.writes)
     const contextPublishTargets = normalizeStringList(writes?.publish_targets || writes?.publishTargets)
@@ -313,11 +322,25 @@ function collectParticipantRuntimeCards(structureSummary: Record<string, any> | 
       participantId,
       label,
       role,
-      provider: asString(participant?.provider),
-      model: asString(participant?.model),
+      provider: asString(participant?.provider || providerSpec?.provider),
+      model: asString(participant?.model || providerSpec?.model),
+      executionChannel: asString(participant?.execution_channel || participant?.executionChannel || providerSpec?.execution_channel || providerSpec?.executionChannel),
+      rolePurpose: asString(participant?.purpose || roleProfile?.purpose),
+      specialty: asString(participant?.specialty || roleProfile?.specialty),
+      skillIds: normalizeStringList(skillPackage?.skill_ids || skillPackage?.skillIds || participant?.attached_skill_ids || participant?.attachedSkillIds),
       requiredTools,
       optionalTools,
       recommendedTools,
+      runtimeCapabilitiesRequired,
+      runtimeCapabilitiesOptional,
+      externalToolRequirements,
+      externalToolPreferences,
+      memoryContractRead: normalizeStringList(memoryContract?.read_surface_ids || memoryContract?.readSurfaceIds),
+      memoryContractWrite: normalizeStringList(memoryContract?.write_surface_ids || memoryContract?.writeSurfaceIds),
+      memoryContractPublish: normalizeStringList(memoryContract?.publish_surface_ids || memoryContract?.publishSurfaceIds),
+      memoryContractMode: asString(memoryContract?.enforcement_mode || memoryContract?.enforcementMode),
+      sandboxMode: asString(providerRuntimeConfig?.sandbox_mode || providerRuntimeConfig?.sandboxMode),
+      approvalPolicy: asString(providerRuntimeConfig?.approval_policy || providerRuntimeConfig?.approvalPolicy),
       readableSurfaces: visibleSurfaces.map((surface) => surface.id),
       defaultLoadSurfaces: visibleSurfaces.filter((surface) => surface.defaultLoad).map((surface) => surface.id),
       writableSurfaces: visibleSurfaces.filter((surface) => surface.writable).map((surface) => surface.id),
@@ -503,7 +526,7 @@ function normalizeConversation(raw: any): ConversationState | null {
       }
     })
     .filter((row: ConversationMember | null): row is ConversationMember => Boolean(row))
-    .sort((a, b) => a.order_index - b.order_index)
+    .sort((a: ConversationMember, b: ConversationMember) => a.order_index - b.order_index)
   return {
     id,
     thread_id: threadId,
@@ -531,8 +554,9 @@ function commandSuggestionList({
   const credentialBinding = asObject(row.credential_binding_state)
   const requirements = asObject(row.requirements)
   const patternConflict = asObject(row.pattern_conflict)
-  const pendingCredentialKeys = Array.isArray(installProposal?.actions?.credential_requests)
-    ? installProposal.actions.credential_requests
+  const installActions = asObject(installProposal?.actions)
+  const pendingCredentialKeys = Array.isArray(installActions?.credential_requests)
+    ? installActions.credential_requests
         .map((entry: any) => asString(entry?.credential_key || entry?.credentialKey || entry?.key))
         .filter(Boolean)
     : []
@@ -1627,6 +1651,36 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
     }
   }
 
+
+  async function handleCopyManifest() {
+    const value = manifestDraft.trim()
+    if (!value) return
+    const ok = await copyText(value)
+    if (ok) {
+      setManifestStatus('blueprint JSON을 clipboard에 복사했습니다.')
+      setManifestError('')
+      return
+    }
+    setManifestError('blueprint JSON 복사에 실패했습니다.')
+  }
+
+  async function handleDownloadManifest() {
+    const value = manifestDraft.trim()
+    if (!value || typeof window === 'undefined' || typeof document === 'undefined') return
+    const blob = new Blob([value], { type: 'application/json;charset=utf-8' })
+    const href = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const filenameBase = deriveTeamBlueprintTitle(parseManifestDraft() || {}) || 'team_blueprint'
+    link.href = href
+    link.download = `${filenameBase.replace(/[^a-z0-9-_]+/gi, '_').toLowerCase() || 'team_blueprint'}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(href)
+    setManifestStatus('blueprint JSON을 파일로 다운로드했습니다.')
+    setManifestError('')
+  }
+
   const ensurePrivateTeamCatalogThread = useCallback(async (): Promise<string> => {
     const listRaw = await api.threads()
     const list = Array.isArray(listRaw) ? (listRaw as ThreadSummary[]) : []
@@ -2496,16 +2550,28 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             {participantRuntimeCards.length > 0 && (
               <div style={{ marginTop: 10, border: '1px solid var(--border-color, #ddd)', borderRadius: 8, padding: 10 }}>
                 <div><b>Participant runtime projection</b></div>
-                <div className="muted" style={{ marginTop: 4 }}>participant별 role/provider/model, tool expectation, memory surface read/write/publish target를 projection합니다.</div>
+                <div className="muted" style={{ marginTop: 4 }}>participant별 role/provider/model, runtime capability / external tool / memory contract를 함께 projection합니다.</div>
                 <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
                   {participantRuntimeCards.map((card: any, index: number) => (
                     <div key={`runtime-card-${card.participantId || index}`} style={{ border: '1px solid var(--border-color, #eee)', borderRadius: 8, padding: 8 }}>
                       <div><b>{String(card.label || card.participantId || `Participant ${index + 1}`)}</b> <span className="muted">({String(card.role || 'specialist')})</span></div>
                       <div className="muted" style={{ marginTop: 4 }}>
-                        participant_id={String(card.participantId || 'unknown')} · provider={String(card.provider || 'unset')} · model={String(card.model || 'unset')}
+                        participant_id={String(card.participantId || 'unknown')} · provider={String(card.provider || 'unset')} · model={String(card.model || 'unset')} · execution_channel={String(card.executionChannel || 'unset')}
                       </div>
                       <div className="muted" style={{ marginTop: 4 }}>
                         required_tools={card.requiredTools.length > 0 ? card.requiredTools.join(', ') : '(none)'} · optional_tools={card.optionalTools.length > 0 ? card.optionalTools.join(', ') : '(none)'} · recommended_tools={card.recommendedTools.length > 0 ? card.recommendedTools.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        runtime_capabilities.required={card.runtimeCapabilitiesRequired.length > 0 ? card.runtimeCapabilitiesRequired.join(', ') : '(none)'} · runtime_capabilities.optional={card.runtimeCapabilitiesOptional.length > 0 ? card.runtimeCapabilitiesOptional.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        external_tools.required={card.externalToolRequirements.length > 0 ? card.externalToolRequirements.join(', ') : '(none)'} · external_tools.optional={card.externalToolPreferences.length > 0 ? card.externalToolPreferences.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        role_profile.purpose={String(card.rolePurpose || 'unset')} · specialty={String(card.specialty || 'unset')} · skills={card.skillIds.length > 0 ? card.skillIds.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        runtime_config.sandbox={String(card.sandboxMode || 'unset')} · approval={String(card.approvalPolicy || 'unset')} · memory_contract={String(card.memoryContractMode || 'unset')}
                       </div>
                       <div className="muted" style={{ marginTop: 4 }}>
                         readable={card.readableSurfaces.length > 0 ? card.readableSurfaces.join(', ') : '(none)'} · default_load={card.defaultLoadSurfaces.length > 0 ? card.defaultLoadSurfaces.join(', ') : '(none)'}
@@ -2886,8 +2952,22 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
               <div style={{ marginTop: 6 }}>
                 <b style={{ fontSize: 12 }}>Action proposals</b>
                 <div className="muted" style={{ marginTop: 4 }}>
-                  tool_installs={Number(installProposalSummary?.actions?.summary?.tool_install_count || 0)} · credential_requests={Number(installProposalSummary?.actions?.summary?.credential_request_count || 0)} · generated_skills={Number(installProposalSummary?.actions?.summary?.generated_skill_count || 0)}
+                  capability_enables={Number(installProposalSummary?.actions?.summary?.capability_enable_count || 0)} · external_tool_installs={Number(installProposalSummary?.actions?.summary?.external_tool_install_count || 0)} · tool_installs={Number(installProposalSummary?.actions?.summary?.tool_install_count || 0)} · credential_requests={Number(installProposalSummary?.actions?.summary?.credential_request_count || 0)} · generated_skills={Number(installProposalSummary?.actions?.summary?.generated_skill_count || 0)}
                 </div>
+                {Array.isArray(installProposalSummary?.actions?.capability_enable_proposals) && installProposalSummary.actions.capability_enable_proposals.length > 0 && (
+                  <ul style={{ marginTop: 4 }}>
+                    {installProposalSummary.actions.capability_enable_proposals.slice(0, 4).map((entry: any, index: number) => (
+                      <li key={`capability-enable-${index}`}>{String(entry?.capability_id || entry?.tool_id || 'capability')} · by {String(entry?.required_by || 'agent')} · {String(entry?.strategy || 'enable_runtime_capability')}</li>
+                    ))}
+                  </ul>
+                )}
+                {Array.isArray(installProposalSummary?.actions?.external_tool_install_proposals) && installProposalSummary.actions.external_tool_install_proposals.length > 0 && (
+                  <ul style={{ marginTop: 4 }}>
+                    {installProposalSummary.actions.external_tool_install_proposals.slice(0, 4).map((entry: any, index: number) => (
+                      <li key={`external-tool-install-${index}`}>{String(entry?.tool_id || 'tool')} · by {String(entry?.required_by || 'agent')} · {String(entry?.strategy || 'connect_runtime_tool')}</li>
+                    ))}
+                  </ul>
+                )}
                 {Array.isArray(installProposalSummary?.actions?.tool_install_proposals) && installProposalSummary.actions.tool_install_proposals.length > 0 && (
                   <ul style={{ marginTop: 4 }}>
                     {installProposalSummary.actions.tool_install_proposals.slice(0, 4).map((entry: any, index: number) => (
@@ -3024,14 +3104,14 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             </tr>
           </thead>
           <tbody>
-            {catalogItemsWithRecommendation.map((item: any) => (
+            {catalogItemsWithRecommendation.map((item: TeamCatalogItem & { catalogRecommendation: CatalogRecommendation }) => (
               <tr key={item.nodeId}>
                 <td><b>{item.title || '-'}</b></td>
                 <td style={{ maxWidth: 280 }}>{item.summary || '-'}</td>
                 <td style={{ maxWidth: 260 }}>
                   {item.recommendedFor.length > 0 ? (
                     <ul style={{ margin: 0, paddingLeft: 18 }}>
-                      {item.recommendedFor.slice(0, 4).map((entry, index) => <li key={`${item.nodeId}-good-${index}`}>{entry}</li>)}
+                      {item.recommendedFor.slice(0, 4).map((entry: string, index: number) => <li key={`${item.nodeId}-good-${index}`}>{entry}</li>)}
                     </ul>
                   ) : '-'}
                 </td>

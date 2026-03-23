@@ -176,15 +176,15 @@ function mergeAttachedSkills(primary?: AttachedSkillSummary[], secondary?: Attac
 }
 
 function genericRuntimeLabel(label?: string | null, roleId?: string | null): boolean {
-  const cleanLabel = cleanText(label).toLowerCase()
-  const cleanRole = cleanText(roleId).toLowerCase()
+  const cleanLabel = (cleanText(label) || '').toLowerCase()
+  const cleanRole = (cleanText(roleId) || '').toLowerCase()
   if (!cleanLabel) return true
   if (cleanRole && (cleanLabel === cleanRole || cleanLabel === titleCaseIdentifier(cleanRole).toLowerCase())) return true
   return false
 }
 
 function titleCaseIdentifier(value?: string | null): string {
-  return cleanText(value)
+  return (cleanText(value) || '')
     .replace(/[._-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -192,9 +192,9 @@ function titleCaseIdentifier(value?: string | null): string {
 }
 
 function friendlyRuntimeLabel(agent: Partial<RuntimeAgentInstanceV2>): string {
-  const roleId = cleanText(agent.role_id || agent.role_label).toLowerCase()
+  const roleId = (cleanText(agent.role_id || agent.role_label) || '').toLowerCase()
   const current = cleanText(agent.display_label || agent.name || agent.role_label || agent.agent_id)
-  const slotText = [agent.slot_label, agent.selection_reason].map((value) => cleanText(value).toLowerCase()).filter(Boolean).join(' ')
+  const slotText = [agent.slot_label, agent.selection_reason].map((value) => (cleanText(value) || '').toLowerCase()).filter(Boolean).join(' ')
   if (current && !genericRuntimeLabel(current, roleId)) return current
   const hasAny = (...patterns: string[]) => patterns.some((pattern) => slotText.includes(pattern))
   if (roleId === 'researcher') {
@@ -558,7 +558,7 @@ export function selectEffectiveWhyThisTeam(
   detail: RunStudioAgentTeam | null,
 ): WhyThisTeamProjection | null {
   const rawProjection = summary?.why_this_team || currentRunSkills(summary)?.why_this_team || null
-  const teamView = selectEffectiveTeamView(summary, detail)
+  const teamView = selectEffectiveTeamView(summary, detail ?? null)
   if (!rawProjection && !(teamView?.items?.length || 0)) return null
 
   const derivedAgentReasons = (teamView?.items || [])
@@ -710,7 +710,7 @@ export function selectEffectiveCollaboration(summary: RunStudioSummary | null): 
 
 export function selectEffectiveAuthority(summary: RunStudioSummary | null, detail: RunStudioAgentTeam | null): AuthorityProjection | null {
   const rawProjection = summary?.authority || currentRunSkills(summary)?.authority || null
-  const teamView = selectEffectiveTeamView(summary, detail)
+  const teamView = selectEffectiveTeamView(summary, detail ?? null)
   const fallbackItems = (teamView?.items || [])
     .filter((item) => Boolean(cleanText(item.authority_profile_id)))
     .map((item) => ({
@@ -727,7 +727,8 @@ export function selectEffectiveAuthority(summary: RunStudioSummary | null, detai
     }))
 
   const rawItems = (rawProjection?.items || []).map((item) => normalizeAuthorityItem(item))
-  const mergedItemsMap = new Map<string, AuthorityProjection['items'][number]>()
+  type AuthorityProjectionItem = NonNullable<AuthorityProjection['items']>[number]
+  const mergedItemsMap = new Map<string, AuthorityProjectionItem>()
   ;[...rawItems, ...fallbackItems].forEach((item) => {
     const key = cleanText(item.runtime_instance_id) || cleanText(item.display_label) || cleanText(item.authority_profile_id) || 'authority'
     const current = mergedItemsMap.get(key)
@@ -901,7 +902,7 @@ export function selectControlPlaneSummary(
   summary: RunStudioSummary | null,
   detail: RunStudioAgentTeam | null,
 ): ControlPlaneSummaryProjection | null {
-  const teamView = selectEffectiveTeamView(summary, detail)
+  const teamView = selectEffectiveTeamView(summary, detail ?? null)
   const orchestration = selectEffectiveOrchestration(summary, teamView)
   const collaboration = selectEffectiveCollaboration(summary)
   const checkpoints = selectEffectiveCheckpoints(summary)
@@ -975,7 +976,7 @@ export function selectSkillAttachmentOverview(
   summary: RunStudioSummary | null,
   detail?: RunStudioAgentTeam | null,
 ): SkillAttachmentOverviewProjection {
-  const teamView = selectEffectiveTeamView(summary, detail)
+  const teamView = selectEffectiveTeamView(summary, detail ?? null)
   const items = teamView?.items || []
 
   const agents: AgentSkillAttachmentProjection[] = items

@@ -419,22 +419,23 @@ export default function WorkspaceApp() {
 
   useEffect(() => {
     if (!resizeSession) return
+    const session = resizeSession
 
     function handleMouseMove(evt: MouseEvent) {
-      const dx = evt.clientX - resizeSession.startX
+      const dx = evt.clientX - session.startX
       const totalResizerWidth = RESIZER_WIDTH * 2
 
-      if (resizeSession.handle === 'left') {
-        const maxLeft = resizeSession.wrapWidth - resizeSession.startRightWidth - CENTER_PANEL_MIN_WIDTH - totalResizerWidth
+      if (session.handle === 'left') {
+        const maxLeft = session.wrapWidth - session.startRightWidth - CENTER_PANEL_MIN_WIDTH - totalResizerWidth
         const upper = Math.max(LEFT_PANEL_MIN_WIDTH, maxLeft)
-        const nextLeft = Math.round(clamp(resizeSession.startLeftWidth + dx, LEFT_PANEL_MIN_WIDTH, upper))
+        const nextLeft = Math.round(clamp(session.startLeftWidth + dx, LEFT_PANEL_MIN_WIDTH, upper))
         setPanelWidths((prev) => (prev.left === nextLeft ? prev : { ...prev, left: nextLeft }))
         return
       }
 
-      const maxRight = resizeSession.wrapWidth - resizeSession.startLeftWidth - CENTER_PANEL_MIN_WIDTH - totalResizerWidth
+      const maxRight = session.wrapWidth - session.startLeftWidth - CENTER_PANEL_MIN_WIDTH - totalResizerWidth
       const upper = Math.max(RIGHT_PANEL_MIN_WIDTH, maxRight)
-      const nextRight = Math.round(clamp(resizeSession.startRightWidth - dx, RIGHT_PANEL_MIN_WIDTH, upper))
+      const nextRight = Math.round(clamp(session.startRightWidth - dx, RIGHT_PANEL_MIN_WIDTH, upper))
       setPanelWidths((prev) => (prev.right === nextRight ? prev : { ...prev, right: nextRight }))
     }
 

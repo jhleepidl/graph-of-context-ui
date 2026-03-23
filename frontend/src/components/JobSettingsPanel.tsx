@@ -196,8 +196,8 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
           const activeNodeIds = Array.isArray(compiled?.active_node_ids) ? compiled.active_node_ids : []
           activeNodeIdSet = new Set(
             activeNodeIds
-              .map((id) => asString(id))
-              .filter((id) => !!id),
+              .map((id: unknown) => asString(id))
+              .filter((id: string) => !!id),
           )
         } catch {
           activeNodeIdSet = new Set<string>()

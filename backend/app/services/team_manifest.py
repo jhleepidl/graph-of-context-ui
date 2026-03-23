@@ -159,6 +159,135 @@ def _normalize_runtime_execution_policy(raw: Any) -> dict[str, Any]:
     }
 
 
+_CAPABILITY_ALIAS_MAP: dict[str, str] = {
+    'workspace_fs': 'filesystem_write',
+    'read_only_fs': 'filesystem_read',
+    'shell': 'shell_exec',
+    'web': 'web_browse',
+}
+
+_CAPABILITY_LEGACY_ALIAS_MAP: dict[str, str] = {value: key for key, value in _CAPABILITY_ALIAS_MAP.items()}
+
+
+def _runtime_capability_key(value: Any) -> str:
+    clean = _clean_id(value, max_len=64)
+    if not clean:
+        return ''
+    if clean in _CAPABILITY_ALIAS_MAP:
+        return _CAPABILITY_ALIAS_MAP[clean]
+    if clean in _CAPABILITY_LEGACY_ALIAS_MAP:
+        return clean
+    if clean in {'long_running_process', 'network_access'}:
+        return clean
+    return ''
+
+
+def _legacy_capability_id(value: Any) -> str:
+    clean = _runtime_capability_key(value)
+    if not clean:
+        return ''
+    return _CAPABILITY_LEGACY_ALIAS_MAP.get(clean, clean)
+
+
+def _unique_clean_ids(values: Any, *, limit: int = 24, max_len: int = 128) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    if isinstance(values, list):
+        items = values
+    elif isinstance(values, str):
+        items = [values]
+    else:
+        items = []
+    for item in items:
+        clean = _clean_id(item, max_len=max_len)
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _merge_unique_ids(*groups: Any, limit: int = 24, max_len: int = 128) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in _unique_clean_ids(group, limit=limit, max_len=max_len):
+            if item in seen:
+                continue
+            seen.add(item)
+            out.append(item)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def _collect_runtime_capability_ids(*values: Any, limit: int = 24) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if isinstance(value, dict):
+            items = [key for key, enabled in value.items() if enabled is not False]
+        elif isinstance(value, list):
+            items = value
+        elif isinstance(value, str):
+            items = [value]
+        else:
+            items = []
+        for item in items:
+            clean = _runtime_capability_key(item)
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            out.append(clean)
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def _split_toolish_ids(values: Any) -> tuple[list[str], list[str]]:
+    caps: list[str] = []
+    tools: list[str] = []
+    seen_caps: set[str] = set()
+    seen_tools: set[str] = set()
+    for raw in _unique_clean_ids(values, limit=32):
+        capability_id = _runtime_capability_key(raw)
+        if capability_id:
+            if capability_id not in seen_caps:
+                seen_caps.add(capability_id)
+                caps.append(capability_id)
+            continue
+        if raw not in seen_tools:
+            seen_tools.add(raw)
+            tools.append(raw)
+    return caps, tools
+
+
+def _legacy_tool_alias_lists(required_capabilities: Any, optional_capabilities: Any, required_external_tools: Any, optional_external_tools: Any) -> dict[str, list[str]]:
+    required = _merge_unique_ids([_legacy_capability_id(item) for item in _collect_runtime_capability_ids(required_capabilities)], required_external_tools, limit=24)
+    optional = [
+        item for item in _merge_unique_ids([_legacy_capability_id(item) for item in _collect_runtime_capability_ids(optional_capabilities)], optional_external_tools, limit=24)
+        if item not in required
+    ]
+    recommended = _merge_unique_ids(required, optional, limit=24)
+    return {
+        'required_tool_ids': required,
+        'optional_tool_ids': optional,
+        'recommended_tool_ids': recommended,
+    }
+
+
+def _normalize_memory_contract(raw: Any) -> dict[str, Any]:
+    row = _as_dict(raw)
+    return {
+        'read_surface_ids': _unique_text_list(row.get('read_surface_ids') or row.get('readSurfaceIds'), limit=16, lower=True, item_max_len=64),
+        'write_surface_ids': _unique_text_list(row.get('write_surface_ids') or row.get('writeSurfaceIds'), limit=16, lower=True, item_max_len=64),
+        'publish_surface_ids': _unique_text_list(row.get('publish_surface_ids') or row.get('publishSurfaceIds'), limit=16, lower=True, item_max_len=64),
+        'enforcement_mode': _clean_id(row.get('enforcement_mode') or row.get('enforcementMode') or 'hard_role_scoped_local_only', max_len=64) or 'hard_role_scoped_local_only',
+    }
+
+
 
 def _normalize_knowledge_doc(raw: Any, *, index: int = 0) -> dict[str, Any] | None:
     row = _as_dict(raw)
@@ -376,12 +505,37 @@ def _normalize_requirement_entry(raw: Any, *, kind: str) -> dict[str, Any] | Non
         tool_id = _clean_text(row.get("tool_id") or row.get("toolId") or row.get("id") or row.get("tool"), max_len=128).lower()
         if not tool_id:
             return None
+        capability_id = _runtime_capability_key(tool_id)
+        return {
+            "tool_id": tool_id,
+            "capability_id": capability_id or None,
+            "required_by": _clean_text(row.get("required_by") or row.get("requiredBy") or row.get("agent_name") or row.get("agentName") or row.get("agent") or row.get("label") or "agent", max_len=128) or "agent",
+            "severity": _clean_text(row.get("severity") or "blocking", max_len=32).lower() or "blocking",
+            "reason": _clean_text(row.get("reason") or row.get("detail") or row.get("note"), max_len=256),
+            "source_kind": _clean_text(row.get("source_kind") or row.get("sourceKind") or row.get("kind") or ("missing_capability" if capability_id else "missing_external_tool"), max_len=64).lower() or ("missing_capability" if capability_id else "missing_external_tool"),
+        }
+    if kind == "capability":
+        capability_id = _runtime_capability_key(row.get("capability_id") or row.get("capabilityId") or row.get("id") or row.get("capability") or row.get("tool_id") or row.get("toolId"))
+        if not capability_id:
+            return None
+        return {
+            "capability_id": capability_id,
+            "tool_id": _legacy_capability_id(capability_id),
+            "required_by": _clean_text(row.get("required_by") or row.get("requiredBy") or row.get("agent_name") or row.get("agentName") or row.get("agent") or row.get("label") or "agent", max_len=128) or "agent",
+            "severity": _clean_text(row.get("severity") or "blocking", max_len=32).lower() or "blocking",
+            "reason": _clean_text(row.get("reason") or row.get("detail") or row.get("note"), max_len=256),
+            "source_kind": _clean_text(row.get("source_kind") or row.get("sourceKind") or row.get("kind") or "missing_capability", max_len=64).lower() or "missing_capability",
+        }
+    if kind == "external_tool":
+        tool_id = _clean_text(row.get("tool_id") or row.get("toolId") or row.get("id") or row.get("tool"), max_len=128).lower()
+        if not tool_id:
+            return None
         return {
             "tool_id": tool_id,
             "required_by": _clean_text(row.get("required_by") or row.get("requiredBy") or row.get("agent_name") or row.get("agentName") or row.get("agent") or row.get("label") or "agent", max_len=128) or "agent",
             "severity": _clean_text(row.get("severity") or "blocking", max_len=32).lower() or "blocking",
             "reason": _clean_text(row.get("reason") or row.get("detail") or row.get("note"), max_len=256),
-            "source_kind": _clean_text(row.get("source_kind") or row.get("sourceKind") or row.get("kind") or "missing_tool", max_len=64).lower() or "missing_tool",
+            "source_kind": _clean_text(row.get("source_kind") or row.get("sourceKind") or row.get("kind") or "missing_external_tool", max_len=64).lower() or "missing_external_tool",
         }
     if kind == "credential":
         credential_key = _clean_text(row.get("credential_key") or row.get("credentialKey") or row.get("key") or "API_KEY", max_len=128) or "API_KEY"
@@ -406,6 +560,7 @@ def _normalize_requirement_entry(raw: Any, *, kind: str) -> dict[str, Any] | Non
     return None
 
 
+
 def _dedupe_entries(entries: list[dict[str, Any]], *, key_fields: tuple[str, ...], limit: int = 24) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -423,17 +578,31 @@ def _dedupe_entries(entries: list[dict[str, Any]], *, key_fields: tuple[str, ...
 
 
 def _build_install_hints(requirements: dict[str, Any], *, has_thread_target: bool = False) -> list[str]:
+    capabilities = _as_list(requirements.get("capabilities"))
+    external_tools = _as_list(requirements.get("external_tools"))
     tools = _as_list(requirements.get("tools"))
     credentials = _as_list(requirements.get("credentials"))
     hints: list[str] = []
-    if any('workspace_fs' in _clean_text(row.get('tool_id')).lower() or 'write_file' in _clean_text(row.get('tool_id')).lower() for row in tools if isinstance(row, dict)):
-        hints.append('workspace_fs 또는 file writer tool을 연결하면 파일·노트북 산출물을 만들 수 있습니다.')
-    if any(any(token in _clean_text(row.get('tool_id')).lower() for token in ['web', 'browser', 'search']) for row in tools if isinstance(row, dict)):
-        hints.append('검색형 작업이면 web/browser/search tool을 가진 agent 또는 preset을 사용하세요.')
+    capability_ids = {
+        _runtime_capability_key(_as_dict(row).get('capability_id') or _as_dict(row).get('tool_id') or _as_dict(row).get('toolId'))
+        for row in capabilities
+        if isinstance(row, dict)
+    }
+    capability_ids = {value for value in capability_ids if value}
+    tool_like_ids = {
+        _clean_text(_as_dict(row).get('tool_id') or _as_dict(row).get('toolId'), max_len=128).lower()
+        for row in tools + external_tools
+        if isinstance(row, dict)
+    }
+    tool_like_ids = {value for value in tool_like_ids if value}
+    if 'filesystem_write' in capability_ids or any(item in tool_like_ids for item in {'workspace_fs', 'write_file', 'workspace_write'}):
+        hints.append('filesystem_write capability 또는 file writer tool을 연결하면 파일·노트북 산출물을 만들 수 있습니다.')
+    if 'web_browse' in capability_ids or any(any(token in tool_id for token in ['web', 'browser', 'search']) for tool_id in tool_like_ids):
+        hints.append('검색형 작업이면 web_browse capability 또는 browser/search external tool을 가진 agent 또는 preset을 사용하세요.')
     if credentials:
         keys = ', '.join(_clean_text(row.get('credential_key') or 'API_KEY', max_len=64) for row in credentials[:3] if isinstance(row, dict)) or 'API_KEY'
         hints.append(f'필요한 credential({keys})을 안전한 비밀 저장소나 환경 변수로 제공하세요.')
-    if tools or credentials or _as_list(requirements.get('skills')):
+    if capabilities or external_tools or tools or credentials or _as_list(requirements.get('skills')):
         hints.append('manifest를 ddalggak Telegram의 /team install 또는 /team push 흐름과 함께 사용할 수 있습니다. 이 단계는 주로 team metadata와 requirement를 동기화합니다.')
     if has_thread_target:
         hints.append('이 thread에서는 Validate 후 active/pending team으로 바로 Install 할 수 있습니다.')
@@ -449,18 +618,32 @@ def _build_install_hints(requirements: dict[str, Any], *, has_thread_target: boo
             break
     return deduped
 
+
 def _normalize_requirements(requirements_payload: Any, team_payload: Any = None) -> dict[str, Any]:
     raw = _as_dict(requirements_payload)
     team = _as_dict(team_payload)
-    tool_entries: list[dict[str, Any]] = []
+    capability_entries: list[dict[str, Any]] = []
+    external_tool_entries: list[dict[str, Any]] = []
     credential_entries: list[dict[str, Any]] = []
     skill_entries: list[dict[str, Any]] = []
     warnings: list[str] = []
 
+    for row in _as_list(raw.get("capabilities") or raw.get('runtime_capabilities') or raw.get('runtimeCapabilities')):
+        normalized = _normalize_requirement_entry(row, kind="capability")
+        if normalized:
+            capability_entries.append(normalized)
+    for row in _as_list(raw.get("external_tools") or raw.get('externalTools')):
+        normalized = _normalize_requirement_entry(row, kind="external_tool")
+        if normalized:
+            external_tool_entries.append(normalized)
     for row in _as_list(raw.get("tools")):
         normalized = _normalize_requirement_entry(row, kind="tool")
-        if normalized:
-            tool_entries.append(normalized)
+        if not normalized:
+            continue
+        if normalized.get('capability_id'):
+            capability_entries.append(_normalize_requirement_entry(normalized, kind='capability') or {})
+        else:
+            external_tool_entries.append(_normalize_requirement_entry(normalized, kind='external_tool') or {})
     for row in _as_list(raw.get("credentials")):
         normalized = _normalize_requirement_entry(row, kind="credential")
         if normalized:
@@ -470,62 +653,97 @@ def _normalize_requirements(requirements_payload: Any, team_payload: Any = None)
         if normalized:
             skill_entries.append(normalized)
     for item in _as_list(raw.get("warnings")):
-        text = _clean_text(item, max_len=256)
-        if text:
-            warnings.append(text)
+        text_item = _clean_text(item, max_len=256)
+        if text_item:
+            warnings.append(text_item)
 
     for raw_gap in _as_list(team.get("capability_gaps") or team.get("capabilityGaps")):
         gap = _as_dict(raw_gap)
         kind = _clean_text(gap.get("kind"), max_len=64).lower()
         detail = _clean_text(gap.get("detail") or gap.get("reason"), max_len=256)
-        if kind == "missing_tool":
-            normalized = _normalize_requirement_entry({
-                **gap,
-                "required_by": gap.get("agent_name") or gap.get("agentName") or gap.get("agent") or gap.get("label"),
-                "reason": detail,
-                "source_kind": kind,
-            }, kind="tool")
+        common = {
+            **gap,
+            "required_by": gap.get("agent_name") or gap.get("agentName") or gap.get("agent") or gap.get("label"),
+            "reason": detail,
+            "source_kind": kind,
+        }
+        if kind == "missing_capability":
+            normalized = _normalize_requirement_entry(common, kind="capability")
             if normalized:
-                tool_entries.append(normalized)
+                capability_entries.append(normalized)
+        elif kind == "missing_external_tool":
+            normalized = _normalize_requirement_entry(common, kind="external_tool")
+            if normalized:
+                external_tool_entries.append(normalized)
+        elif kind == "missing_tool":
+            normalized = _normalize_requirement_entry(common, kind="tool")
+            if normalized and normalized.get('capability_id'):
+                capability_entries.append(_normalize_requirement_entry(normalized, kind='capability') or {})
+            elif normalized:
+                external_tool_entries.append(_normalize_requirement_entry(normalized, kind='external_tool') or {})
         elif kind == "missing_credential":
-            normalized = _normalize_requirement_entry({
-                **gap,
-                "required_by": gap.get("agent_name") or gap.get("agentName") or gap.get("agent") or gap.get("label"),
-                "reason": detail,
-                "source_kind": kind,
-            }, kind="credential")
+            normalized = _normalize_requirement_entry(common, kind="credential")
             if normalized:
                 credential_entries.append(normalized)
         elif kind == "missing_skill":
-            normalized = _normalize_requirement_entry({
-                **gap,
-                "required_by": gap.get("agent_name") or gap.get("agentName") or gap.get("agent") or gap.get("label"),
-                "reason": detail,
-                "source_kind": kind,
-            }, kind="skill")
+            normalized = _normalize_requirement_entry(common, kind="skill")
             if normalized:
                 skill_entries.append(normalized)
         if detail:
             warnings.append(detail)
 
-    normalized_tools = _dedupe_entries(tool_entries, key_fields=("tool_id", "required_by", "source_kind"))
+    normalized_capabilities = _dedupe_entries(capability_entries, key_fields=("capability_id", "required_by", "source_kind"))
+    normalized_external_tools = _dedupe_entries(external_tool_entries, key_fields=("tool_id", "required_by", "source_kind"))
     normalized_credentials = _dedupe_entries(credential_entries, key_fields=("credential_key", "required_by", "source_kind"))
     normalized_skills = _dedupe_entries(skill_entries, key_fields=("skill_id", "required_by", "source_kind"))
     normalized_warnings = _dedupe_entries([{"value": item} for item in warnings if item], key_fields=("value",), limit=12)
+
+    legacy_tools = _dedupe_entries(
+        [
+            {
+                'tool_id': entry.get('tool_id') or _legacy_capability_id(entry.get('capability_id')),
+                'required_by': entry.get('required_by'),
+                'severity': entry.get('severity'),
+                'reason': entry.get('reason'),
+                'source_kind': entry.get('source_kind') or 'missing_capability',
+            }
+            for entry in normalized_capabilities
+            if entry.get('capability_id')
+        ]
+        + [
+            {
+                'tool_id': entry.get('tool_id'),
+                'required_by': entry.get('required_by'),
+                'severity': entry.get('severity'),
+                'reason': entry.get('reason'),
+                'source_kind': entry.get('source_kind') or 'missing_external_tool',
+            }
+            for entry in normalized_external_tools
+            if entry.get('tool_id')
+        ],
+        key_fields=('tool_id', 'required_by', 'source_kind'),
+    )
+
     install_hints = _build_install_hints({
-        "tools": normalized_tools,
+        "capabilities": normalized_capabilities,
+        "external_tools": normalized_external_tools,
+        "tools": legacy_tools,
         "credentials": normalized_credentials,
         "skills": normalized_skills,
     }, has_thread_target=bool(team.get('thread_id') or team.get('threadId')))
 
     return {
-        "tools": normalized_tools,
+        "capabilities": normalized_capabilities,
+        "external_tools": normalized_external_tools,
+        "tools": legacy_tools,
         "credentials": normalized_credentials,
         "skills": normalized_skills,
         "warnings": [row["value"] for row in normalized_warnings],
         "install_hints": install_hints,
         "summary": {
-            "tool_count": len(normalized_tools),
+            "capability_count": len(normalized_capabilities),
+            "external_tool_count": len(normalized_external_tools),
+            "tool_count": len(legacy_tools),
             "credential_count": len(normalized_credentials),
             "skill_count": len(normalized_skills),
             "warning_count": len(normalized_warnings),
@@ -535,17 +753,38 @@ def _normalize_requirements(requirements_payload: Any, team_payload: Any = None)
 
 
 
-
-
-
 def _normalize_install_action_entry(raw: Any, *, kind: str) -> dict[str, Any] | None:
     row = _as_dict(raw)
     if kind == 'tool_install_proposal':
         tool_id = _clean_text(row.get('tool_id') or row.get('toolId') or row.get('id') or row.get('tool'), max_len=128).lower()
         if not tool_id:
             return None
+        capability_id = _runtime_capability_key(tool_id)
+        if capability_id:
+            return _normalize_install_action_entry({**row, 'capability_id': capability_id, 'tool_id': tool_id}, kind='capability_enable_proposal')
+        return _normalize_install_action_entry({**row, 'tool_id': tool_id}, kind='external_tool_install_proposal')
+    if kind == 'capability_enable_proposal':
+        capability_id = _runtime_capability_key(row.get('capability_id') or row.get('capabilityId') or row.get('tool_id') or row.get('toolId') or row.get('id'))
+        if not capability_id:
+            return None
         return {
-            'kind': 'tool_install_proposal',
+            'kind': 'capability_enable_proposal',
+            'capability_id': capability_id,
+            'tool_id': _legacy_capability_id(capability_id),
+            'required_by': _clean_text(row.get('required_by') or row.get('requiredBy') or row.get('agent_name') or row.get('agentName') or row.get('agent') or row.get('label') or 'agent', max_len=128) or 'agent',
+            'severity': _clean_text(row.get('severity') or 'blocking', max_len=32).lower() or 'blocking',
+            'install_target': _clean_text(row.get('install_target') or row.get('installTarget') or 'runtime', max_len=64).lower() or 'runtime',
+            'strategy': _clean_text(row.get('strategy') or 'enable_runtime_capability', max_len=64).lower() or 'enable_runtime_capability',
+            'auto_installable': bool(row.get('auto_installable') or row.get('autoInstallable')),
+            'approval_required': row.get('approval_required') is not False and row.get('approvalRequired') is not False,
+            'reason': _clean_text(row.get('reason') or row.get('detail') or row.get('note'), max_len=256),
+        }
+    if kind == 'external_tool_install_proposal':
+        tool_id = _clean_text(row.get('tool_id') or row.get('toolId') or row.get('id') or row.get('tool'), max_len=128).lower()
+        if not tool_id:
+            return None
+        return {
+            'kind': 'external_tool_install_proposal',
             'tool_id': tool_id,
             'required_by': _clean_text(row.get('required_by') or row.get('requiredBy') or row.get('agent_name') or row.get('agentName') or row.get('agent') or row.get('label') or 'agent', max_len=128) or 'agent',
             'severity': _clean_text(row.get('severity') or 'blocking', max_len=32).lower() or 'blocking',
@@ -586,10 +825,24 @@ def _normalize_install_action_entry(raw: Any, *, kind: str) -> dict[str, Any] | 
 
 def _normalize_install_actions(raw: Any) -> dict[str, Any]:
     row = _as_dict(raw)
-    tool_install_proposals = _dedupe_entries(
-        [normalized for item in _as_list(row.get('tool_install_proposals') or row.get('toolInstallProposals')) if (normalized := _normalize_install_action_entry(item, kind='tool_install_proposal'))],
+    capability_enable_proposals = _dedupe_entries(
+        [normalized for item in _as_list(row.get('capability_enable_proposals') or row.get('capabilityEnableProposals')) if (normalized := _normalize_install_action_entry(item, kind='capability_enable_proposal'))],
+        key_fields=('capability_id', 'required_by', 'strategy'),
+    )
+    external_tool_install_proposals = _dedupe_entries(
+        [normalized for item in _as_list(row.get('external_tool_install_proposals') or row.get('externalToolInstallProposals')) if (normalized := _normalize_install_action_entry(item, kind='external_tool_install_proposal'))],
         key_fields=('tool_id', 'required_by', 'strategy'),
     )
+    for item in _as_list(row.get('tool_install_proposals') or row.get('toolInstallProposals')):
+        normalized = _normalize_install_action_entry(item, kind='tool_install_proposal')
+        if not normalized:
+            continue
+        if normalized.get('kind') == 'capability_enable_proposal':
+            capability_enable_proposals.append(normalized)
+        else:
+            external_tool_install_proposals.append(normalized)
+    capability_enable_proposals = _dedupe_entries(capability_enable_proposals, key_fields=('capability_id', 'required_by', 'strategy'))
+    external_tool_install_proposals = _dedupe_entries(external_tool_install_proposals, key_fields=('tool_id', 'required_by', 'strategy'))
     credential_requests = _dedupe_entries(
         [normalized for item in _as_list(row.get('credential_requests') or row.get('credentialRequests')) if (normalized := _normalize_install_action_entry(item, kind='credential_request'))],
         key_fields=('credential_key', 'required_by', 'delivery_method'),
@@ -598,16 +851,53 @@ def _normalize_install_actions(raw: Any) -> dict[str, Any]:
         [normalized for item in _as_list(row.get('generated_skill_proposals') or row.get('generatedSkillProposals')) if (normalized := _normalize_install_action_entry(item, kind='generated_skill_proposal'))],
         key_fields=('skill_id', 'required_by', 'strategy'),
     )
+    tool_install_proposals = _dedupe_entries(
+        [
+            {
+                'kind': 'tool_install_proposal',
+                'tool_id': proposal.get('tool_id') or _legacy_capability_id(proposal.get('capability_id')),
+                'required_by': proposal.get('required_by'),
+                'severity': proposal.get('severity'),
+                'install_target': proposal.get('install_target'),
+                'strategy': proposal.get('strategy'),
+                'auto_installable': proposal.get('auto_installable'),
+                'approval_required': proposal.get('approval_required'),
+                'reason': proposal.get('reason'),
+            }
+            for proposal in capability_enable_proposals
+        ]
+        + [
+            {
+                'kind': 'tool_install_proposal',
+                'tool_id': proposal.get('tool_id'),
+                'required_by': proposal.get('required_by'),
+                'severity': proposal.get('severity'),
+                'install_target': proposal.get('install_target'),
+                'strategy': proposal.get('strategy'),
+                'auto_installable': proposal.get('auto_installable'),
+                'approval_required': proposal.get('approval_required'),
+                'reason': proposal.get('reason'),
+            }
+            for proposal in external_tool_install_proposals
+        ],
+        key_fields=('tool_id', 'required_by', 'strategy'),
+    )
     return {
+        'capability_enable_proposals': capability_enable_proposals,
+        'external_tool_install_proposals': external_tool_install_proposals,
         'tool_install_proposals': tool_install_proposals,
         'credential_requests': credential_requests,
         'generated_skill_proposals': generated_skill_proposals,
         'summary': {
+            'capability_enable_count': len(capability_enable_proposals),
+            'external_tool_install_count': len(external_tool_install_proposals),
             'tool_install_count': len(tool_install_proposals),
             'credential_request_count': len(credential_requests),
             'generated_skill_count': len(generated_skill_proposals),
         },
     }
+
+
 
 def _normalize_install_proposal(raw: Any) -> dict[str, Any] | None:
     row = _as_dict(raw)
@@ -680,7 +970,7 @@ def _derive_credential_binding_state(credential_binding_state: Any, install_prop
 
 def _build_default_install_proposal(requirements: Any, apply_state: str) -> dict[str, Any] | None:
     normalized_requirements = _normalize_requirements(requirements, {})
-    gap_count = sum(len(_as_list(normalized_requirements.get(key))) for key in ('tools', 'credentials', 'skills'))
+    gap_count = sum(len(_as_list(normalized_requirements.get(key))) for key in ('capabilities', 'external_tools', 'credentials', 'skills'))
     if gap_count <= 0:
         return None
     return {
@@ -751,24 +1041,90 @@ def _normalize_participant(raw: Any, index: int = 0) -> dict[str, Any] | None:
     participant_id = _clean_text(row.get('participant_id') or row.get('participantId') or row.get('id') or row.get('agent_id') or row.get('agentId') or row.get('name') or f'participant_{index + 1}', max_len=128).lower()
     if not participant_id:
         return None
-    role = _clean_text(row.get('role') or row.get('role_id') or row.get('roleId') or 'specialist', max_len=64).lower() or 'specialist'
+    provider_spec_row = _as_dict(row.get('provider_spec') or row.get('providerSpec'))
+    provider_runtime_row = _as_dict(row.get('provider_runtime_config') or row.get('providerRuntimeConfig'))
+    role_profile_row = _as_dict(row.get('role_profile') or row.get('roleProfile'))
+    skill_package_row = _as_dict(row.get('skill_package') or row.get('skillPackage'))
+    memory_contract_row = _as_dict(row.get('memory_contract') or row.get('memoryContract'))
+
+    role = _clean_text(role_profile_row.get('role') or row.get('role') or row.get('role_id') or row.get('roleId') or 'specialist', max_len=64).lower() or 'specialist'
     kind = _clean_text(row.get('kind') or ('gate' if role == 'approval' else 'agent'), max_len=32).lower() or 'agent'
+    label = _clean_text(row.get('name') or row.get('label') or participant_id, max_len=128) or participant_id
+    purpose = _clean_text(role_profile_row.get('purpose') or row.get('purpose') or row.get('description'), max_len=256)
+    specialty = _clean_text(role_profile_row.get('specialty') or row.get('specialty'), max_len=128)
+
+    provider = _clean_text(provider_spec_row.get('provider') or row.get('provider') or row.get('llm_provider') or row.get('llmProvider'), max_len=64).lower()
+    model = _clean_text(provider_spec_row.get('model') or row.get('model'), max_len=128)
+    execution_channel = _clean_text(provider_spec_row.get('execution_channel') or provider_spec_row.get('executionChannel') or row.get('execution_channel') or row.get('executionChannel') or row.get('source'), max_len=64).lower()
+    interaction_mode = _clean_text(provider_spec_row.get('interaction_mode') or provider_spec_row.get('interactionMode') or row.get('interaction_mode') or row.get('interactionMode'), max_len=64).lower()
+
+    required_caps_legacy, required_external_legacy = _split_toolish_ids(row.get('required_tool_ids') or row.get('requiredToolIds'))
+    optional_caps_legacy, optional_external_legacy = _split_toolish_ids(row.get('optional_tool_ids') or row.get('optionalToolIds') or row.get('recommended_tool_ids') or row.get('recommendedToolIds'))
+    runtime_capabilities_required = _collect_runtime_capability_ids(row.get('runtime_capabilities_required') or row.get('runtimeCapabilitiesRequired'), required_caps_legacy)
+    runtime_capabilities_optional = [
+        item for item in _collect_runtime_capability_ids(row.get('runtime_capabilities_optional') or row.get('runtimeCapabilitiesOptional') or row.get('runtime_capabilities_preferred') or row.get('runtimeCapabilitiesPreferred'), optional_caps_legacy)
+        if item not in runtime_capabilities_required
+    ]
+    external_tool_requirements = _merge_unique_ids(row.get('external_tool_requirements') or row.get('externalToolRequirements'), required_external_legacy, limit=16)
+    external_tool_preferences = [
+        item for item in _merge_unique_ids(row.get('external_tool_preferences') or row.get('externalToolPreferences') or row.get('external_tool_optional') or row.get('externalToolOptional'), optional_external_legacy, limit=16)
+        if item not in external_tool_requirements
+    ]
+    legacy_tool_aliases = _legacy_tool_alias_lists(runtime_capabilities_required, runtime_capabilities_optional, external_tool_requirements, external_tool_preferences)
+
+    attached_skill_ids = _merge_unique_ids(skill_package_row.get('skill_ids') or skill_package_row.get('attached_skill_ids') or skill_package_row.get('attachedSkillIds'), row.get('attached_skill_ids') or row.get('attachedSkillIds'), limit=16)
+    generated_skill_briefs = _as_list(skill_package_row.get('generated_skill_briefs') or skill_package_row.get('generatedSkillBriefs') or row.get('generated_skill_briefs') or row.get('generatedSkillBriefs'))[:8]
+    memory_contract = _normalize_memory_contract(memory_contract_row)
+
     return {
         'participant_id': participant_id,
         'kind': kind,
-        'name': _clean_text(row.get('name') or row.get('label') or participant_id, max_len=128) or participant_id,
+        'name': label,
+        'label': label,
         'role': role,
-        'purpose': _clean_text(row.get('purpose') or row.get('description'), max_len=256),
-        'provider': _clean_text(row.get('provider') or row.get('llm_provider') or row.get('llmProvider'), max_len=64).lower(),
-        'model': _clean_text(row.get('model'), max_len=128),
+        'purpose': purpose,
+        'specialty': specialty,
+        'provider': provider,
+        'model': model,
+        'execution_channel': execution_channel,
+        'interaction_mode': interaction_mode,
         'capabilities': [_clean_text(v, max_len=128) for v in _as_list(row.get('capabilities') or row.get('skills')) if _clean_text(v, max_len=128)][:8],
-        'attached_skill_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('attached_skill_ids') or row.get('attachedSkillIds')) if _clean_text(v, max_len=128)][:8],
-        'required_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('required_tool_ids') or row.get('requiredToolIds')) if _clean_text(v, max_len=128)][:8],
-        'optional_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('optional_tool_ids') or row.get('optionalToolIds') or row.get('recommended_tool_ids') or row.get('recommendedToolIds')) if _clean_text(v, max_len=128)][:8],
-        'recommended_tool_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('recommended_tool_ids') or row.get('recommendedToolIds') or list(_as_list(row.get('required_tool_ids') or row.get('requiredToolIds')) + _as_list(row.get('optional_tool_ids') or row.get('optionalToolIds')))) if _clean_text(v, max_len=128)][:8],
-        'generated_skill_briefs': _as_list(row.get('generated_skill_briefs') or row.get('generatedSkillBriefs'))[:8],
+        'attached_skill_ids': attached_skill_ids[:16],
+        'generated_skill_briefs': generated_skill_briefs,
         'context_policy': _as_dict(row.get('context_policy') or row.get('contextPolicy')),
+        'role_profile': {
+            'role': role,
+            'purpose': purpose,
+            'specialty': specialty,
+            'final_owner': bool(role_profile_row.get('final_owner') or role_profile_row.get('finalOwner') or row.get('final_owner') or row.get('finalOwner')),
+        },
+        'provider_spec': {
+            'provider': provider,
+            'model': model,
+            'execution_channel': execution_channel,
+            'interaction_mode': interaction_mode,
+        },
+        'provider_runtime_config': {
+            'sandbox_mode': _clean_text(provider_runtime_row.get('sandbox_mode') or provider_runtime_row.get('sandboxMode'), max_len=64).lower(),
+            'approval_policy': _clean_text(provider_runtime_row.get('approval_policy') or provider_runtime_row.get('approvalPolicy'), max_len=64).lower(),
+            'workspace_settings': _as_dict(provider_runtime_row.get('workspace_settings') or provider_runtime_row.get('workspaceSettings')),
+            'mcp_servers': _as_dict(provider_runtime_row.get('mcp_servers') or provider_runtime_row.get('mcpServers')),
+            'network_policy': _clean_text(provider_runtime_row.get('network_policy') or provider_runtime_row.get('networkPolicy'), max_len=64).lower(),
+        },
+        'skill_package': {
+            'skill_ids': attached_skill_ids[:16],
+            'generated_skill_briefs': generated_skill_briefs,
+        },
+        'runtime_capabilities_required': {key: True for key in runtime_capabilities_required},
+        'runtime_capabilities_optional': {key: True for key in runtime_capabilities_optional},
+        'external_tool_requirements': external_tool_requirements[:16],
+        'external_tool_preferences': external_tool_preferences[:16],
+        'memory_contract': memory_contract,
+        'required_tool_ids': legacy_tool_aliases['required_tool_ids'][:8],
+        'optional_tool_ids': legacy_tool_aliases['optional_tool_ids'][:8],
+        'recommended_tool_ids': legacy_tool_aliases['recommended_tool_ids'][:8],
     }
+
 
 
 def _participant_id_by_label(participants: list[dict[str, Any]], raw: Any) -> str:
@@ -878,6 +1234,15 @@ def _build_structure_v2_from_team(team_payload: Any, *, apply_state: str = 'pend
             'recommended_tool_ids': _as_dict(item).get('recommended_tool_ids') or _as_dict(item).get('recommendedToolIds'),
             'generated_skill_briefs': _as_dict(item).get('generated_skill_briefs') or _as_dict(item).get('generatedSkillBriefs'),
             'context_policy': _as_dict(item).get('context_policy') or _as_dict(item).get('contextPolicy'),
+            'provider_spec': _as_dict(item).get('provider_spec') or _as_dict(item).get('providerSpec'),
+            'provider_runtime_config': _as_dict(item).get('provider_runtime_config') or _as_dict(item).get('providerRuntimeConfig'),
+            'role_profile': _as_dict(item).get('role_profile') or _as_dict(item).get('roleProfile'),
+            'skill_package': _as_dict(item).get('skill_package') or _as_dict(item).get('skillPackage'),
+            'runtime_capabilities_required': _as_dict(item).get('runtime_capabilities_required') or _as_dict(item).get('runtimeCapabilitiesRequired'),
+            'runtime_capabilities_optional': _as_dict(item).get('runtime_capabilities_optional') or _as_dict(item).get('runtimeCapabilitiesOptional'),
+            'external_tool_requirements': _as_list(_as_dict(item).get('external_tool_requirements') or _as_dict(item).get('externalToolRequirements') or []),
+            'external_tool_preferences': _as_list(_as_dict(item).get('external_tool_preferences') or _as_dict(item).get('externalToolPreferences') or []),
+            'memory_contract': _as_dict(item).get('memory_contract') or _as_dict(item).get('memoryContract'),
         }, index)
         if normalized:
             participants.append(normalized)
@@ -1104,6 +1469,7 @@ def _normalize_structure_v2(raw: Any, *, team_payload: Any = None, apply_state: 
         },
         'knowledge_surface': knowledge_surface,
         'memory_policy': memory_policy,
+        'memory_plan': memory_plan,
         'requirements': _normalize_requirements(row.get('requirements'), team_payload or {}),
         'runtime_state': {
             'apply_state': 'active' if _clean_text(_as_dict(row.get('runtime_state')).get('apply_state') or _as_dict(row.get('runtime_state')).get('applyState') or apply_state, max_len=16).lower() == 'active' else 'pending',
@@ -1127,15 +1493,25 @@ def _derive_team_from_structure_v2(raw: Any) -> dict[str, Any]:
             'name': item.get('name') or item.get('participant_id'),
             'role': item.get('role') or 'specialist',
             'purpose': item.get('purpose') or '',
-            'provider': item.get('provider') or '',
-            'model': item.get('model') or '',
+            'provider': item.get('provider') or _as_dict(item.get('provider_spec')).get('provider') or '',
+            'model': item.get('model') or _as_dict(item.get('provider_spec')).get('model') or '',
+            'execution_channel': item.get('execution_channel') or _as_dict(item.get('provider_spec')).get('execution_channel') or '',
             'capabilities': _as_list(item.get('capabilities'))[:8],
             'skills': _as_list(item.get('capabilities'))[:8],
-            'attached_skill_ids': _as_list(item.get('attached_skill_ids'))[:8],
+            'attached_skill_ids': _as_list(item.get('attached_skill_ids') or _as_dict(item.get('skill_package')).get('skill_ids'))[:8],
             'required_tool_ids': _as_list(item.get('required_tool_ids'))[:8],
             'optional_tool_ids': _as_list(item.get('optional_tool_ids') or item.get('recommended_tool_ids'))[:8],
             'recommended_tool_ids': _as_list(item.get('recommended_tool_ids') or list(_as_list(item.get('required_tool_ids')) + _as_list(item.get('optional_tool_ids'))))[:8],
-            'generated_skill_briefs': _as_list(item.get('generated_skill_briefs'))[:8],
+            'runtime_capabilities_required': _as_dict(item.get('runtime_capabilities_required') or item.get('runtimeCapabilitiesRequired')),
+            'runtime_capabilities_optional': _as_dict(item.get('runtime_capabilities_optional') or item.get('runtimeCapabilitiesOptional')),
+            'external_tool_requirements': _as_list(item.get('external_tool_requirements') or item.get('externalToolRequirements'))[:8],
+            'external_tool_preferences': _as_list(item.get('external_tool_preferences') or item.get('externalToolPreferences'))[:8],
+            'provider_spec': _as_dict(item.get('provider_spec') or item.get('providerSpec')),
+            'provider_runtime_config': _as_dict(item.get('provider_runtime_config') or item.get('providerRuntimeConfig')),
+            'role_profile': _as_dict(item.get('role_profile') or item.get('roleProfile')),
+            'skill_package': _as_dict(item.get('skill_package') or item.get('skillPackage')),
+            'memory_contract': _as_dict(item.get('memory_contract') or item.get('memoryContract')),
+            'generated_skill_briefs': _as_list(item.get('generated_skill_briefs') or _as_dict(item.get('skill_package')).get('generated_skill_briefs'))[:8],
             'context_policy': _as_dict(item.get('context_policy')),
         })
     final_owner = participants.get(_as_dict(structure.get('control_policy')).get('final_answer_owner_participant_id') or _as_dict(structure.get('topology')).get('final_participant_id') or '')
@@ -1382,6 +1758,7 @@ def validate_team_manifest_payload(manifest: Any, apply_state: str = "active") -
     participant_ids = {value for value in participant_ids if value}
     node_ids = {_clean_text(_as_dict(item).get('node_id') or _as_dict(item).get('id'), max_len=128) for item in _as_list(topology.get('nodes'))}
     node_ids = {value for value in node_ids if value}
+    valid_edge_refs = participant_ids | node_ids
     final_participant_id = _clean_text(topology.get('final_participant_id') or topology.get('finalParticipantId'), max_len=128)
     if final_participant_id and participant_ids and final_participant_id not in participant_ids:
         errors.append(f"final_participant_id references an unknown participant: {final_participant_id}")
@@ -1389,9 +1766,9 @@ def validate_team_manifest_payload(manifest: Any, apply_state: str = "active") -
         edge = _as_dict(raw_edge)
         src = _clean_text(edge.get('from') or edge.get('source') or edge.get('from_node_id'), max_len=128)
         dst = _clean_text(edge.get('to') or edge.get('target') or edge.get('to_node_id'), max_len=128)
-        if src and node_ids and src not in node_ids:
+        if src and valid_edge_refs and src not in valid_edge_refs:
             errors.append(f"topology edge references unknown source node: {src}")
-        if dst and node_ids and dst not in node_ids:
+        if dst and valid_edge_refs and dst not in valid_edge_refs:
             errors.append(f"topology edge references unknown target node: {dst}")
     surface_ids: set[str] = set()
     for raw_surface in _as_list(memory_plan.get('surfaces')):

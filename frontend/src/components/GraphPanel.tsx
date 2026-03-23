@@ -231,7 +231,7 @@ function buildMessageBackboneOrder(messageNodes: any[], edges: any[]): string[] 
     while (cur && !visited.has(cur)) {
       visited.add(cur)
       ordered.push(cur)
-      const nexts = (nextTargetsById.get(cur) || []).filter((id) => !visited.has(id))
+      const nexts: string[] = (nextTargetsById.get(cur) || []).filter((id) => !visited.has(id))
       cur = nexts.length > 0 ? nexts[0] : null
     }
   }

@@ -160,30 +160,30 @@ function buildCanvasNodes({
 }
 
 function buildCanvasEdges(edges: TopologyEdgeFormRow[]): Edge[] {
-  return edges
-    .map((row, index) => {
-      const source = asString(row.from)
-      const target = asString(row.to)
-      if (!source || !target) return null
-      const label = asString(row.label) || asString(row.condition)
-      return {
-        id: `edge-${source}-${target}-${index + 1}`,
-        source,
-        target,
-        label,
-        type: 'smoothstep',
-        markerEnd: { type: MarkerType.ArrowClosed },
-        animated: Boolean(asString(row.condition)),
-        style: {
-          strokeWidth: 2,
-        },
-        labelStyle: {
-          fontSize: 11,
-          fontWeight: 600,
-        },
-      } satisfies Edge
+  const out: Edge[] = []
+  edges.forEach((row, index) => {
+    const source = asString(row.from)
+    const target = asString(row.to)
+    if (!source || !target) return
+    const label = asString(row.label) || asString(row.condition)
+    out.push({
+      id: `edge-${source}-${target}-${index + 1}`,
+      source,
+      target,
+      label,
+      type: 'smoothstep',
+      markerEnd: { type: MarkerType.ArrowClosed },
+      animated: Boolean(asString(row.condition)),
+      style: {
+        strokeWidth: 2,
+      },
+      labelStyle: {
+        fontSize: 11,
+        fontWeight: 600,
+      },
     })
-    .filter((row): row is Edge => Boolean(row))
+  })
+  return out
 }
 
 function nextParticipantSeed(rows: TopologyParticipantFormRow[]): string {

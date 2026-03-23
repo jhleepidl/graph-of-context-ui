@@ -64,7 +64,7 @@ export default function WhyThisTeamPanel({ teamView, whyThisTeam }: Props) {
       {preferenceEntries.length > 0 && (
         <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
           {preferenceEntries.map(([key, value]) => (
-            <span key={key} className="pill">{key}: {String(value)}</span>
+            <span key={String(key)} className="pill">{String(key)}: {String(value)}</span>
           ))}
         </div>
       )}
@@ -73,8 +73,8 @@ export default function WhyThisTeamPanel({ teamView, whyThisTeam }: Props) {
         {selectionExplanations.map((explanation, index) => (
           <article key={`explanation:${index}`} className="runStudioListItem">
             <div className="row" style={{ marginBottom: 4 }}>
-              {explanation.slot_id && <span className="pill">slot: {String(explanation.slot_id)}</span>}
-              {explanation.role_id && <span className="pill">role: {String(explanation.role_id)}</span>}
+              {Boolean(explanation.slot_id) && <span className="pill">slot: {String(explanation.slot_id)}</span>}
+              {Boolean(explanation.role_id) && <span className="pill">role: {String(explanation.role_id)}</span>}
             </div>
             <div>{String(explanation.text || explanation.summary || explanation.reason || '') || 'No explanation text provided.'}</div>
           </article>
