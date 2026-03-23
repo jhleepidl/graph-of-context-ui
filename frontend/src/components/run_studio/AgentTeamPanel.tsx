@@ -73,6 +73,16 @@ function laneLabel(roleId: string): string {
   return 'Runtime agents'
 }
 
+
+function summarizePublishReadiness(summary: Record<string, unknown>): string {
+  const owner = cleanText(summary.final_owner || '(unset)')
+  const finalStateRaw = cleanText(summary.final_answer_publish_state || '') || (summary.final_answer_publish_ok === false ? 'blocked' : 'ready')
+  const artifactStateRaw = cleanText(summary.artifact_publish_state || '') || (summary.artifact_publish_ok === false ? 'blocked' : 'ready')
+  const finalState = `final ${finalStateRaw}`
+  const artifactState = `artifact ${artifactStateRaw}`
+  return `owner=${owner} · ${finalState} · ${artifactState}`
+}
+
 function summarizeTeamContracts(teamConfig: RunStudioAgentTeam['team_config'] | undefined): TeamContractSummary[] {
   const summaries: TeamContractSummary[] = []
   ;(['active', 'pending'] as const).forEach((state) => {
@@ -184,6 +194,29 @@ export default function AgentTeamPanel({
           {cleanText(blueprintSummary.source) && <div className="muted">source: {cleanText(blueprintSummary.source)}</div>}
           {cleanText(blueprintSummary.description) && <div className="muted">{cleanText(blueprintSummary.description)}</div>}
           <div className="muted">memory surfaces: {Number(blueprintSummary.memory_surface_count || blueprintSummary.memory_map?.length || 0)}</div>
+          {blueprintSummary.memory_contract_enforcement && (
+            <>
+              <div className="muted">
+                memory contract: read={cleanText(blueprintSummary.memory_contract_enforcement.read_scope) || 'hard_role_scoped_local_only'} · write={cleanText(blueprintSummary.memory_contract_enforcement.write_scope) || 'hard_reroute'} · publish={cleanText(blueprintSummary.memory_contract_enforcement.publish_scope) || 'declared_only'}
+              </div>
+              <div className="muted">
+                publish rules: final={cleanText(blueprintSummary.memory_contract_enforcement.final_publish_rule) || 'final_owner_declared_surface_required'} · artifact={cleanText(blueprintSummary.memory_contract_enforcement.artifact_publish_rule) || 'declared_artifact_surface_required'}
+              </div>
+            </>
+          )}
+          {blueprintSummary.publish_contract_readiness && (
+            <>
+              <div className="muted">
+                route readiness: {summarizePublishReadiness(blueprintSummary.publish_contract_readiness as Record<string, unknown>)}
+              </div>
+              <div className="muted">
+                final owner publish: {cleanText(blueprintSummary.publish_contract_readiness.final_owner) || '(unset)'} · {cleanText(blueprintSummary.publish_contract_readiness.final_answer_publish_state) || (blueprintSummary.publish_contract_readiness.final_answer_publish_ok === false ? 'blocked' : 'ready')}
+              </div>
+              <div className="muted">
+                artifact publish: {cleanText(blueprintSummary.publish_contract_readiness.artifact_publish_state) || (blueprintSummary.publish_contract_readiness.artifact_publish_ok === false ? 'blocked' : 'ready')}{(blueprintSummary.publish_contract_readiness.artifact_publishers || []).length > 0 ? ` · publishers=${(blueprintSummary.publish_contract_readiness.artifact_publishers || []).join(', ')}` : ''}
+              </div>
+            </>
+          )}
           {cleanText(blueprintSummary.capability_status) && <div className="muted">capability status: {cleanText(blueprintSummary.capability_status)}</div>}
           {(blueprintSummary.required_tool_count != null || blueprintSummary.optional_tool_count != null) && (
             <div className="muted">tools: required={Number(blueprintSummary.required_tool_count || 0)} · optional={Number(blueprintSummary.optional_tool_count || 0)}</div>

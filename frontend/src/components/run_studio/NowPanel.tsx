@@ -19,6 +19,27 @@ type Props = {
   checkpoints?: CheckpointProjection | null
 }
 
+
+function summarizeRouteReadinessFacts(facts: string[] = []): string | null {
+  const entries = Array.isArray(facts) ? facts : []
+  const map: Record<string, string> = {}
+  for (const entry of entries) {
+    const text = String(entry || '').trim()
+    const idx = text.indexOf('=')
+    if (idx <= 0) continue
+    const key = text.slice(0, idx).trim()
+    const value = text.slice(idx + 1).trim()
+    if (!key || !value) continue
+    map[key] = value
+  }
+  const parts: string[] = []
+  if (map.final_owner) parts.push(`final owner ${map.final_owner}`)
+  if (map.final_publish) parts.push(`final publish ${map.final_publish}`)
+  if (map.artifact_publish) parts.push(`artifact publish ${map.artifact_publish}`)
+  if (map.memory_contract) parts.push(`memory ${map.memory_contract}`)
+  return parts.length ? parts.join(' · ') : null
+}
+
 function statusClass(status: string): string {
   const clean = status.trim().toLowerCase()
   if (clean === 'running') return 'runStudioStatus--running'
@@ -65,6 +86,7 @@ export default function NowPanel({
   )
   const scopeProjection = summary?.current_run_skills?.scope_projection || summary?.scope_projection
   const executionInsights = summary?.current_run_skills?.execution_insights || null
+  const routeReadiness = summarizeRouteReadinessFacts(executionInsights?.selection?.planner_facts || [])
   const executionFeedback = summary?.current_run_skills?.execution_feedback || null
   const legacyTeamItems = team?.items || []
   const runtimeTeamCount = controlPlaneSummary?.runtimeAgentCount ?? teamView?.count ?? legacyTeamItems.filter((item) => String(item.source || '') === 'runtime_snapshot').length
@@ -150,6 +172,9 @@ export default function NowPanel({
         <div className="runStudioNowItem" style={{ gridColumn: '1 / -1' }}>
           <div className="muted">Execution Insight</div>
           {executionInsights?.execution_pattern && <div><b>Pattern:</b> {executionInsights.execution_pattern}</div>}
+          {routeReadiness ? (
+            <div><b>Route readiness:</b> {routeReadiness}</div>
+          ) : null}
           {executionInsights?.selection?.planner_facts?.length ? (
             <div><b>Planner facts:</b> {executionInsights.selection.planner_facts.join(', ')}</div>
           ) : null}

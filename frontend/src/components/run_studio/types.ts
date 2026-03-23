@@ -179,6 +179,24 @@ export type TeamBlueprintSummary = {
   missing_required_tools?: string[]
   missing_optional_tools?: string[]
   memory_surface_count?: number | null
+  memory_contract_enforcement?: {
+    read_scope?: string | null
+    write_scope?: string | null
+    publish_scope?: string | null
+    final_publish_rule?: string | null
+    artifact_publish_rule?: string | null
+  } | null
+  publish_contract_readiness?: {
+    final_owner?: string | null
+    final_owner_id?: string | null
+    final_owner_missing?: boolean | null
+    final_answer_publish_ok?: boolean | null
+    final_answer_publish_state?: string | null
+    artifact_publish_ok?: boolean | null
+    artifact_publish_state?: string | null
+    artifact_publishers?: string[]
+    artifact_publisher_ids?: string[]
+  } | null
   memory_map?: Array<{
     surface_id?: string | null
     file_name?: string | null

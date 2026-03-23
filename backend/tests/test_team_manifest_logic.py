@@ -420,11 +420,6 @@ class TeamManifestLogicTests(unittest.TestCase):
             self.assertEqual(payload['install_proposal_state']['status'], 'installed_pending')
             self.assertEqual(payload['credential_binding_state']['summary']['bound_count'], 1)
 
-
-if __name__ == '__main__':
-    unittest.main()
-
-
     def test_manifest_roundtrip_preserves_required_and_optional_tools(self):
         with Session(self.engine) as session:
             thread = Thread(id='thread-manifest-tools', service_id='svc-tools', title='Tools')
@@ -454,3 +449,225 @@ if __name__ == '__main__':
             exported = export_thread_team_manifest(session, thread)
             self.assertEqual(exported['team']['agents'][0]['required_tool_ids'], ['workspace_fs'])
             self.assertEqual(exported['team']['agents'][0]['optional_tool_ids'], ['shell'])
+
+    def test_manifest_roundtrip_preserves_provider_and_context_policy(self):
+        with Session(self.engine) as session:
+            thread = Thread(id='thread-manifest-provider', service_id='svc-provider', title='Provider')
+            session.add(thread)
+            session.add(Conversation(thread_id=thread.id, owner_user_id='user-1', service_id='svc-provider'))
+            session.commit()
+
+            manifest = {
+                'structure_v2': {
+                    'metadata': {'team_name': 'Provider Team', 'composition_mode': 'structured', 'proposal_mode': 'refine'},
+                    'intent': {'task_brief': 'preserve provider + context policy'},
+                    'participants': [
+                        {
+                            'participant_id': 'builder',
+                            'kind': 'agent',
+                            'name': 'Builder',
+                            'role': 'builder',
+                            'provider': 'codex',
+                            'model': 'gpt-5-codex',
+                            'required_tool_ids': ['workspace_fs'],
+                            'optional_tool_ids': ['shell'],
+                            'context_policy': {
+                                'reads': {'grants': ['upstream_results']},
+                                'writes': {'publish_targets': ['artifact_index']},
+                            },
+                        },
+                    ],
+                    'topology': {'pattern': 'single', 'execution_pattern': 'single_specialist'},
+                },
+            }
+
+            installed = install_thread_team_manifest(session, thread, manifest, apply_state='active')
+            participant = installed['structure_v2']['participants'][0]
+            self.assertEqual(participant['provider'], 'codex')
+            self.assertEqual(participant['required_tool_ids'], ['workspace_fs'])
+            self.assertEqual(participant['optional_tool_ids'], ['shell'])
+            self.assertEqual(participant['context_policy']['writes']['publish_targets'], ['artifact_index'])
+
+            exported = export_thread_team_manifest(session, thread)
+            agent = exported['team']['agents'][0]
+            self.assertEqual(agent['provider'], 'codex')
+            self.assertEqual(agent['required_tool_ids'], ['workspace_fs'])
+            self.assertEqual(agent['optional_tool_ids'], ['shell'])
+            self.assertEqual(agent['context_policy']['writes']['publish_targets'], ['artifact_index'])
+
+    def test_diff_manifest_guardrails_warn_on_destructive_changes(self):
+        with Session(self.engine) as session:
+            thread = Thread(id='thread-manifest-guardrails', service_id='svc-guardrails', title='Guardrails')
+            session.add(thread)
+            session.add(Conversation(thread_id=thread.id, owner_user_id='user-1', service_id='svc-guardrails'))
+            session.commit()
+
+            current_manifest = {
+                'structure_v2': {
+                    'metadata': {'team_name': 'Current Team', 'composition_mode': 'structured', 'proposal_mode': 'apply'},
+                    'participants': [
+                        {'participant_id': 'repo_scout', 'kind': 'agent', 'name': 'Repo Scout', 'role': 'researcher', 'provider': 'openai', 'model': 'gpt-5.4', 'required_tool_ids': ['web']},
+                        {'participant_id': 'client_companion_builder', 'kind': 'agent', 'name': 'Client Companion Builder', 'role': 'builder', 'required_tool_ids': ['workspace_fs'], 'optional_tool_ids': ['shell']},
+                        {'participant_id': 'delivery_synthesizer', 'kind': 'agent', 'name': 'Delivery Synthesizer', 'role': 'synthesizer'},
+                    ],
+                    'topology': {'pattern': 'workflow', 'execution_pattern': 'builder_reviewer_loop', 'final_participant_id': 'delivery_synthesizer'},
+                    'control_policy': {'final_answer_owner_participant_id': 'delivery_synthesizer'},
+                    'memory_plan': {
+                        'surfaces': [
+                            {'surface_id': 'implementation_notes', 'semantic_slots': ['implementation'], 'target_roles': ['builder'], 'write_policy': 'shared'},
+                            {'surface_id': 'final_answer', 'semantic_slots': ['final_answer'], 'target_roles': ['synthesizer'], 'write_policy': 'final'},
+                        ],
+                        'default_load_surface_ids': ['implementation_notes'],
+                        'writable_surface_ids': ['implementation_notes', 'final_answer'],
+                    },
+                },
+            }
+            candidate_manifest = {
+                'structure_v2': {
+                    'metadata': {'team_name': 'Candidate Team', 'composition_mode': 'structured', 'proposal_mode': 'refine'},
+                    'participants': [
+                        {'participant_id': 'client_companion_builder', 'kind': 'agent', 'name': 'Client Companion Builder', 'role': 'researcher'},
+                        {'participant_id': 'delivery_synthesizer', 'kind': 'agent', 'name': 'Delivery Synthesizer', 'role': 'researcher'},
+                    ],
+                    'topology': {'pattern': 'sequential', 'execution_pattern': 'sequential_pipeline', 'final_participant_id': 'client_companion_builder'},
+                    'control_policy': {'final_answer_owner_participant_id': 'client_companion_builder'},
+                    'memory_plan': {
+                        'surfaces': [
+                            {'surface_id': 'final_answer', 'semantic_slots': ['final_answer'], 'target_roles': ['researcher'], 'write_policy': 'final'},
+                        ],
+                        'default_load_surface_ids': [],
+                        'writable_surface_ids': ['final_answer'],
+                    },
+                },
+            }
+            diff = diff_team_manifest_payload(current_manifest, candidate_manifest, apply_state='active')
+            self.assertTrue(diff['ok'])
+            guardrails = diff['diff']['guardrails']
+            self.assertEqual(guardrails['risk_level'], 'high')
+            self.assertTrue(guardrails['destructive_changes_present'])
+            self.assertIn('repo_scout', guardrails['issues']['removed_participants'])
+            self.assertIn('builder', guardrails['issues']['lost_role_coverage'])
+            self.assertTrue(any('Removing participants' in warning for warning in guardrails['warnings']))
+            self.assertTrue(any('Removing memory surfaces' in warning for warning in guardrails['warnings']))
+
+    def test_install_manifest_returns_guardrails(self):
+        with Session(self.engine) as session:
+            thread = Thread(id='thread-manifest-install-guardrails', service_id='svc-install-guardrails', title='Install Guardrails')
+            session.add(thread)
+            session.add(Conversation(thread_id=thread.id, owner_user_id='user-1', service_id='svc-install-guardrails'))
+            session.commit()
+
+            save_team_config_payload(session, thread_id=thread.id, payload={
+                'status': 'active',
+                'composition_mode': 'structured',
+                'proposal_mode': 'apply',
+                'active_team': {
+                    'team_name': 'Current Team',
+                    'agents': [
+                        {'agent_id': 'builder', 'name': 'Builder', 'role': 'builder', 'required_tool_ids': ['workspace_fs']},
+                        {'agent_id': 'synth', 'name': 'Synth', 'role': 'synthesizer'},
+                    ],
+                    'memory_plan': {
+                        'surfaces': [
+                            {'surface_id': 'implementation_notes', 'semantic_slots': ['implementation'], 'target_roles': ['builder'], 'write_policy': 'shared'},
+                        ],
+                        'writable_surface_ids': ['implementation_notes'],
+                    },
+                },
+                'pending_team': {},
+            })
+
+            manifest = {
+                'team': {
+                    'team_name': 'Candidate Team',
+                    'agents': [
+                        {'agent_id': 'builder', 'name': 'Builder', 'role': 'researcher'},
+                    ],
+                    'memory_plan': {
+                        'surfaces': [
+                            {'surface_id': 'final_answer', 'semantic_slots': ['final_answer'], 'target_roles': ['researcher'], 'write_policy': 'final'},
+                        ],
+                        'writable_surface_ids': ['final_answer'],
+                    },
+                },
+            }
+
+            installed = install_thread_team_manifest(session, thread, manifest, apply_state='active')
+            self.assertIn('install_guardrails', installed)
+            self.assertTrue(installed['install_guardrails']['warning_count'] >= 1)
+            self.assertTrue(installed['install_guardrails']['destructive_changes_present'])
+
+    def test_guardrails_flag_publish_contract_mismatch(self):
+        current_manifest = {
+            'structure_v2': {
+                'participants': [
+                    {'participant_id': 'builder', 'kind': 'agent', 'name': 'Builder', 'role': 'builder'},
+                    {'participant_id': 'synth', 'kind': 'agent', 'name': 'Synth', 'role': 'synthesizer'},
+                ],
+                'topology': {'pattern': 'sequential', 'execution_pattern': 'sequential_pipeline', 'final_participant_id': 'synth'},
+                'control_policy': {'final_answer_owner_participant_id': 'synth'},
+                'memory_plan': {
+                    'surfaces': [
+                        {'surface_id': 'final_answer', 'semantic_slots': ['final_answer'], 'target_roles': ['synthesizer'], 'write_policy': 'final'},
+                        {'surface_id': 'artifact_index', 'semantic_slots': ['artifact_index'], 'target_roles': ['synthesizer'], 'write_policy': 'index'},
+                    ],
+                    'default_load_surface_ids': ['final_answer'],
+                    'writable_surface_ids': ['final_answer', 'artifact_index'],
+                },
+            },
+        }
+        candidate_manifest = {
+            'structure_v2': {
+                'participants': [
+                    {'participant_id': 'builder', 'kind': 'agent', 'name': 'Builder', 'role': 'builder'},
+                    {'participant_id': 'synth', 'kind': 'agent', 'name': 'Synth', 'role': 'researcher'},
+                ],
+                'topology': {'pattern': 'sequential', 'execution_pattern': 'sequential_pipeline', 'final_participant_id': 'synth'},
+                'control_policy': {'final_answer_owner_participant_id': 'synth'},
+                'memory_plan': {
+                    'surfaces': [
+                        {'surface_id': 'final_answer', 'semantic_slots': ['final_answer'], 'target_roles': ['synthesizer'], 'write_policy': 'final'},
+                    ],
+                    'default_load_surface_ids': ['final_answer'],
+                    'writable_surface_ids': ['final_answer'],
+                },
+            },
+        }
+        diff = diff_team_manifest_payload(current_manifest, candidate_manifest, apply_state='active')
+        self.assertTrue(diff['ok'])
+        guardrails = diff['diff']['guardrails']
+        self.assertEqual(guardrails['recommended_action'], 'fix_publish_contract')
+        self.assertTrue(guardrails['issues']['final_owner_publish_blocked'])
+        self.assertTrue(guardrails['issues']['artifact_publish_missing'])
+        self.assertTrue(any('Final answer owner cannot publish final_answer' in warning for warning in guardrails['warnings']))
+
+
+    def test_guardrails_flag_missing_final_owner_as_publish_contract_issue(self):
+        candidate_manifest = {
+            'structure_v2': {
+                'participants': [
+                    {'participant_id': 'builder', 'kind': 'agent', 'name': 'Builder', 'role': 'builder'},
+                    {'participant_id': 'synth', 'kind': 'agent', 'name': 'Synth', 'role': 'synthesizer'},
+                ],
+                'topology': {'pattern': 'sequential', 'execution_pattern': 'sequential_pipeline'},
+                'control_policy': {},
+                'memory_plan': {
+                    'surfaces': [
+                        {'surface_id': 'final_answer', 'semantic_slots': ['final_answer'], 'target_roles': ['synthesizer'], 'write_policy': 'final'},
+                        {'surface_id': 'artifact_index', 'semantic_slots': ['artifact_index'], 'target_roles': ['builder'], 'write_policy': 'index'},
+                    ],
+                    'default_load_surface_ids': ['final_answer'],
+                    'writable_surface_ids': ['final_answer', 'artifact_index'],
+                },
+            },
+        }
+        diff = diff_team_manifest_payload({'structure_v2': {}}, candidate_manifest, apply_state='active')
+        self.assertTrue(diff['ok'])
+        guardrails = diff['diff']['guardrails']
+        self.assertEqual(guardrails['recommended_action'], 'fix_publish_contract')
+        self.assertTrue(guardrails['issues']['final_owner_missing'])
+        self.assertTrue(any('Final answer owner is not declared' in warning for warning in guardrails['warnings']))
+
+
+if __name__ == '__main__':
+    unittest.main()

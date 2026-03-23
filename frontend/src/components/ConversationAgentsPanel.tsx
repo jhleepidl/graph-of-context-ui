@@ -3,6 +3,27 @@ import { api, diffThreadTeamManifest, exportThreadTeamManifest, installThreadTea
 import { copyText } from '../utils/clipboard'
 import TopologyCanvasEditor from './TopologyCanvasEditor'
 
+function summarizeRouteReadinessFacts(facts: string[] = []): string | null {
+  const entries = Array.isArray(facts) ? facts : []
+  const map: Record<string, string> = {}
+  for (const entry of entries) {
+    const text = String(entry || '').trim()
+    const idx = text.indexOf('=')
+    if (idx <= 0) continue
+    const key = text.slice(0, idx).trim()
+    const value = text.slice(idx + 1).trim()
+    if (!key || !value) continue
+    map[key] = value
+  }
+  const parts: string[] = []
+  if (map.final_owner) parts.push(`final owner ${map.final_owner}`)
+  if (map.final_publish) parts.push(`final publish ${map.final_publish}`)
+  if (map.artifact_publish) parts.push(`artifact publish ${map.artifact_publish}`)
+  if (map.memory_contract) parts.push(`memory ${map.memory_contract}`)
+  return parts.length ? parts.join(' · ') : null
+}
+
+
 type Props = {
   threadId: string | null
   refreshKey?: number
@@ -39,6 +60,7 @@ type KnowledgeDocFormRow = {
   purpose: string
   write_hint: string
   target_roles: string
+  raw?: Record<string, any>
 }
 
 type KnowledgeEditorFormState = {
@@ -55,11 +77,13 @@ type MemorySurfaceFormRow = {
   file_name: string
   title: string
   purpose: string
+  kind: string
   semantic_slots: string
   target_roles: string
   load_policy: string
   write_policy: string
   create_mode: string
+  raw?: Record<string, any>
 }
 
 type MemoryPlanEditorFormState = {
@@ -77,6 +101,7 @@ type TopologyParticipantFormRow = {
   role: string
   label: string
   provider: string
+  raw?: Record<string, any>
 }
 
 type TopologyNodeFormRow = {
@@ -84,6 +109,7 @@ type TopologyNodeFormRow = {
   participant_id: string
   kind: string
   stage_index: string
+  raw?: Record<string, any>
 }
 
 type TopologyEdgeFormRow = {
@@ -91,6 +117,7 @@ type TopologyEdgeFormRow = {
   to: string
   condition: string
   label: string
+  raw?: Record<string, any>
 }
 
 type TopologyEditorFormState = {
@@ -223,10 +250,91 @@ function toStringList(value: unknown): string[] {
   return value.map((entry) => asString(entry)).filter(Boolean)
 }
 
+function normalizeStringList(value: unknown): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const entry of toStringList(value)) {
+    const clean = entry.trim()
+    if (!clean) continue
+    const key = clean.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(clean)
+  }
+  return out
+}
+
+function collectParticipantRuntimeCards(structureSummary: Record<string, any> | null, compatibilityTeamSummary: Record<string, any> | null) {
+  const structure = asObject(structureSummary)
+  const team = asObject(compatibilityTeamSummary)
+  const participants = Array.isArray(structure?.participants) ? structure.participants : []
+  const memoryPlan = asObject(structure?.memory_plan || structure?.memoryPlan || team?.memory_plan || team?.memoryPlan)
+  const surfaces = Array.isArray(memoryPlan?.surfaces) ? memoryPlan.surfaces : []
+  const defaultLoadIds = new Set(normalizeStringList(memoryPlan?.default_load_surface_ids || memoryPlan?.defaultLoadSurfaceIds).map((entry) => entry.toLowerCase()))
+  const writableIds = new Set(normalizeStringList(memoryPlan?.writable_surface_ids || memoryPlan?.writableSurfaceIds).map((entry) => entry.toLowerCase()))
+  const controlPolicy = asObject(structure?.control_policy || structure?.controlPolicy)
+  const topology = asObject(structure?.topology)
+  const finalOwnerParticipantId = asString(controlPolicy?.final_answer_owner_participant_id || controlPolicy?.finalAnswerOwnerParticipantId || topology?.final_participant_id || topology?.finalParticipantId).toLowerCase()
+  return participants.map((rawParticipant: any) => {
+    const participant = asObject(rawParticipant)
+    const participantId = asString(participant?.participant_id || participant?.participantId || participant?.id)
+    const label = asString(participant?.name || participant?.label || participantId || 'participant')
+    const role = asString(participant?.role || 'specialist') || 'specialist'
+    const requiredTools = normalizeStringList(participant?.required_tool_ids || participant?.requiredToolIds)
+    const optionalTools = normalizeStringList(participant?.optional_tool_ids || participant?.optionalToolIds)
+    const recommendedTools = normalizeStringList(participant?.recommended_tool_ids || participant?.recommendedToolIds)
+    const contextPolicy = asObject(participant?.context_policy || participant?.contextPolicy)
+    const writes = asObject(contextPolicy?.writes)
+    const contextPublishTargets = normalizeStringList(writes?.publish_targets || writes?.publishTargets)
+    const visibleSurfaces = surfaces
+      .map((rawSurface: any) => asObject(rawSurface))
+      .filter((surface) => {
+        const targetRoles = normalizeStringList(surface?.target_roles || surface?.targetRoles).map((entry) => entry.toLowerCase())
+        if (targetRoles.length === 0) return true
+        return targetRoles.includes(role.toLowerCase())
+      })
+      .map((surface) => {
+        const surfaceId = asString(surface?.surface_id || surface?.id)
+        const writePolicy = asString(surface?.write_policy || surface?.writePolicy || 'shared') || 'shared'
+        return {
+          id: surfaceId,
+          title: asString(surface?.title || surfaceId || 'surface') || surfaceId || 'surface',
+          writePolicy,
+          defaultLoad: defaultLoadIds.has(surfaceId.toLowerCase()),
+          writable: writableIds.has(surfaceId.toLowerCase()) && !['read_only', 'none'].includes(writePolicy.toLowerCase()),
+          semanticSlots: normalizeStringList(surface?.semantic_slots || surface?.semanticSlots),
+        }
+      })
+    const publishSurfaces = visibleSurfaces.filter((surface) => surface.writable && ['final', 'index'].includes(surface.writePolicy.toLowerCase())).map((surface) => surface.id)
+    const canPublishFinalAnswer = publishSurfaces.map((entry) => entry.toLowerCase()).includes('final_answer')
+    const canPublishArtifacts = publishSurfaces.map((entry) => entry.toLowerCase()).includes('artifact_index')
+    const isFinalOwner = Boolean(participantId) && finalOwnerParticipantId === participantId.toLowerCase()
+    return {
+      participantId,
+      label,
+      role,
+      provider: asString(participant?.provider),
+      model: asString(participant?.model),
+      requiredTools,
+      optionalTools,
+      recommendedTools,
+      readableSurfaces: visibleSurfaces.map((surface) => surface.id),
+      defaultLoadSurfaces: visibleSurfaces.filter((surface) => surface.defaultLoad).map((surface) => surface.id),
+      writableSurfaces: visibleSurfaces.filter((surface) => surface.writable).map((surface) => surface.id),
+      publishSurfaces,
+      publishTargets: contextPublishTargets,
+      canPublishFinalAnswer,
+      canPublishArtifacts,
+      isFinalOwner,
+      visibleSurfaces,
+    }
+  })
+}
+
 function deriveTeamBlueprintTitle(manifest: Record<string, any> | null): string {
   const blueprint = asObject(manifest?.blueprint)
   const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
-  const structure = asObject(blueprint?.structure || manifest?.structure || manifest?.structure_v2 || asObject(team).structure || asObject(team).structure_v2)
+  const structure = asObject(manifest?.structure_v2 || manifest?.structure || blueprint?.structure || asObject(team).structure_v2 || asObject(team).structure)
   const participants = Array.isArray(structure?.participants) ? structure.participants : []
   return (
     asString(manifest?.title)
@@ -240,7 +348,7 @@ function deriveTeamBlueprintTitle(manifest: Record<string, any> | null): string 
 function deriveTeamBlueprintSummary(manifest: Record<string, any> | null): string {
   const blueprint = asObject(manifest?.blueprint)
   const team = asObject(manifest?.team || blueprint?.team_seed || manifest?.team_config?.active_team || manifest?.team_config?.pending_team)
-  const structure = asObject(blueprint?.structure || manifest?.structure || manifest?.structure_v2 || asObject(team).structure || asObject(team).structure_v2)
+  const structure = asObject(manifest?.structure_v2 || manifest?.structure || blueprint?.structure || asObject(team).structure_v2 || asObject(team).structure)
   const pattern = asString(structure?.topology?.pattern || structure?.execution_pattern || team?.interaction_spec?.execution_pattern)
   const participants = Array.isArray(structure?.participants) ? structure.participants : []
   const labels = participants
@@ -459,7 +567,7 @@ function parseJsonObjectDraft(raw: string, label: string): Record<string, any> {
 }
 
 function extractKnowledgeEditorsFromManifest(manifest: Record<string, any> | null): { knowledgeSurface: Record<string, any>; memoryPolicy: Record<string, any> } {
-  const structure = asObject(manifest?.blueprint?.structure || manifest?.structure || manifest?.structure_v2 || manifest?.team?.structure || manifest?.team?.structure_v2)
+  const structure = asObject(manifest?.structure_v2 || manifest?.structure || manifest?.blueprint?.structure || manifest?.team?.structure_v2 || manifest?.team?.structure)
   const knowledgeSurface = asObject(structure?.knowledge_surface || structure?.knowledgeSurface || manifest?.team?.knowledge_surface || manifest?.team?.knowledgeSurface || manifest?.team?.knowledge_base_profile)
   const memoryPolicy = asObject(structure?.memory_policy || structure?.memoryPolicy || manifest?.team?.memory_policy || manifest?.team?.memoryPolicy || knowledgeSurface?.memory_policy)
   return { knowledgeSurface, memoryPolicy }
@@ -502,6 +610,7 @@ function emptyMemorySurfaceRow(): MemorySurfaceFormRow {
     file_name: '',
     title: '',
     purpose: '',
+    kind: 'shared_doc',
     semantic_slots: '',
     target_roles: '',
     load_policy: 'on_demand',
@@ -551,6 +660,7 @@ function extractKnowledgeFormState(manifest: Record<string, any> | null): Knowle
         target_roles: Array.isArray(entry?.target_roles || entry?.targetRoles)
           ? (entry?.target_roles || entry?.targetRoles).map((row: any) => asString(row)).filter(Boolean).join(', ')
           : '',
+        raw: asObject(entry),
       }))
     : [emptyKnowledgeDocRow()]
   return {
@@ -572,6 +682,7 @@ function extractKnowledgeFormState(manifest: Record<string, any> | null): Knowle
 function buildKnowledgeEditorsFromForm(form: KnowledgeEditorFormState): { knowledgeSurface: Record<string, any>; memoryPolicy: Record<string, any> } {
   const docs = form.docs
     .map((entry) => ({
+      ...asObject(entry.raw),
       doc_id: asString(entry.doc_id),
       file_name: asString(entry.file_name),
       title: asString(entry.title),
@@ -608,11 +719,13 @@ function extractMemoryPlanFormState(manifest: Record<string, any> | null): Memor
         file_name: asString(entry?.file_name || entry?.fileName),
         title: asString(entry?.title),
         purpose: asString(entry?.purpose),
+        kind: asString(entry?.kind) || 'shared_doc',
         semantic_slots: Array.isArray(entry?.semantic_slots || entry?.semanticSlots) ? (entry?.semantic_slots || entry?.semanticSlots).map((row: any) => asString(row)).filter(Boolean).join(', ') : '',
         target_roles: Array.isArray(entry?.target_roles || entry?.targetRoles) ? (entry?.target_roles || entry?.targetRoles).map((row: any) => asString(row)).filter(Boolean).join(', ') : '',
         load_policy: asString(entry?.load_policy || entry?.loadPolicy || entry?.load) || 'on_demand',
         write_policy: asString(entry?.write_policy || entry?.writePolicy) || 'shared',
         create_mode: asString(entry?.create_mode || entry?.createMode) || 'lazy',
+        raw: asObject(entry),
       }))
     : [emptyMemorySurfaceRow()]
   return {
@@ -628,10 +741,12 @@ function extractMemoryPlanFormState(manifest: Record<string, any> | null): Memor
 function buildMemoryPlanFromForm(form: MemoryPlanEditorFormState): Record<string, any> {
   const surfaces = form.surfaces
     .map((entry) => ({
+      ...asObject(entry.raw),
       surface_id: asString(entry.surface_id),
       file_name: asString(entry.file_name),
       title: asString(entry.title),
       purpose: asString(entry.purpose),
+      kind: asString(entry.kind) || asString(asObject(entry.raw).kind) || 'shared_doc',
       semantic_slots: normalizeListDraft(entry.semantic_slots),
       target_roles: normalizeListDraft(entry.target_roles),
       load_policy: asString(entry.load_policy) || 'on_demand',
@@ -655,11 +770,13 @@ function applyMemoryPlanEditorsToManifest(
   applyState: 'active' | 'pending',
 ): Record<string, any> {
   const next = JSON.parse(JSON.stringify(manifest || {})) as Record<string, any>
-  const structure = asObject(next.structure_v2)
+  const structure = asObject(next.structure_v2 || next.structure || next.blueprint?.structure)
   next.structure_v2 = {
     ...structure,
     memory_plan: memoryPlan,
   }
+  next.structure = next.structure_v2
+  next.memory_plan = memoryPlan
 
   if (next.team && typeof next.team === 'object' && !Array.isArray(next.team)) {
     next.team = {
@@ -696,6 +813,10 @@ function applyMemoryPlanEditorsToManifest(
     next.blueprint = {
       ...asObject(next.blueprint),
       memory_plan: memoryPlan,
+      structure: {
+        ...asObject(asObject(next.blueprint).structure),
+        memory_plan: memoryPlan,
+      },
     }
   }
 
@@ -709,12 +830,15 @@ function applyKnowledgeEditorsToManifest(
   applyState: 'active' | 'pending',
 ): Record<string, any> {
   const next = JSON.parse(JSON.stringify(manifest || {})) as Record<string, any>
-  const structure = asObject(next.structure_v2)
+  const structure = asObject(next.structure_v2 || next.structure || next.blueprint?.structure)
   next.structure_v2 = {
     ...structure,
     knowledge_surface: knowledgeSurface,
     memory_policy: memoryPolicy,
   }
+  next.structure = next.structure_v2
+  next.knowledge_surface = knowledgeSurface
+  next.memory_policy = memoryPolicy
 
   const knowledgeBaseProfile = buildKnowledgeBaseProfileFromEditors(knowledgeSurface, memoryPolicy)
 
@@ -756,11 +880,24 @@ function applyKnowledgeEditorsToManifest(
     }
   }
 
+  if (next.blueprint && typeof next.blueprint === 'object' && !Array.isArray(next.blueprint)) {
+    next.blueprint = {
+      ...asObject(next.blueprint),
+      knowledge_surface: knowledgeSurface,
+      memory_policy: memoryPolicy,
+      structure: {
+        ...asObject(asObject(next.blueprint).structure),
+        knowledge_surface: knowledgeSurface,
+        memory_policy: memoryPolicy,
+      },
+    }
+  }
+
   return next
 }
 
 function extractTopologyFormState(manifest: Record<string, any> | null): TopologyEditorFormState {
-  const structure = asObject(manifest?.blueprint?.structure || manifest?.structure || manifest?.structure_v2 || manifest?.team?.structure || manifest?.team?.structure_v2)
+  const structure = asObject(manifest?.structure_v2 || manifest?.structure || manifest?.blueprint?.structure || manifest?.team?.structure_v2 || manifest?.team?.structure)
   const participantsRaw = Array.isArray(structure?.participants) ? structure.participants : []
   const topology = asObject(structure?.topology)
   const nodesRaw = Array.isArray(topology?.nodes) ? topology.nodes : []
@@ -773,6 +910,7 @@ function extractTopologyFormState(manifest: Record<string, any> | null): Topolog
         role: asString(entry?.role),
         label: asString(entry?.label || entry?.display_name || entry?.displayName || entry?.name),
         provider: asString(entry?.provider),
+        raw: asObject(entry),
       }))
     : [emptyTopologyParticipantRow()]
   const nodes = nodesRaw.length > 0
@@ -781,6 +919,7 @@ function extractTopologyFormState(manifest: Record<string, any> | null): Topolog
         participant_id: asString(entry?.participant_id || entry?.participantId || entry?.agent_id || entry?.agentId),
         kind: asString(entry?.kind) || 'agent',
         stage_index: asString(entry?.stage_index ?? entry?.stage ?? ''),
+        raw: asObject(entry),
       }))
     : [emptyTopologyNodeRow()]
   const edges = edgesRaw.length > 0
@@ -789,6 +928,7 @@ function extractTopologyFormState(manifest: Record<string, any> | null): Topolog
         to: asString(entry?.to || entry?.to_id || entry?.target),
         condition: asString(entry?.condition),
         label: asString(entry?.label || entry?.type),
+        raw: asObject(entry),
       }))
     : [emptyTopologyEdgeRow()]
   return {
@@ -805,15 +945,18 @@ function extractTopologyFormState(manifest: Record<string, any> | null): Topolog
 function buildTopologyEditorsFromForm(form: TopologyEditorFormState) {
   const participants = form.participants
     .map((entry) => ({
+      ...asObject(entry.raw),
       participant_id: asString(entry.participant_id),
       kind: asString(entry.kind) || 'agent',
       role: asString(entry.role),
-      label: asString(entry.label),
-      provider: asString(entry.provider),
+      name: asString(entry.label) || asString(asObject(entry.raw).name) || asString(entry.participant_id),
+      label: asString(entry.label) || asString(asObject(entry.raw).label) || asString(asObject(entry.raw).name),
+      provider: asString(entry.provider) || asString(asObject(entry.raw).provider),
     }))
     .filter((entry) => entry.participant_id)
   const nodes = form.nodes
     .map((entry) => ({
+      ...asObject(entry.raw),
       node_id: asString(entry.node_id),
       participant_id: asString(entry.participant_id),
       kind: asString(entry.kind) || 'agent',
@@ -822,6 +965,7 @@ function buildTopologyEditorsFromForm(form: TopologyEditorFormState) {
     .filter((entry) => entry.node_id || entry.participant_id)
   const edges = form.edges
     .map((entry) => ({
+      ...asObject(entry.raw),
       from: asString(entry.from),
       to: asString(entry.to),
       ...(asString(entry.condition) ? { condition: asString(entry.condition) } : {}),
@@ -849,7 +993,7 @@ function applyTopologyEditorsToManifest(
   applyState: 'active' | 'pending',
 ): Record<string, any> {
   const next = JSON.parse(JSON.stringify(manifest || {})) as Record<string, any>
-  const structure = asObject(next.structure_v2)
+  const structure = asObject(next.structure_v2 || next.structure || next.blueprint?.structure)
   next.structure_v2 = {
     ...structure,
     participants,
@@ -859,6 +1003,7 @@ function applyTopologyEditorsToManifest(
       ...controlPolicy,
     },
   }
+  next.structure = next.structure_v2
 
   if (next.team && typeof next.team === 'object' && !Array.isArray(next.team)) {
     next.team = {
@@ -882,11 +1027,18 @@ function applyTopologyEditorsToManifest(
     }
   }
 
+  if (next.blueprint && typeof next.blueprint === 'object' && !Array.isArray(next.blueprint)) {
+    next.blueprint = {
+      ...asObject(next.blueprint),
+      structure: next.structure_v2,
+    }
+  }
+
   return next
 }
 
 function extractRuntimeExecutionFormState(manifest: Record<string, any> | null): RuntimeExecutionEditorFormState {
-  const structure = asObject(manifest?.blueprint?.structure || manifest?.structure || manifest?.structure_v2 || manifest?.team?.structure || manifest?.team?.structure_v2)
+  const structure = asObject(manifest?.structure_v2 || manifest?.structure || manifest?.blueprint?.structure || manifest?.team?.structure_v2 || manifest?.team?.structure)
   const controlPolicy = asObject(structure?.control_policy || structure?.controlPolicy)
   const runtimeExecution = asObject(controlPolicy?.runtime_execution || controlPolicy?.runtimeExecution || manifest?.team?.runtime_execution || manifest?.team?.runtimeExecution)
   const checkpointing = asObject(runtimeExecution?.checkpointing)
@@ -971,7 +1123,7 @@ function applyRuntimeExecutionToManifest(
   applyState: 'active' | 'pending',
 ): Record<string, any> {
   const next = JSON.parse(JSON.stringify(manifest || {})) as Record<string, any>
-  const structure = asObject(next.structure_v2)
+  const structure = asObject(next.structure_v2 || next.structure || next.blueprint?.structure)
   const nextStructure = {
     ...structure,
     control_policy: {
@@ -980,6 +1132,7 @@ function applyRuntimeExecutionToManifest(
     },
   }
   next.structure_v2 = nextStructure
+  next.structure = nextStructure
 
   if (next.team && typeof next.team === 'object' && !Array.isArray(next.team)) {
     const teamStructure = asObject(asObject(next.team).structure_v2)
@@ -1017,6 +1170,13 @@ function applyRuntimeExecutionToManifest(
     }
   }
 
+  if (next.blueprint && typeof next.blueprint === 'object' && !Array.isArray(next.blueprint)) {
+    next.blueprint = {
+      ...asObject(next.blueprint),
+      structure: nextStructure,
+    }
+  }
+
   return next
 }
 
@@ -1036,6 +1196,8 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const [manifestBusy, setManifestBusy] = useState<string | null>(null)
   const [manifestValidation, setManifestValidation] = useState<any>(null)
   const [manifestDiff, setManifestDiff] = useState<any>(null)
+  const [manifestInstallGuardrails, setManifestInstallGuardrails] = useState<any>(null)
+  const [manifestInstallConfirmKey, setManifestInstallConfirmKey] = useState('')
   const [knowledgeProfileId, setKnowledgeProfileId] = useState('default_kb')
   const [knowledgeDisplayName, setKnowledgeDisplayName] = useState('Default Knowledge Base')
   const [knowledgeDocRows, setKnowledgeDocRows] = useState<KnowledgeDocFormRow[]>([emptyKnowledgeDocRow()])
@@ -1079,6 +1241,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const [teamCatalogItems, setTeamCatalogItems] = useState<TeamCatalogItem[]>([])
   const [teamCatalogBusy, setTeamCatalogBusy] = useState<string | null>(null)
   const [teamCatalogStatus, setTeamCatalogStatus] = useState('')
+  const [teamCatalogInstallConfirmKey, setTeamCatalogInstallConfirmKey] = useState('')
   const [teamCatalogError, setTeamCatalogError] = useState('')
   const [teamBlueprintTitle, setTeamBlueprintTitle] = useState('')
   const [teamBlueprintSummary, setTeamBlueprintSummary] = useState('')
@@ -1371,6 +1534,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       const manifest = out?.manifest || out || {}
       setManifestDraft(JSON.stringify(manifest, null, 2))
       setManifestValidation(null)
+      setManifestInstallGuardrails(null)
       setManifestStatus('현재 thread team blueprint를 불러왔습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
@@ -1389,8 +1553,10 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
     try {
       const out = await diffThreadTeamManifest(threadId, { manifest, apply_state: manifestApplyState })
       setManifestDiff(out)
+      setManifestInstallGuardrails(null)
       if (out?.candidate_manifest) setManifestDraft(JSON.stringify(out.candidate_manifest, null, 2))
-      setManifestStatus('blueprint diff preview를 갱신했습니다.')
+      const warningCount = Number(out?.diff?.guardrails?.warning_count || 0)
+      setManifestStatus(warningCount > 0 ? `blueprint diff preview를 갱신했습니다. guardrail warning ${warningCount}개` : 'blueprint diff preview를 갱신했습니다.')
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -1409,6 +1575,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       const out = await validateThreadTeamManifest(threadId, { manifest, apply_state: manifestApplyState })
       setManifestValidation(out)
       setManifestDiff(null)
+      setManifestInstallGuardrails(null)
       if (out?.manifest) setManifestDraft(JSON.stringify(out.manifest, null, 2))
       setManifestStatus(out?.ok ? 'blueprint validation 성공' : 'blueprint validation에서 수정이 필요합니다.')
     } catch (e) {
@@ -1426,12 +1593,32 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
     setManifestError('')
     setManifestStatus('')
     try {
+      const diffOut = await diffThreadTeamManifest(threadId, { manifest, apply_state: manifestApplyState })
+      setManifestDiff(diffOut)
+      const preflightGuardrails = diffOut?.diff?.guardrails || null
+      setManifestInstallGuardrails(preflightGuardrails)
+      const confirmKey = preflightGuardrails ? guardrailSignature(preflightGuardrails) : ''
+      if (preflightGuardrails && blocksInstallUntilFixed(preflightGuardrails)) {
+        setManifestInstallConfirmKey('')
+        setManifestStatus(installGuardrailHeadline(preflightGuardrails))
+        return
+      }
+      if (preflightGuardrails && requiresInstallConfirmation(preflightGuardrails) && manifestInstallConfirmKey !== confirmKey) {
+        setManifestInstallConfirmKey(confirmKey)
+        setManifestStatus(`${installGuardrailHeadline(preflightGuardrails)} Install을 한 번 더 누르면 진행합니다.`)
+        return
+      }
       const out = await installThreadTeamManifest(threadId, { manifest, apply_state: manifestApplyState })
       const normalizedManifest = out?.manifest || out || {}
       setManifestDraft(JSON.stringify(normalizedManifest, null, 2))
       setManifestValidation({ ok: true, manifest: normalizedManifest, apply_state: manifestApplyState })
       setManifestDiff(null)
-      setManifestStatus(`blueprint를 ${manifestApplyState === 'active' ? 'active' : 'pending'} team에 설치했습니다.`)
+      const appliedGuardrails = out?.install_guardrails || preflightGuardrails || null
+      setManifestInstallGuardrails(appliedGuardrails)
+      setManifestInstallConfirmKey('')
+      const warningCount = Number(appliedGuardrails?.warning_count || 0)
+      const headline = installGuardrailHeadline(appliedGuardrails)
+      setManifestStatus(warningCount > 0 ? `blueprint를 ${manifestApplyState === 'active' ? 'active' : 'pending'} team에 설치했습니다. ${headline}` : `blueprint를 ${manifestApplyState === 'active' ? 'active' : 'pending'} team에 설치했습니다.`)
       await refresh()
     } catch (e) {
       setManifestError(e instanceof Error ? e.message : String(e))
@@ -1550,6 +1737,24 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
     setTeamCatalogError('')
     setTeamCatalogStatus('')
     try {
+      const diffOut = await diffThreadTeamManifest(threadId, {
+        manifest: item.manifest,
+        apply_state: manifestApplyState,
+      })
+      setManifestDiff(diffOut)
+      const preflightGuardrails = diffOut?.diff?.guardrails || null
+      setManifestInstallGuardrails(preflightGuardrails)
+      const confirmKey = preflightGuardrails ? `${item.nodeId}:${guardrailSignature(preflightGuardrails)}` : ''
+      if (preflightGuardrails && blocksInstallUntilFixed(preflightGuardrails)) {
+        setTeamCatalogInstallConfirmKey('')
+        setTeamCatalogStatus(installGuardrailHeadline(preflightGuardrails))
+        return
+      }
+      if (preflightGuardrails && requiresInstallConfirmation(preflightGuardrails) && teamCatalogInstallConfirmKey !== confirmKey) {
+        setTeamCatalogInstallConfirmKey(confirmKey)
+        setTeamCatalogStatus(`${installGuardrailHeadline(preflightGuardrails)} Install을 한 번 더 누르면 ${item.title}을(를) 적용합니다.`)
+        return
+      }
       const out = await installThreadTeamManifest(threadId, {
         manifest: item.manifest,
         apply_state: manifestApplyState,
@@ -1558,7 +1763,12 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
       setManifestDraft(JSON.stringify(normalizedManifest, null, 2))
       setManifestValidation({ ok: true, manifest: normalizedManifest, apply_state: manifestApplyState })
       setManifestDiff(null)
-      setTeamCatalogStatus(`catalog team을 ${manifestApplyState} state로 설치했습니다: ${item.title}`)
+      const appliedGuardrails = out?.install_guardrails || preflightGuardrails || null
+      setManifestInstallGuardrails(appliedGuardrails)
+      setTeamCatalogInstallConfirmKey('')
+      const warningCount = Number(appliedGuardrails?.warning_count || 0)
+      const headline = installGuardrailHeadline(appliedGuardrails)
+      setTeamCatalogStatus(warningCount > 0 ? `catalog team을 ${manifestApplyState} state로 설치했습니다: ${item.title} · ${headline}` : `catalog team을 ${manifestApplyState} state로 설치했습니다: ${item.title}`)
       await refresh()
     } catch (e) {
       setTeamCatalogError(e instanceof Error ? e.message : String(e))
@@ -1607,6 +1817,29 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
   const stableSlots = Array.isArray(memoryPolicySummary?.stable_semantic_slots || memoryPolicySummary?.stableSemanticSlots) ? (memoryPolicySummary?.stable_semantic_slots || memoryPolicySummary?.stableSemanticSlots) : []
   const mutableSlots = Array.isArray(memoryPolicySummary?.mutable_semantic_slots || memoryPolicySummary?.mutableSemanticSlots) ? (memoryPolicySummary?.mutable_semantic_slots || memoryPolicySummary?.mutableSemanticSlots) : []
   const immutableFiles = Array.isArray(memoryPolicySummary?.immutable_file_names || memoryPolicySummary?.immutableFileNames) ? (memoryPolicySummary?.immutable_file_names || memoryPolicySummary?.immutableFileNames) : []
+  const participantRuntimeCards = useMemo(() => collectParticipantRuntimeCards(structureSummary, compatibilityTeamSummary), [structureSummary, compatibilityTeamSummary])
+  const installGuardrailsSummary = manifestInstallGuardrails || manifestDiff?.diff?.guardrails || null
+  const guardrailSignature = useCallback((guardrails: any) => JSON.stringify({
+    risk_level: String(guardrails?.risk_level || 'low'),
+    destructive: Boolean(guardrails?.destructive_changes_present),
+    warnings: Array.isArray(guardrails?.warnings) ? guardrails.warnings : [],
+  }), [])
+  const blocksInstallUntilFixed = useCallback((guardrails: any) => (
+    String(guardrails?.recommended_action || '').trim() === 'fix_publish_contract'
+  ), [])
+  const requiresInstallConfirmation = useCallback((guardrails: any) => (
+    !blocksInstallUntilFixed(guardrails)
+    && String(guardrails?.risk_level || 'low') === 'high'
+    && Boolean(guardrails?.destructive_changes_present)
+  ), [blocksInstallUntilFixed])
+  const installGuardrailHeadline = useCallback((guardrails: any) => {
+    const summary = String(guardrails?.summary_line || '').trim()
+    if (summary) return summary
+    const warningCount = Number(guardrails?.warning_count || 0)
+    if (blocksInstallUntilFixed(guardrails)) return 'final answer owner / publish contract를 먼저 수정해야 설치할 수 있습니다.'
+    if (requiresInstallConfirmation(guardrails)) return '이 설치는 destructive change를 포함합니다. 한 번 더 확인한 뒤 다시 Install 하세요.'
+    return warningCount > 0 ? `guardrail warning ${warningCount}개가 있습니다.` : 'guardrail issue가 없습니다.'
+  }, [blocksInstallUntilFixed, requiresInstallConfirmation])
   const operatorCommandSuggestions = commandSuggestionList({ manifest: effectiveManifest, applyState: manifestApplyState })
 
   useEffect(() => {
@@ -1828,7 +2061,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             <button onClick={() => void handleExportManifest()} disabled={manifestBusy !== null}>{manifestBusy === 'export' ? 'Loading...' : 'Export'}</button>
             <button onClick={() => void handlePreviewManifestDiff()} disabled={manifestBusy !== null}>{manifestBusy === 'diff' ? 'Previewing...' : 'Preview diff'}</button>
             <button onClick={() => void handleValidateManifest()} disabled={manifestBusy !== null}>{manifestBusy === 'validate' ? 'Validating...' : 'Validate'}</button>
-            <button onClick={() => void handleInstallManifest()} disabled={manifestBusy !== null}>{manifestBusy === 'install' ? 'Installing...' : 'Install'}</button>
+            <button onClick={() => void handleInstallManifest()} disabled={manifestBusy !== null}>{manifestBusy === 'install' ? 'Installing...' : (manifestInstallConfirmKey ? 'Install again to confirm' : 'Install')}</button>
             <button onClick={() => void handleCopyManifest()} disabled={manifestBusy !== null || !manifestDraft.trim()}>Copy</button>
             <button onClick={() => void handleDownloadManifest()} disabled={manifestBusy !== null || !manifestDraft.trim()}>Download</button>
           </div>
@@ -1885,6 +2118,18 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             <div className="muted" style={{ marginTop: 4 }}>
               structure Δ participants={Number(manifestDiff?.diff?.summary?.participant_delta || 0)} · pattern={String(manifestDiff?.diff?.structure_v2?.candidate_pattern || 'none')} · warnings={Number(manifestDiff?.diff?.summary?.structure_warning_delta || 0)}
             </div>
+            {Array.isArray(manifestDiff?.diff?.guardrails?.warnings) && manifestDiff.diff.guardrails.warnings.length > 0 && (
+              <div style={{ marginTop: 8, padding: 8, border: '1px solid #e0b14a', borderRadius: 8, background: 'rgba(224,177,74,0.08)' }}>
+                <div><b>Guardrail warnings</b> · risk={String(manifestDiff?.diff?.guardrails?.risk_level || 'low')} · destructive={manifestDiff?.diff?.guardrails?.destructive_changes_present ? 'yes' : 'no'}</div>
+                <div className="muted" style={{ marginTop: 4 }}>{String(manifestDiff?.diff?.guardrails?.summary_line || '')}</div>
+                <div className="muted" style={{ marginTop: 4 }}>recommended_action={String(manifestDiff?.diff?.guardrails?.recommended_action || 'review_warnings')}</div>
+                <ul style={{ marginTop: 6 }}>
+                  {manifestDiff.diff.guardrails.warnings.map((entry: any, index: number) => (
+                    <li key={`guardrail-${index}`}>{String(entry || '')}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {Array.isArray(manifestDiff?.diff?.preview_lines) && manifestDiff.diff.preview_lines.length > 0 && (
               <ul style={{ marginTop: 8 }}>
                 {manifestDiff.diff.preview_lines.map((entry: any, index: number) => (
@@ -1910,6 +2155,21 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                 <div className="muted">{manifestDiff.diff.credential_binding.bound_added.join(', ')}</div>
               </div>
             )}
+          </div>
+        )}
+        {installGuardrailsSummary && Array.isArray(installGuardrailsSummary?.warnings) && installGuardrailsSummary.warnings.length > 0 && (
+          <div style={{ marginTop: 10, padding: 10, border: '1px solid #e0b14a', borderRadius: 8, background: 'rgba(224,177,74,0.08)' }}>
+            <div><b>Latest install guardrails</b></div>
+            <div className="muted" style={{ marginTop: 4 }}>{String(installGuardrailsSummary?.summary_line || '')}</div>
+            <div className="muted" style={{ marginTop: 4 }}>recommended_action={String(installGuardrailsSummary?.recommended_action || 'review_warnings')}</div>
+            <div className="muted" style={{ marginTop: 4 }}>
+              risk={String(installGuardrailsSummary?.risk_level || 'low')} · warnings={Number(installGuardrailsSummary?.warning_count || 0)} · destructive={installGuardrailsSummary?.destructive_changes_present ? 'yes' : 'no'}
+            </div>
+            <ul style={{ marginTop: 6 }}>
+              {installGuardrailsSummary.warnings.map((entry: any, index: number) => (
+                <li key={`install-guardrail-${index}`}>{String(entry || '')}</li>
+              ))}
+            </ul>
           </div>
         )}
 
@@ -1955,6 +2215,10 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                 <input value={row.purpose} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, purpose: e.target.value } : entry))} />
               </label>
               <div className="row" style={{ gap: 12, marginTop: 8, alignItems: 'flex-start' }}>
+                <label className="routeLabel" style={{ flex: 1 }}>
+                  kind
+                  <input value={row.kind} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, kind: e.target.value } : entry))} />
+                </label>
                 <label className="routeLabel" style={{ flex: 1 }}>
                   semantic_slots
                   <input value={row.semantic_slots} onChange={(e) => setMemorySurfaceRows((prev) => prev.map((entry, i) => i === index ? { ...entry, semantic_slots: e.target.value } : entry))} placeholder="plan, progress" />
@@ -2029,6 +2293,10 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             {currentExecutionInsights?.execution_pattern ? (
               <div className="muted" style={{ marginTop: 4 }}>pattern={String(currentExecutionInsights.execution_pattern)}</div>
             ) : null}
+            {(() => {
+              const routeReadiness = summarizeRouteReadinessFacts((currentExecutionInsights?.selection?.planner_facts || []) as string[])
+              return routeReadiness ? <div className="muted" style={{ marginTop: 4 }}>route_readiness={routeReadiness}</div> : null
+            })()}
             {Array.isArray(currentExecutionInsights?.selection?.planner_facts) && currentExecutionInsights.selection.planner_facts.length > 0 ? (
               <div className="muted" style={{ marginTop: 4 }}>planner_facts={currentExecutionInsights.selection.planner_facts.join(', ')}</div>
             ) : null}
@@ -2225,6 +2493,34 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
             <div className="muted" style={{ marginTop: 4 }}>
               gemini approval_mode={String(runtimeExecutionGeminiSummary?.approval_mode || 'default')} · gemini settings_overwrite={String(runtimeExecutionGeminiSummary?.settings_overwrite || 'merge')} · gemini mcp={Object.keys(asObject(runtimeExecutionGeminiSummary?.mcp_servers || runtimeExecutionGeminiSummary?.mcpServers)).length}
             </div>
+            {participantRuntimeCards.length > 0 && (
+              <div style={{ marginTop: 10, border: '1px solid var(--border-color, #ddd)', borderRadius: 8, padding: 10 }}>
+                <div><b>Participant runtime projection</b></div>
+                <div className="muted" style={{ marginTop: 4 }}>participant별 role/provider/model, tool expectation, memory surface read/write/publish target를 projection합니다.</div>
+                <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+                  {participantRuntimeCards.map((card: any, index: number) => (
+                    <div key={`runtime-card-${card.participantId || index}`} style={{ border: '1px solid var(--border-color, #eee)', borderRadius: 8, padding: 8 }}>
+                      <div><b>{String(card.label || card.participantId || `Participant ${index + 1}`)}</b> <span className="muted">({String(card.role || 'specialist')})</span></div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        participant_id={String(card.participantId || 'unknown')} · provider={String(card.provider || 'unset')} · model={String(card.model || 'unset')}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        required_tools={card.requiredTools.length > 0 ? card.requiredTools.join(', ') : '(none)'} · optional_tools={card.optionalTools.length > 0 ? card.optionalTools.join(', ') : '(none)'} · recommended_tools={card.recommendedTools.length > 0 ? card.recommendedTools.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        readable={card.readableSurfaces.length > 0 ? card.readableSurfaces.join(', ') : '(none)'} · default_load={card.defaultLoadSurfaces.length > 0 ? card.defaultLoadSurfaces.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        writable={card.writableSurfaces.length > 0 ? card.writableSurfaces.join(', ') : '(none)'} · publish_surfaces={card.publishSurfaces.length > 0 ? card.publishSurfaces.join(', ') : '(none)'} · publish_targets={card.publishTargets.length > 0 ? card.publishTargets.join(', ') : '(none)'}
+                      </div>
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        final_answer_publish={card.canPublishFinalAnswer ? 'allowed' : 'blocked'}{card.isFinalOwner ? ' · final_owner' : ''} · artifact_publish={card.canPublishArtifacts ? 'allowed' : 'blocked'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div style={{ marginTop: 8 }}>
               <div className="muted">GoC control-plane에서 checkpoint / continuous improvement / provider sandbox·approval·MCP 정책을 함께 편집합니다.</div>
               <div style={{ marginTop: 8, border: '1px solid var(--border-color, #ddd)', borderRadius: 8, padding: 10 }}>
@@ -2755,7 +3051,7 @@ export default function ConversationAgentsPanel({ threadId, refreshKey = 0 }: Pr
                 <td>
                   <div className="row" style={{ marginBottom: 0 }}>
                     <button onClick={() => void handleInstallCatalogItem(item)} disabled={teamCatalogBusy !== null}>
-                      {teamCatalogBusy === item.nodeId ? 'Installing...' : `Install (${manifestApplyState})`}
+                      {teamCatalogBusy === item.nodeId ? 'Installing...' : (teamCatalogInstallConfirmKey.startsWith(`${item.nodeId}:`) ? `Install again to confirm (${manifestApplyState})` : `Install (${manifestApplyState})`)}
                     </button>
                     <button onClick={() => void copyText(JSON.stringify(item.manifest, null, 2))}>Copy JSON</button>
                   </div>
