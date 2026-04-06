@@ -19,6 +19,7 @@ import EvidencePanel from './EvidencePanel'
 import MissingContextPanel from './MissingContextPanel'
 import SkillUsagePanel from './SkillUsagePanel'
 import AdvancedToolsPanel from './AdvancedToolsPanel'
+import MemoryProjectionPanel from './MemoryProjectionPanel'
 import {
   type RunStudioAgentTeam,
   type RunStudioContextPacks,
@@ -26,6 +27,7 @@ import {
   type RunStudioEvidence,
   type RunStudioSkillUsage,
   type RunStudioSummary,
+  type RunStudioMemoryGraph,
 } from './types'
 import {
   selectEffectiveAgentTeam,
@@ -46,6 +48,7 @@ type DetailState = {
   evidence?: boolean
   contextPacks?: boolean
   skillUsage?: boolean
+  memoryGraph?: boolean
 }
 
 type Props = {
@@ -55,6 +58,7 @@ type Props = {
   evidence: RunStudioEvidence | null
   contextPacks: RunStudioContextPacks | null
   skillUsage: RunStudioSkillUsage | null
+  memoryGraph: RunStudioMemoryGraph | null
   detailLoaded?: DetailState
   detailLoading?: DetailState
   loading: boolean
@@ -65,6 +69,7 @@ type Props = {
   onLoadEvidence?: () => void
   onLoadContextPacks?: () => void
   onLoadSkillUsage?: () => void
+  onLoadMemoryGraph?: () => void
   onOpenGraph: () => void
   onOpenRawTrace: () => void
   onOpenAdvanced: () => void
@@ -83,6 +88,7 @@ export default function RunStudioLayout({
   evidence,
   contextPacks,
   skillUsage,
+  memoryGraph,
   detailLoaded,
   detailLoading,
   loading,
@@ -93,6 +99,7 @@ export default function RunStudioLayout({
   onLoadEvidence,
   onLoadContextPacks,
   onLoadSkillUsage,
+  onLoadMemoryGraph,
   onOpenGraph,
   onOpenRawTrace,
   onOpenAdvanced,
@@ -242,6 +249,16 @@ export default function RunStudioLayout({
             <div className="muted">Scope-first runtime is active. Legacy context pack projection is not part of the main execution path.</div>
           </section>
         )}
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <MemoryProjectionPanel
+          memoryGraph={memoryGraph}
+          onLoadDetail={onLoadMemoryGraph}
+          detailLoading={Boolean(detailLoading?.memoryGraph)}
+          detailLoaded={Boolean(detailLoaded?.memoryGraph)}
+          onRefresh={onLoadMemoryGraph}
+        />
       </div>
 
       <div className="runStudioGrid runStudioGrid--bottom">

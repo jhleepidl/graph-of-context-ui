@@ -10,10 +10,18 @@ cp .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Set `GOC_DB_URL` in `.env`:
+Recommended local PostgreSQL setup in `.env`:
 ```text
-postgresql+psycopg2://USER:PASSWORD@HOST:5432/DBNAME
+GOC_DB_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/goc
+GOC_DB_AUTO_CREATE=true
+GOC_DB_CREATE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/postgres
+GOC_DB_CREATE_DATABASE=postgres
 ```
+
+Notes:
+- `GOC_DB_AUTO_CREATE=true` lets the backend create the target database automatically when the server can connect to the maintenance database.
+- `GOC_DB_CREATE_URL` should point at an existing admin/maintenance database such as `postgres`.
+- `GET /healthz` now verifies database reachability and returns `503` when the DB is unavailable.
 
 ## Architecture
 - Graph storage stays generic: `Node` / `Edge`.

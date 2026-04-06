@@ -154,6 +154,33 @@ class AgentRevision(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class AgentForkOperation(SQLModel, table=True):
+    __tablename__ = "agent_fork_operations"
+    __table_args__ = (UniqueConstraint("forked_agent_id", name="uq_agent_fork_operations_forked_agent"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    source_agent_id: str = Field(index=True)
+    forked_agent_id: str = Field(index=True)
+    owner_user_id: str = Field(index=True)
+    service_id: str = Field(default="default", index=True)
+    reason: Optional[str] = Field(default=None)
+    purpose: Optional[str] = Field(default=None)
+    scope_json: str = Field(default="{}")
+    scope_node_ids_json: str = Field(default="[]")
+    source_surface_ids_json: str = Field(default="[]")
+    publish_surface_ids_json: str = Field(default="[]")
+    source_thread_id: Optional[str] = Field(default=None, index=True)
+    source_run_id: Optional[str] = Field(default=None, index=True)
+    rejoin_strategy: Optional[str] = Field(default=None, index=True)
+    rejoin_status: str = Field(default="forked", index=True)
+    rejoin_summary: Optional[str] = Field(default=None)
+    artifact_ids_json: str = Field(default="[]")
+    provenance_json: str = Field(default="{}")
+    rejoined_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class Conversation(SQLModel, table=True):
     __tablename__ = "conversations"
     __table_args__ = (UniqueConstraint("thread_id", name="uq_conversations_thread_id"),)
@@ -202,4 +229,79 @@ class ConversationTeamConfigRevision(SQLModel, table=True):
     thread_id: str = Field(index=True)
     revision_kind: str = Field(default="update", index=True)
     payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemorySurface(SQLModel, table=True):
+    __tablename__ = "memory_surfaces"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    surface_id: str = Field(index=True)
+    title: str = Field(default="")
+    semantic_kind: str = Field(default="generic", index=True)
+    visibility_scope: str = Field(default="shared", index=True)
+    write_mode: str = Field(default="shared", index=True)
+    policy_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryNode(SQLModel, table=True):
+    __tablename__ = "memory_nodes"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    surface_id: str = Field(index=True)
+    node_type: str = Field(default="note", index=True)
+    owner_agent_id: Optional[str] = Field(default=None, index=True)
+    owner_role_id: Optional[str] = Field(default=None, index=True)
+    content_json: str = Field(default="{}")
+    provenance_json: str = Field(default="{}")
+    trust_tier: str = Field(default="derived", index=True)
+    status: str = Field(default="draft", index=True)
+    created_run_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryProjection(SQLModel, table=True):
+    __tablename__ = "memory_projections"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    agent_id: Optional[str] = Field(default=None, index=True)
+    role_id: Optional[str] = Field(default=None, index=True)
+    visible_node_ids_json: str = Field(default="[]")
+    blocked_node_ids_json: str = Field(default="[]")
+    summary_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryConflict(SQLModel, table=True):
+    __tablename__ = "memory_conflicts"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    surface_id: str = Field(index=True)
+    left_node_id: str = Field(index=True)
+    right_node_id: str = Field(index=True)
+    status: str = Field(default="pending", index=True)
+    reason: str = Field(default="")
+    resolution_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class TeamSelectionEvent(SQLModel, table=True):
+    __tablename__ = "team_selection_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    task_text: str = Field(default="")
+    selected_blueprint_id: Optional[str] = Field(default=None, index=True)
+    recommendation_json: str = Field(default="{}")
+    outcome_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utcnow, index=True)

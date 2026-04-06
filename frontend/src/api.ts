@@ -340,6 +340,15 @@ export const api = {
       tools?: string[]
       model?: string
       visibility?: 'private' | 'unlisted' | 'public'
+      reason?: string
+      purpose?: string
+      scope?: Record<string, unknown>
+      scope_node_ids?: string[]
+      source_surface_ids?: string[]
+      publish_surface_ids?: string[]
+      source_thread_id?: string
+      source_run_id?: string
+      rejoin_strategy?: string
     },
   ) => j<any>(
     apiFetch(`/api/agents/${agentId}/fork`, {
@@ -348,6 +357,23 @@ export const api = {
       body: JSON.stringify(body || {}),
     }),
   ),
+  rejoinAgent: (
+    agentId: string,
+    body?: {
+      target_agent_id?: string
+      summary?: string
+      publish_surface_ids?: string[]
+      artifact_ids?: string[]
+      include_recent_outputs?: boolean
+    },
+  ) => j<any>(
+    apiFetch(`/api/agents/${agentId}/rejoin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    }),
+  ),
+  getAgentForkLineage: (agentId: string) => j<any>(apiFetch(`/api/agents/${agentId}/fork-lineage`)),
   publishAgent: (agentId: string) =>
     j<any>(apiFetch(`/api/agents/${agentId}/publish`, { method: 'POST' })),
   unpublishAgent: (agentId: string) =>
@@ -553,6 +579,43 @@ export const api = {
     if (cleanRunId) q.set('run_id', cleanRunId)
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/context_packs${suffix}`))
+  },
+  runStudioMemoryGraph: async (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    const [projections, conflicts] = await Promise.all([
+      j<any>(apiFetch(`/api/threads/${threadId}/memory/projections${suffix}`)),
+      j<any>(apiFetch(`/api/threads/${threadId}/memory/conflicts`)),
+    ])
+    return {
+      projections: Array.isArray(projections?.items) ? projections.items : [],
+      projection_count: Number(projections?.count || 0),
+      conflicts: Array.isArray(conflicts?.items) ? conflicts.items : [],
+      conflict_count: Number(conflicts?.count || 0),
+      conflict_status_counts: conflicts?.status_counts || {},
+      conflict_reason_counts: conflicts?.reason_counts || {},
+    }
+  },
+  resolveMemoryConflict: (conflictId: string, body: { status?: string | null; winning_node_id?: string | null; losing_node_ids?: string[] | null; summary?: string | null }) =>
+    j<any>(apiFetch(`/api/memory/conflicts/${conflictId}/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  exportTeamSelectionDataset: (threadId: string, limit?: number | null, format?: 'json' | 'jsonl' | null) => {
+    const q = new URLSearchParams()
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    if (format && format !== 'json') q.set('format', format)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    if (format === 'jsonl') {
+      return apiFetch(`/api/threads/${threadId}/team-selection-events/export${suffix}`).then(async (res) => {
+        if (!res.ok) throw new Error(await readApiErrorResponse(res))
+        return res.text()
+      })
+    }
+    return j<any>(apiFetch(`/api/threads/${threadId}/team-selection-events/export${suffix}`))
   },
   runStudioSkillUsage: (threadId: string, runId?: string | null) => {
     const q = new URLSearchParams()

@@ -5,7 +5,8 @@ import unittest
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session
+from tests.db_test_utils import create_test_engine as create_engine
 
 from app.services.conversation_team import build_conversation_team_projection
 from app.services.resolved_runtime import resolve_conversation_team, resolve_runtime_projection

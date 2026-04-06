@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.models import Thread
 from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload
+from app.services.team_admission import build_memory_acl_summary, build_team_capability_contract, compile_team_admission_decision
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -1638,6 +1639,9 @@ def _normalize_manifest(manifest: Any, *, fallback_thread: Thread | None = None,
             structure_v2['validation'] = _build_structure_validation('sequential', _as_list(structure_v2.get('participants')), _as_list(topology.get('edges')), _participant_id_by_label(_as_list(structure_v2.get('participants')), topology.get('final_participant_id') or _as_dict(structure_v2.get('control_policy')).get('final_answer_owner_participant_id')))
     compatibility_team = _normalize_team_payload(_derive_team_from_structure_v2(structure_v2) or team)
     publish_contract_issues = _summarize_publish_contract_issues(structure_v2)
+    capability_contract = build_team_capability_contract({**compatibility_team, 'requirements': requirements})
+    admission_decision = compile_team_admission_decision(capability_contract)
+    memory_acl_summary = build_memory_acl_summary(_as_dict(structure_v2.get('memory_plan')), _as_list(compatibility_team.get('agents')), _as_list(structure_v2.get('participants')))
     summary = {
         "agent_count": len(_as_list(compatibility_team.get("agents"))),
         "participant_count": len(_as_list(structure_v2.get("participants"))),
@@ -1680,6 +1684,12 @@ def _normalize_manifest(manifest: Any, *, fallback_thread: Thread | None = None,
         "codex_sandbox_mode": _clean_text(_as_dict(_as_dict(_as_dict(structure_v2.get('control_policy')).get('runtime_execution')).get('providers')).get('codex').get('sandbox_mode'), max_len=64) or None,
         "codex_mcp_count": len(_as_dict(_as_dict(_as_dict(_as_dict(structure_v2.get('control_policy')).get('runtime_execution')).get('providers')).get('codex').get('mcp_servers'))),
         "gemini_mcp_count": len(_as_dict(_as_dict(_as_dict(_as_dict(structure_v2.get('control_policy')).get('runtime_execution')).get('providers')).get('gemini').get('mcp_servers'))),
+        "runtime_bound": admission_decision.get('runtime_bound') is True,
+        "admission_status": _clean_text(admission_decision.get('status'), max_len=32) or None,
+        "admission_decision": _clean_text(admission_decision.get('decision'), max_len=32) or None,
+        "blocking_reason_codes": _as_list(admission_decision.get('blocking_reason_codes'))[:8],
+        "degrade_reason_codes": _as_list(admission_decision.get('degrade_reason_codes'))[:8],
+        "memory_acl_summary": memory_acl_summary[:8],
     }
 
     manifest_out = {
@@ -1698,6 +1708,8 @@ def _normalize_manifest(manifest: Any, *, fallback_thread: Thread | None = None,
         },
         "summary": summary,
         "requirements": requirements,
+        "capability_contract": capability_contract,
+        "admission_decision": admission_decision,
         "install_proposal": install_proposal,
         "install_proposal_state": install_proposal_state,
         "credential_binding_state": credential_binding_state,

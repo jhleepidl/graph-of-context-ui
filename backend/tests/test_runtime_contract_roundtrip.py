@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session
+from tests.db_test_utils import create_test_engine as create_engine
 
 from app.services.resolved_runtime import resolve_runtime_projection
 from app.services.run_skill_summary import (

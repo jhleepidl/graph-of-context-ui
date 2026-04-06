@@ -1,12 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import WorkspaceApp from './pages/WorkspaceApp'
-import AdminLoginPage from './pages/AdminLoginPage'
-import GuestRequestServicePage from './pages/GuestRequestServicePage'
-import AdminServiceRequestsPage from './pages/AdminServiceRequestsPage'
-import AgentsPage from './pages/AgentsPage'
-import ToolsPage from './pages/ToolsPage'
-import LibraryPage from './pages/LibraryPage'
-import AdminPublishRequestsPage from './pages/AdminPublishRequestsPage'
+import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react'
+const WorkspaceApp = lazy(() => import('./pages/WorkspaceApp'))
+const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'))
+const GuestRequestServicePage = lazy(() => import('./pages/GuestRequestServicePage'))
+const AdminServiceRequestsPage = lazy(() => import('./pages/AdminServiceRequestsPage'))
+const AgentsPage = lazy(() => import('./pages/AgentsPage'))
+const ToolsPage = lazy(() => import('./pages/ToolsPage'))
+const LibraryPage = lazy(() => import('./pages/LibraryPage'))
+const AdminPublishRequestsPage = lazy(() => import('./pages/AdminPublishRequestsPage'))
 import {
   clearStoredAdminKey,
   getStoredAdminKey,
@@ -38,6 +38,17 @@ function pickWorkspaceSearch(currentSearch: string, lastWorkspaceSearch: string)
   if (currentSearch && /(?:^|[?&])(thread|ctx)=/.test(currentSearch)) return currentSearch
   if (lastWorkspaceSearch && /(?:^|[?&])(thread|ctx)=/.test(lastWorkspaceSearch)) return lastWorkspaceSearch
   return ''
+}
+
+
+function RouteFallback({ label = 'Loading…' }: { label?: string }) {
+  return (
+    <div className="routePage">
+      <div className="routeCard" style={{ maxWidth: 720 }}>
+        <p className="muted" style={{ margin: 0 }}>{label}</p>
+      </div>
+    </div>
+  )
 }
 
 function captureTokenFromHash(): void {
@@ -143,22 +154,24 @@ export default function App() {
       </header>
 
       <main className={route === 'workspace' ? 'routeMain routeMainWorkspace' : 'routeMain'}>
-        {route === 'workspace' && <WorkspaceApp />}
-        {route === 'agents' && <AgentsPage onNavigate={navigate} />}
-        {route === 'tools' && <ToolsPage onNavigate={navigate} />}
-        {route === 'library' && <LibraryPage onNavigate={navigate} />}
-        {route === 'admin_login' && (
-          <AdminLoginPage onAdminAuthChanged={handleAdminAuthChanged} onNavigate={navigate} />
-        )}
-        {route === 'guest_request_service' && (
-          <GuestRequestServicePage onNavigate={navigate} />
-        )}
-        {route === 'admin_service_requests' && (
-          <AdminServiceRequestsPage hasAdminKey={hasAdminKey} onNavigate={navigate} />
-        )}
-        {route === 'admin_publish_requests' && (
-          <AdminPublishRequestsPage hasAdminKey={hasAdminKey} onNavigate={navigate} />
-        )}
+        <Suspense fallback={<RouteFallback label="Loading view…" />}>
+          {route === 'workspace' && <WorkspaceApp />}
+          {route === 'agents' && <AgentsPage onNavigate={navigate} />}
+          {route === 'tools' && <ToolsPage onNavigate={navigate} />}
+          {route === 'library' && <LibraryPage onNavigate={navigate} />}
+          {route === 'admin_login' && (
+            <AdminLoginPage onAdminAuthChanged={handleAdminAuthChanged} onNavigate={navigate} />
+          )}
+          {route === 'guest_request_service' && (
+            <GuestRequestServicePage onNavigate={navigate} />
+          )}
+          {route === 'admin_service_requests' && (
+            <AdminServiceRequestsPage hasAdminKey={hasAdminKey} onNavigate={navigate} />
+          )}
+          {route === 'admin_publish_requests' && (
+            <AdminPublishRequestsPage hasAdminKey={hasAdminKey} onNavigate={navigate} />
+          )}
+        </Suspense>
       </main>
     </div>
   )

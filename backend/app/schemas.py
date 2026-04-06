@@ -254,6 +254,23 @@ class AgentForkRequest(BaseModel):
     tools: Optional[List[str]] = None
     model: Optional[str] = None
     visibility: AgentVisibility = "private"
+    reason: Optional[str] = None
+    purpose: Optional[str] = None
+    scope: Optional[dict[str, Any]] = None
+    scope_node_ids: Optional[List[str]] = None
+    source_surface_ids: Optional[List[str]] = None
+    publish_surface_ids: Optional[List[str]] = None
+    source_thread_id: Optional[str] = None
+    source_run_id: Optional[str] = None
+    rejoin_strategy: Optional[str] = None
+
+
+class AgentRejoinRequest(BaseModel):
+    target_agent_id: Optional[str] = None
+    summary: Optional[str] = None
+    publish_surface_ids: Optional[List[str]] = None
+    artifact_ids: Optional[List[str]] = None
+    include_recent_outputs: bool = True
 
 
 class AgentArchiveRequest(BaseModel):
@@ -422,3 +439,53 @@ class ConversationTeamConfigRead(BaseModel):
     active_team: dict[str, Any] = Field(default_factory=dict)
     pending_team: dict[str, Any] = Field(default_factory=dict)
     updated_at: Optional[datetime] = None
+
+
+class MemorySurfaceCreateRequest(SQLModel):
+    surface_id: str
+    title: str | None = None
+    semantic_kind: str | None = None
+    visibility_scope: str | None = None
+    write_mode: str | None = None
+    policy: dict[str, Any] | None = None
+
+
+class MemoryNodeCreateRequest(SQLModel):
+    surface_id: str
+    node_type: str | None = None
+    owner_agent_id: str | None = None
+    owner_role_id: str | None = None
+    content: dict[str, Any] | None = None
+    provenance: dict[str, Any] | None = None
+    trust_tier: str | None = None
+    status: str | None = None
+    created_run_id: str | None = None
+
+
+class MemoryProjectionRequest(SQLModel):
+    role_id: str | None = None
+    agent_id: str | None = None
+    run_id: str | None = None
+    include_surface_ids: list[str] | None = None
+    exclude_surface_ids: list[str] | None = None
+
+
+
+
+class MemoryConflictResolveRequest(SQLModel):
+    status: str | None = None
+    winning_node_id: str | None = None
+    losing_node_ids: list[str] | None = None
+    summary: str | None = None
+
+class TeamRecommendationRequest(SQLModel):
+    task_text: str
+    limit: int | None = 3
+
+
+class TeamSelectionRecordRequest(SQLModel):
+    run_id: str | None = None
+    task_text: str
+    selected_blueprint_id: str | None = None
+    recommendation: dict[str, Any] | None = None
+    outcome: dict[str, Any] | None = None

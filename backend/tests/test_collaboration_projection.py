@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.services.run_studio import build_run_studio_summary
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session
+from tests.db_test_utils import create_test_engine as create_engine
 
 from app.models import ContextSet, Node, Thread
 

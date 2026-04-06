@@ -1,7 +1,8 @@
 import unittest
 
 try:
-    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel import SQLModel, Session
+    from tests.db_test_utils import create_test_engine as create_engine
     from app.models import Conversation, ConversationTeamConfig, ConversationTeamConfigRevision
     from app.services import conversation_team_config
     from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy

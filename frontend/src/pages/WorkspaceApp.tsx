@@ -1,18 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, getStoredAdminKey, getStoredBearerToken, setStoredBearerToken } from '../api'
-import Timeline from '../components/Timeline'
-import GraphPanel from '../components/GraphPanel'
-import ActiveContext from '../components/ActiveContext'
 import RunPanel from '../components/RunPanel'
-import SearchPanel from '../components/SearchPanel'
-import CopyToChatGPTPanel from '../components/CopyToChatGPTPanel'
-import NodeDetailModal from '../components/NodeDetailModal'
-import ContextInspector from '../components/ContextInspector'
-import JobSettingsPanel from '../components/JobSettingsPanel'
-import ExecutionPanel from '../components/ExecutionPanel'
-import ConversationAgentsPanel from '../components/ConversationAgentsPanel'
-import RunStudioLayout from '../components/run_studio/RunStudioLayout'
-import ArtifactsPanel from '../components/run_studio/ArtifactsPanel'
+const Timeline = lazy(() => import('../components/Timeline'))
+const GraphPanel = lazy(() => import('../components/GraphPanel'))
+const ActiveContext = lazy(() => import('../components/ActiveContext'))
+const SearchPanel = lazy(() => import('../components/SearchPanel'))
+const CopyToChatGPTPanel = lazy(() => import('../components/CopyToChatGPTPanel'))
+const NodeDetailModal = lazy(() => import('../components/NodeDetailModal'))
+const ContextInspector = lazy(() => import('../components/ContextInspector'))
+const JobSettingsPanel = lazy(() => import('../components/JobSettingsPanel'))
+const ExecutionPanel = lazy(() => import('../components/ExecutionPanel'))
+const ConversationAgentsPanel = lazy(() => import('../components/ConversationAgentsPanel'))
+const RunStudioLayout = lazy(() => import('../components/run_studio/RunStudioLayout'))
+const ArtifactsPanel = lazy(() => import('../components/run_studio/ArtifactsPanel'))
 import WorkspaceShell from '../components/workspace/WorkspaceShell'
 import WorkspaceRouteState from '../components/workspace/WorkspaceRouteState'
 import { useRunStudioData } from '../hooks/useRunStudioData'
@@ -37,6 +37,15 @@ type ResizeSession = {
   wrapWidth: number
 }
 type AuthGateState = 'checking' | 'ready' | 'blocked' | 'error'
+
+
+function WorkspacePanelFallback({ label = '패널을 불러오는 중…' }: { label?: string }) {
+  return (
+    <div className="card">
+      <div className="muted">{label}</div>
+    </div>
+  )
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -138,6 +147,7 @@ export default function WorkspaceApp() {
     evidence: runStudioEvidence,
     contextPacks: runStudioContextPacks,
     skillUsage: runStudioSkillUsage,
+    memoryGraph: runStudioMemoryGraph,
     detailLoaded: runStudioDetailLoaded,
     detailLoading: runStudioDetailLoading,
     loading: runStudioLoading,
@@ -149,6 +159,7 @@ export default function WorkspaceApp() {
     loadEvidence: loadRunStudioEvidence,
     loadContextPacks: loadRunStudioContextPacks,
     loadSkillUsage: loadRunStudioSkillUsage,
+    loadMemoryGraph: loadRunStudioMemoryGraph,
   } = useRunStudioData()
   const {
     threads,
@@ -893,24 +904,28 @@ export default function WorkspaceApp() {
         <button onClick={() => reloadAll()}>Reload</button>
       </div>
 
-      <SearchPanel
-        onSearch={async (q) => {
-          if (!threadId || !q) return []
-          const r = await api.search(threadId, q, 10)
-          return r.results || []
-        }}
-        onActivate={async (nodeId) => {
-          await toggleActive(nodeId, true)
-        }}
-      />
+      <Suspense fallback={<WorkspacePanelFallback label="검색 패널을 불러오는 중…" />}>
+        <SearchPanel
+          onSearch={async (q) => {
+            if (!threadId || !q) return []
+            const r = await api.search(threadId, q, 10)
+            return r.results || []
+          }}
+          onActivate={async (nodeId) => {
+            await toggleActive(nodeId, true)
+          }}
+        />
+      </Suspense>
 
-      <Timeline
-        nodes={nodes}
-        activeIds={activeIds}
-        onToggle={toggleActive}
-        onOpenNode={(id) => setDetailNodeId(id)}
-        partCountByParent={partCountByParent}
-      />
+      <Suspense fallback={<WorkspacePanelFallback label="타임라인을 불러오는 중…" />}>
+        <Timeline
+          nodes={nodes}
+          activeIds={activeIds}
+          onToggle={toggleActive}
+          onOpenNode={(id) => setDetailNodeId(id)}
+          partCountByParent={partCountByParent}
+        />
+      </Suspense>
     </>
   )
 
@@ -930,13 +945,15 @@ export default function WorkspaceApp() {
       />
 
       {workspaceMainTab === 'run_studio' && (
-        <RunStudioLayout
+        <Suspense fallback={<WorkspacePanelFallback label="Run Studio를 불러오는 중…" />}>
+          <RunStudioLayout
           summary={runStudioSummary}
           team={runStudioAgentTeam}
           decisions={runStudioContextDecisions}
           evidence={runStudioEvidence}
           contextPacks={runStudioContextPacks}
           skillUsage={runStudioSkillUsage}
+          memoryGraph={runStudioMemoryGraph}
           detailLoaded={runStudioDetailLoaded}
           detailLoading={runStudioDetailLoading}
           loading={runStudioLoading}
@@ -961,6 +978,10 @@ export default function WorkspaceApp() {
             const currentRunId = runStudioSummary?.current_run_skills?.run_id
             void loadRunStudioSkillUsage(threadId || undefined, currentRunId || undefined)
           }}
+          onLoadMemoryGraph={() => {
+            const currentRunId = runStudioSummary?.current_run_skills?.run_id
+            void loadRunStudioMemoryGraph(threadId || undefined, currentRunId || undefined)
+          }}
           onOpenGraph={() => setWorkspaceMainTab('graph')}
           onOpenRawTrace={() => setWorkspaceMainTab('raw_trace')}
           onOpenAdvanced={() => setWorkspaceMainTab('advanced')}
@@ -970,11 +991,13 @@ export default function WorkspaceApp() {
           onOpenTrace={openNodesInGraph}
           onAddToActive={addNodeToActiveFromStudio}
           onPinNode={pinNodeFromStudio}
-        />
+          />
+        </Suspense>
       )}
 
       {workspaceMainTab === 'raw_trace' && (
-        <ExecutionPanel
+        <Suspense fallback={<WorkspacePanelFallback label="실행 트레이스를 불러오는 중…" />}>
+          <ExecutionPanel
           threadId={threadId}
           nodes={nodes}
           edges={edges}
@@ -982,31 +1005,36 @@ export default function WorkspaceApp() {
             setWorkspaceMainTab('graph')
             if (nodeId) setSelectedIds([nodeId])
           }}
-        />
+          />
+        </Suspense>
       )}
 
       {workspaceMainTab === 'artifacts' && (
-        <ArtifactsPanel nodes={nodes} activeIds={activeIds} />
+        <Suspense fallback={<WorkspacePanelFallback label="Artifacts 패널을 불러오는 중…" />}>
+          <ArtifactsPanel nodes={nodes} activeIds={activeIds} />
+        </Suspense>
       )}
 
       {workspaceMainTab === 'advanced' && (
         <div className="runStudioAdvancedGrid">
           <div>
-            <ActiveContext
-              activeIds={activeIds}
-              nodesById={nodesById}
-              allNodes={nodes}
-              onOpenNode={(id) => setDetailNodeId(id)}
-              partCountByParent={partCountByParent}
-              onAdd={async (id) => {
-                await toggleActive(id, true)
-              }}
-              onReorder={reorderActive}
-              onRemove={async (id) => {
-                await toggleActive(id, false)
-              }}
-              onUnfold={unfoldFold}
-            />
+            <Suspense fallback={<WorkspacePanelFallback label="Active Context를 불러오는 중…" />}>
+              <ActiveContext
+                activeIds={activeIds}
+                nodesById={nodesById}
+                allNodes={nodes}
+                onOpenNode={(id) => setDetailNodeId(id)}
+                partCountByParent={partCountByParent}
+                onAdd={async (id) => {
+                  await toggleActive(id, true)
+                }}
+                onReorder={reorderActive}
+                onRemove={async (id) => {
+                  await toggleActive(id, false)
+                }}
+                onUnfold={unfoldFold}
+              />
+            </Suspense>
           </div>
           <div>
             <div className="card rightPanelTabs">
@@ -1027,7 +1055,8 @@ export default function WorkspaceApp() {
             </div>
 
             {rightPanelTab === 'prompt' && (
-              <CopyToChatGPTPanel
+              <Suspense fallback={<WorkspacePanelFallback label="Prompt Builder를 불러오는 중…" />}>
+                <CopyToChatGPTPanel
                 activeNodes={activeNodes}
                 allNodes={nodes}
                 edges={edges}
@@ -1037,7 +1066,8 @@ export default function WorkspaceApp() {
                   await reloadAll()
                 }}
                 onReplaceActive={replaceActiveContext}
-              />
+                />
+              </Suspense>
             )}
 
             {rightPanelTab === 'run' && (
@@ -1050,21 +1080,26 @@ export default function WorkspaceApp() {
             )}
 
             {rightPanelTab === 'job_settings' && (
-              <JobSettingsPanel
+              <Suspense fallback={<WorkspacePanelFallback label="Job Settings를 불러오는 중…" />}>
+                <JobSettingsPanel
                 threadId={threadId}
                 threads={threads}
                 onAfterSave={async () => {
                   await reloadAll(threadId || undefined, ctxId || undefined)
                 }}
-              />
+                />
+              </Suspense>
             )}
 
             {rightPanelTab === 'conversation_agents' && (
-              <ConversationAgentsPanel threadId={threadId} />
+              <Suspense fallback={<WorkspacePanelFallback label="Thread Team Config를 불러오는 중…" />}>
+                <ConversationAgentsPanel threadId={threadId} />
+              </Suspense>
             )}
 
             {rightPanelTab === 'inspector' && (
-              <ContextInspector
+              <Suspense fallback={<WorkspacePanelFallback label="Inspector를 불러오는 중…" />}>
+                <ContextInspector
                 compiledText={compiledInfo?.compiled_text || ''}
                 excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
                 keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
@@ -1078,7 +1113,8 @@ export default function WorkspaceApp() {
                 onLoadDiff={loadVersionDiff}
                 onPlan={previewPlanner}
                 onApplySeeds={applyPlannerSeeds}
-              />
+                />
+              </Suspense>
             )}
           </div>
         </div>
@@ -1101,7 +1137,8 @@ export default function WorkspaceApp() {
             </div>
           </div>
           <div className="graphWorkspace">
-            <GraphPanel
+            <Suspense fallback={<WorkspacePanelFallback label="그래프를 불러오는 중…" />}>
+              <GraphPanel
               nodes={nodes}
               edges={edges}
               activeNodeIds={activeIds}
@@ -1118,9 +1155,11 @@ export default function WorkspaceApp() {
               onSaveLayout={saveGraphLayoutPositions}
               layoutScopeKey={threadId}
               priorityBucketByNodeId={graphPriorityBucketById}
-            />
+              />
+            </Suspense>
             {detailNodeId && (
-              <NodeDetailModal
+              <Suspense fallback={<WorkspacePanelFallback label="노드 상세를 불러오는 중…" />}>
+                <NodeDetailModal
                 nodeId={detailNodeId}
                 threadId={threadId}
                 ctxId={ctxId}
@@ -1129,7 +1168,8 @@ export default function WorkspaceApp() {
                 onAfterMutation={async () => {
                   await reloadAll()
                 }}
-              />
+                />
+              </Suspense>
             )}
           </div>
         </>
@@ -1139,21 +1179,23 @@ export default function WorkspaceApp() {
 
   const rightPanelContent = workspaceMainTab === 'graph' ? (
     <>
-      <ActiveContext
-        activeIds={activeIds}
-        nodesById={nodesById}
-        allNodes={nodes}
-        onOpenNode={(id) => setDetailNodeId(id)}
-        partCountByParent={partCountByParent}
-        onAdd={async (id) => {
-          await toggleActive(id, true)
-        }}
-        onReorder={reorderActive}
-        onRemove={async (id) => {
-          await toggleActive(id, false)
-        }}
-        onUnfold={unfoldFold}
-      />
+      <Suspense fallback={<WorkspacePanelFallback label="Active Context를 불러오는 중…" />}>
+        <ActiveContext
+          activeIds={activeIds}
+          nodesById={nodesById}
+          allNodes={nodes}
+          onOpenNode={(id) => setDetailNodeId(id)}
+          partCountByParent={partCountByParent}
+          onAdd={async (id) => {
+            await toggleActive(id, true)
+          }}
+          onReorder={reorderActive}
+          onRemove={async (id) => {
+            await toggleActive(id, false)
+          }}
+          onUnfold={unfoldFold}
+        />
+      </Suspense>
 
       <div className="card rightPanelTabs">
         <div className="row" style={{ marginBottom: 8 }}>
@@ -1178,9 +1220,12 @@ export default function WorkspaceApp() {
       </div>
 
       {rightPanelTab === 'conversation_agents' ? (
-        <ConversationAgentsPanel threadId={threadId} />
+        <Suspense fallback={<WorkspacePanelFallback label="Thread Team Config를 불러오는 중…" />}>
+          <ConversationAgentsPanel threadId={threadId} />
+        </Suspense>
       ) : (
-        <ContextInspector
+        <Suspense fallback={<WorkspacePanelFallback label="Inspector를 불러오는 중…" />}>
+          <ContextInspector
           compiledText={compiledInfo?.compiled_text || ''}
           excludedParentIds={compiledInfo?.explain?.excluded_parent_ids || []}
           keptNodeIds={compiledInfo?.explain?.kept_node_ids || []}
@@ -1194,7 +1239,8 @@ export default function WorkspaceApp() {
           onLoadDiff={loadVersionDiff}
           onPlan={previewPlanner}
           onApplySeeds={applyPlannerSeeds}
-        />
+          />
+        </Suspense>
       )}
     </>
   ) : null

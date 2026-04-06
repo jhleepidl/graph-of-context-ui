@@ -707,11 +707,40 @@ def normalize_memory_map_summary(value: Any) -> list[dict[str, Any]]:
     return out
 
 
+
+
+def normalize_memory_acl_summary(value: Any) -> list[dict[str, Any]]:
+    rows = value if isinstance(value, list) else []
+    out: list[dict[str, Any]] = []
+    for raw in rows:
+        row = normalize_mapping(raw)
+        if not row:
+            continue
+        role_id = clean_text(row.get("role_id") or row.get("roleId"))
+        if not role_id:
+            continue
+        out.append({
+            "role_id": role_id,
+            "read_scope_mode": clean_text(row.get("read_scope_mode") or row.get("readScopeMode")) or None,
+            "write_scope_mode": clean_text(row.get("write_scope_mode") or row.get("writeScopeMode")) or None,
+            "publish_scope_mode": clean_text(row.get("publish_scope_mode") or row.get("publishScopeMode")) or None,
+            "read_surface_ids": clean_list_of_text(row.get("read_surface_ids") or row.get("readSurfaceIds")),
+            "write_surface_ids": clean_list_of_text(row.get("write_surface_ids") or row.get("writeSurfaceIds")),
+            "publish_surface_ids": clean_list_of_text(row.get("publish_surface_ids") or row.get("publishSurfaceIds")),
+            "can_publish_final_answer": coerce_bool(row.get("can_publish_final_answer") if "can_publish_final_answer" in row else row.get("canPublishFinalAnswer")),
+            "can_publish_artifact_index": coerce_bool(row.get("can_publish_artifact_index") if "can_publish_artifact_index" in row else row.get("canPublishArtifactIndex")),
+        })
+        if len(out) >= 8:
+            break
+    return out
+
 def normalize_blueprint_summary(value: Any) -> dict[str, Any] | None:
     row = normalize_mapping(value)
     if not row:
         return None
     memory_map = normalize_memory_map_summary(row.get("memory_map") or row.get("memoryMap"))
+    memory_acl_summary = normalize_memory_acl_summary(row.get("memory_acl_summary") or row.get("memoryAclSummary"))
+    runtime_bound_raw = row.get("runtime_bound") if "runtime_bound" in row else row.get("runtimeBound")
     out = {
         "source": clean_text(row.get("source")) or None,
         "blueprint_id": clean_text(row.get("blueprint_id") or row.get("blueprintId")) or None,
@@ -721,14 +750,20 @@ def normalize_blueprint_summary(value: Any) -> dict[str, Any] | None:
         "topology_pattern": clean_text(row.get("topology_pattern") or row.get("topologyPattern")) or None,
         "execution_pattern": clean_text(row.get("execution_pattern") or row.get("executionPattern")) or None,
         "capability_status": clean_text(row.get("capability_status") or row.get("capabilityStatus")) or None,
+        "runtime_bound": coerce_bool(runtime_bound_raw),
+        "admission_status": clean_text(row.get("admission_status") or row.get("admissionStatus")) or None,
+        "admission_decision": clean_text(row.get("admission_decision") or row.get("admissionDecision")) or None,
+        "blocking_reason_codes": clean_list_of_text(row.get("blocking_reason_codes") or row.get("blockingReasonCodes")),
+        "degrade_reason_codes": clean_list_of_text(row.get("degrade_reason_codes") or row.get("degradeReasonCodes")),
         "required_tool_count": int(row.get("required_tool_count") or row.get("requiredToolCount") or 0) or None,
         "optional_tool_count": int(row.get("optional_tool_count") or row.get("optionalToolCount") or 0) or None,
         "missing_required_tool_count": int(row.get("missing_required_tool_count") or row.get("missingRequiredToolCount") or 0) or None,
         "missing_optional_tool_count": int(row.get("missing_optional_tool_count") or row.get("missingOptionalToolCount") or 0) or None,
-        "missing_required_tools": normalize_string_list(row.get("missing_required_tools") or row.get("missingRequiredTools")),
-        "missing_optional_tools": normalize_string_list(row.get("missing_optional_tools") or row.get("missingOptionalTools")),
+        "missing_required_tools": clean_list_of_text(row.get("missing_required_tools") or row.get("missingRequiredTools")),
+        "missing_optional_tools": clean_list_of_text(row.get("missing_optional_tools") or row.get("missingOptionalTools")),
         "memory_surface_count": int(row.get("memory_surface_count") or row.get("memorySurfaceCount") or len(memory_map) or 0),
         "memory_map": memory_map,
+        "memory_acl_summary": memory_acl_summary,
     }
     return {key: value for key, value in out.items() if value not in (None, [], {}, "")} or None
 

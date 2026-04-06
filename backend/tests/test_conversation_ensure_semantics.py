@@ -5,7 +5,8 @@ from contextlib import ExitStack
 from unittest.mock import patch
 
 from fastapi import HTTPException
-from sqlmodel import SQLModel, Session, create_engine, select
+from sqlmodel import SQLModel, Session, select
+from tests.db_test_utils import create_test_engine as create_engine
 
 from app.auth import Principal
 from app.models import Agent, Conversation, ConversationAgent, Thread

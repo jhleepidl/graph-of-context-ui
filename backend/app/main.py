@@ -11,7 +11,7 @@ from app.auth import (
     resolve_principal,
     set_current_principal,
 )
-from app.db import init_db
+from app.db import dispose_engine, init_db, ping_db
 from app.config import get_env
 from app.routers.threads import router as threads_router
 from app.routers.messages import router as messages_router
@@ -28,6 +28,7 @@ from app.routers.publish_requests import router as publish_requests_router
 from app.routers.telegram_auth import router as telegram_auth_router
 from app.routers.agents import router as agents_router
 from app.routers.skills import router as skills_router
+from app.routers.memory_graphs import router as memory_graphs_router
 from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
@@ -102,6 +103,19 @@ def _startup():
     ensure_auth_config()
     init_db()
 
+
+
+@app.get("/healthz")
+def healthz():
+    if not ping_db():
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"ok": True}
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    dispose_engine()
+
 app.include_router(threads_router)
 app.include_router(messages_router)
 app.include_router(ctx_router)
@@ -116,5 +130,6 @@ app.include_router(publish_requests_router)
 app.include_router(telegram_auth_router)
 app.include_router(agents_router)
 app.include_router(skills_router)
+app.include_router(memory_graphs_router)
 
 app.include_router(hierarchy_router)

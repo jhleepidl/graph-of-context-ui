@@ -5,7 +5,8 @@ import unittest
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import SQLModel, Session
+from tests.db_test_utils import create_test_engine as create_engine
 
 from app.services.run_skill_summary import build_run_skill_summary, build_thread_skill_usage_summary
 from app.services.run_studio import _agent_team_summary

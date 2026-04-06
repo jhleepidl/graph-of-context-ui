@@ -9,13 +9,14 @@ from sqlmodel import Session, select
 from app.auth import get_current_principal, get_current_user_id
 from app.config import get_env
 from app.db import engine
-from app.models import Agent, AgentRevision, Conversation, ConversationAgent, Thread, User, utcnow
+from app.models import Agent, AgentForkOperation, AgentRevision, Conversation, ConversationAgent, Thread, User, utcnow
 from app.schemas import (
     AgentArchiveRequest,
     AgentBootstrapDefaultsRequest,
     AgentCreateRequest,
     AgentForkRequest,
     AgentPatchRequest,
+    AgentRejoinRequest,
     ConversationAgentCreateRequest,
     ConversationAgentPatchRequest,
     ConversationAgentReorderRequest,
@@ -72,6 +73,87 @@ def _normalize_tools(raw: list[str] | None) -> list[str]:
         seen.add(clean)
         out.append(clean)
     return out
+
+
+def _normalize_string_list(raw: list[str] | None, *, limit: int = 24) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw or []:
+        clean = str(item or '').strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _clean_text(raw: Any, *, limit: int = 240) -> str | None:
+    text = str(raw or '').strip()
+    if not text:
+        return None
+    return text[:limit]
+
+
+def _fork_scope_payload(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    mode = _clean_text(raw.get('mode'), limit=64)
+    if mode:
+        out['mode'] = mode.lower()
+    query = _clean_text(raw.get('query'), limit=240)
+    if query:
+        out['query'] = query
+    add_node_ids = _normalize_string_list(raw.get('add_node_ids') or raw.get('addNodeIds') or [], limit=24)
+    remove_node_ids = _normalize_string_list(raw.get('remove_node_ids') or raw.get('removeNodeIds') or [], limit=24)
+    if add_node_ids:
+        out['add_node_ids'] = add_node_ids
+    if remove_node_ids:
+        out['remove_node_ids'] = remove_node_ids
+    for key in ('budget_tokens', 'max_closure_nodes'):
+        value = raw.get(key)
+        if isinstance(value, int) and value > 0:
+            out[key] = value
+    closure_edge_types = _normalize_string_list(raw.get('closure_edge_types') or raw.get('closureEdgeTypes') or [], limit=16)
+    if closure_edge_types:
+        out['closure_edge_types'] = closure_edge_types
+    direction = _clean_text(raw.get('closure_direction') or raw.get('closureDirection'), limit=24)
+    if direction:
+        out['closure_direction'] = direction.lower()
+    return out
+
+
+def _fork_payload(row: AgentForkOperation) -> dict[str, Any]:
+    scope = _jload(row.scope_json, {})
+    if not isinstance(scope, dict):
+        scope = {}
+    provenance = _jload(row.provenance_json, {})
+    if not isinstance(provenance, dict):
+        provenance = {}
+    return {
+        'id': row.id,
+        'source_agent_id': row.source_agent_id,
+        'forked_agent_id': row.forked_agent_id,
+        'reason': row.reason,
+        'purpose': row.purpose,
+        'scope': scope,
+        'scope_mode': str(scope.get('mode') or '').strip().lower() or None,
+        'scope_node_ids': _jload(row.scope_node_ids_json, []),
+        'source_surface_ids': _jload(row.source_surface_ids_json, []),
+        'publish_surface_ids': _jload(row.publish_surface_ids_json, []),
+        'source_thread_id': row.source_thread_id,
+        'source_run_id': row.source_run_id,
+        'rejoin_strategy': row.rejoin_strategy,
+        'rejoin_status': row.rejoin_status,
+        'rejoin_summary': row.rejoin_summary,
+        'artifact_ids': _jload(row.artifact_ids_json, []),
+        'provenance': provenance,
+        'rejoined_at': row.rejoined_at,
+        'created_at': row.created_at,
+        'updated_at': row.updated_at,
+    }
 
 
 def _current_service_id() -> str:
@@ -714,6 +796,31 @@ def fork_agent(agent_id: str, body: AgentForkRequest):
         )
         session.add(created)
         session.flush()
+        fork_scope = _fork_scope_payload(body.scope or {})
+        fork = AgentForkOperation(
+            source_agent_id=source.id,
+            forked_agent_id=created.id,
+            owner_user_id=current_user_id or "admin",
+            service_id=service_id,
+            reason=_clean_text(body.reason),
+            purpose=_clean_text(body.purpose),
+            scope_json=_jdump(fork_scope),
+            scope_node_ids_json=_jdump(_normalize_string_list(body.scope_node_ids, limit=24)),
+            source_surface_ids_json=_jdump(_normalize_string_list(body.source_surface_ids, limit=16)),
+            publish_surface_ids_json=_jdump(_normalize_string_list(body.publish_surface_ids, limit=16)),
+            source_thread_id=_clean_text(body.source_thread_id, limit=120),
+            source_run_id=_clean_text(body.source_run_id, limit=120),
+            rejoin_strategy=_clean_text(body.rejoin_strategy, limit=64),
+            provenance_json=_jdump({
+                'kind': 'fork',
+                'source_agent_id': source.id,
+                'forked_agent_id': created.id,
+                'scope_mode': str(fork_scope.get('mode') or '').strip().lower() or None,
+            }),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(fork)
         _append_agent_revision(
             session,
             created,
@@ -722,6 +829,7 @@ def fork_agent(agent_id: str, body: AgentForkRequest):
         )
         session.commit()
         session.refresh(created)
+        session.refresh(fork)
         return {
             "ok": True,
             "agent": _serialize_agent(
@@ -730,6 +838,84 @@ def fork_agent(agent_id: str, body: AgentForkRequest):
                 current_user_id=current_user_id,
                 is_admin=is_admin,
             ),
+            "fork": _fork_payload(fork),
+            "message": f"fork created: {source.name} -> {created.name}",
+        }
+
+
+@router.post("/agents/{agent_id}/rejoin")
+def rejoin_agent(agent_id: str, body: AgentRejoinRequest):
+    principal = get_current_principal()
+    is_admin = principal.role == "admin"
+    current_user_id = get_current_user_id(required=not is_admin)
+    service_id = _current_service_id()
+
+    with Session(engine) as session:
+        forked = _get_agent_or_404(session, agent_id)
+        if not _can_write_agent(forked, user_id=current_user_id, is_admin=is_admin):
+            raise HTTPException(403, "cannot rejoin this agent")
+        fork = session.exec(select(AgentForkOperation).where(AgentForkOperation.forked_agent_id == forked.id)).first()
+        if not fork:
+            raise HTTPException(404, "fork lineage not found")
+        source = _get_agent_or_404(session, fork.source_agent_id)
+        if not _can_read_agent(source, user_id=current_user_id, service_id=service_id, is_admin=is_admin):
+            raise HTTPException(404, "source agent not found")
+        target_agent_id = _clean_text(body.target_agent_id, limit=120) or source.id
+        summary = _clean_text(body.summary, limit=400)
+        publish_surface_ids = _normalize_string_list(body.publish_surface_ids, limit=16) or _jload(fork.publish_surface_ids_json, [])
+        artifact_ids = _normalize_string_list(body.artifact_ids, limit=16)
+        provenance = _jload(fork.provenance_json, {})
+        if not isinstance(provenance, dict):
+            provenance = {}
+        provenance.update({
+            'kind': 'fork_rejoin',
+            'target_agent_id': target_agent_id,
+            'include_recent_outputs': body.include_recent_outputs is True,
+            'summary': summary,
+        })
+        fork.rejoin_status = 'rejoined'
+        fork.rejoin_summary = summary
+        fork.publish_surface_ids_json = _jdump(publish_surface_ids)
+        fork.artifact_ids_json = _jdump(artifact_ids)
+        fork.provenance_json = _jdump(provenance)
+        fork.rejoined_at = utcnow()
+        fork.updated_at = fork.rejoined_at
+        _append_agent_revision(session, forked, actor_user_id=current_user_id, reason=f"rejoin:{target_agent_id}")
+        session.add(fork)
+        session.commit()
+        session.refresh(fork)
+        return {
+            'ok': True,
+            'fork': _fork_payload(fork),
+            'message': f'rejoined {forked.name} -> {source.name}',
+        }
+
+
+@router.get("/agents/{agent_id}/fork-lineage")
+def get_agent_fork_lineage(agent_id: str):
+    principal = get_current_principal()
+    is_admin = principal.role == "admin"
+    current_user_id = get_current_user_id(required=not is_admin)
+    service_id = _current_service_id()
+
+    with Session(engine) as session:
+        agent = _get_agent_or_404(session, agent_id)
+        if not _can_read_agent(agent, user_id=current_user_id, service_id=service_id, is_admin=is_admin):
+            raise HTTPException(404, 'agent not found')
+        fork = session.exec(
+            select(AgentForkOperation).where(
+                (AgentForkOperation.forked_agent_id == agent.id) | (AgentForkOperation.source_agent_id == agent.id)
+            ).order_by(AgentForkOperation.created_at.desc())
+        ).first()
+        if not fork:
+            return {'ok': True, 'fork': None}
+        source = _get_agent_or_404(session, fork.source_agent_id)
+        forked = _get_agent_or_404(session, fork.forked_agent_id)
+        return {
+            'ok': True,
+            'fork': _fork_payload(fork),
+            'source_agent': _serialize_agent(session, source, current_user_id=current_user_id, is_admin=is_admin),
+            'forked_agent': _serialize_agent(session, forked, current_user_id=current_user_id, is_admin=is_admin),
         }
 
 

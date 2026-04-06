@@ -218,11 +218,29 @@ export default function AgentTeamPanel({
             </>
           )}
           {cleanText(blueprintSummary.capability_status) && <div className="muted">capability status: {cleanText(blueprintSummary.capability_status)}</div>}
+          {(blueprintSummary.runtime_bound != null || cleanText(blueprintSummary.admission_status) || cleanText(blueprintSummary.admission_decision)) && (
+            <div className="muted">admission: runtime_bound={blueprintSummary.runtime_bound === true ? 'true' : 'false'} · {cleanText(blueprintSummary.admission_status) || 'unbound'}{cleanText(blueprintSummary.admission_decision) ? ` · ${cleanText(blueprintSummary.admission_decision)}` : ''}</div>
+          )}
+          {(blueprintSummary.blocking_reason_codes || []).length > 0 && <div className="muted">blocking reasons: {(blueprintSummary.blocking_reason_codes || []).join(', ')}</div>}
+          {(blueprintSummary.degrade_reason_codes || []).length > 0 && <div className="muted">degrade reasons: {(blueprintSummary.degrade_reason_codes || []).join(', ')}</div>}
           {(blueprintSummary.required_tool_count != null || blueprintSummary.optional_tool_count != null) && (
             <div className="muted">tools: required={Number(blueprintSummary.required_tool_count || 0)} · optional={Number(blueprintSummary.optional_tool_count || 0)}</div>
           )}
           {(blueprintSummary.missing_required_tools || []).length > 0 && <div className="muted">missing required: {(blueprintSummary.missing_required_tools || []).join(', ')}</div>}
           {(blueprintSummary.missing_optional_tools || []).length > 0 && <div className="muted">missing optional: {(blueprintSummary.missing_optional_tools || []).join(', ')}</div>}
+          {blueprintSummary.executable_definition && (
+            <>
+              <div className="muted">
+                executable definition: members={Number(blueprintSummary.executable_definition.member_count || blueprintSummary.executable_definition.participant_count || 0)} · ready={blueprintSummary.executable_definition.executable_ready === true ? 'true' : 'false'}
+              </div>
+              <div className="muted">
+                topology contract: {cleanText(blueprintSummary.executable_definition.topology_contract?.pattern) || 'hybrid'}{cleanText(blueprintSummary.executable_definition.topology_contract?.execution_pattern) ? ` · ${cleanText(blueprintSummary.executable_definition.topology_contract?.execution_pattern)}` : ''} · edges={Number(blueprintSummary.executable_definition.topology_contract?.edge_count || 0)}
+              </div>
+              <div className="muted">
+                memory contract: surfaces={Number(blueprintSummary.executable_definition.memory_contract?.surface_count || 0)} · writable={Number(blueprintSummary.executable_definition.memory_contract?.writable_surface_count || 0)} · final={blueprintSummary.executable_definition.memory_contract?.final_answer_surface_ready === true ? 'ready' : 'missing'}
+              </div>
+            </>
+          )}
           {(blueprintSummary.memory_map || []).length > 0 && (
             <div className="muted" style={{ marginTop: 6 }}>
               {(blueprintSummary.memory_map || []).slice(0, 6).map((surface, index) => (
@@ -230,6 +248,15 @@ export default function AgentTeamPanel({
                   {cleanText(surface.surface_id || surface.file_name) || 'surface'}
                   {cleanText(surface.load_policy) ? ` · load=${cleanText(surface.load_policy)}` : ''}
                   {cleanText(surface.write_policy) ? ` · write=${cleanText(surface.write_policy)}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+          {(blueprintSummary.memory_acl_summary || []).length > 0 && (
+            <div className="muted" style={{ marginTop: 6 }}>
+              {(blueprintSummary.memory_acl_summary || []).slice(0, 6).map((acl, index) => (
+                <div key={`bp-acl-${index}`}>
+                  {cleanText(acl.role_id) || 'role'} · read={(acl.read_surface_ids || []).length} · write={(acl.write_surface_ids || []).length} · publish={(acl.publish_surface_ids || []).length}
                 </div>
               ))}
             </div>

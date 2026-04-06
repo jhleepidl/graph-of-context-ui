@@ -10,6 +10,35 @@ type AgentVisibility = 'private' | 'unlisted' | 'public'
 type AgentScope = 'my' | 'public' | 'installed'
 type ThreadMembershipState = 'represented' | 'disabled' | 'missing'
 
+type ForkLineageRecord = {
+  id: string
+  source_agent_id: string
+  forked_agent_id: string
+  reason: string
+  purpose: string
+  scope_mode: string
+  publish_surface_ids: string[]
+  rejoin_status: string
+  rejoin_summary: string
+}
+
+function normalizeForkLineage(raw: any): ForkLineageRecord | null {
+  if (!raw || typeof raw !== 'object') return null
+  const id = asString(raw.id)
+  if (!id) return null
+  return {
+    id,
+    source_agent_id: asString(raw.source_agent_id),
+    forked_agent_id: asString(raw.forked_agent_id),
+    reason: asString(raw.reason),
+    purpose: asString(raw.purpose),
+    scope_mode: asString(raw.scope_mode),
+    publish_surface_ids: asStringArray(raw.publish_surface_ids),
+    rejoin_status: asString(raw.rejoin_status),
+    rejoin_summary: asString(raw.rejoin_summary),
+  }
+}
+
 type AgentRecord = {
   id: string
   owner_user_id: string
@@ -250,6 +279,7 @@ export default function AgentsPage({ onNavigate }: Props) {
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
   const [busyAgentId, setBusyAgentId] = useState<string | null>(null)
+  const [forkLineageByAgentId, setForkLineageByAgentId] = useState<Record<string, ForkLineageRecord | null>>({})
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm, setCreateForm] = useState<AgentForm>(() => emptyForm('private'))
   const [creating, setCreating] = useState(false)
@@ -510,11 +540,31 @@ export default function AgentsPage({ onNavigate }: Props) {
     setError('')
     setStatus('')
     try {
-      const out = await api.forkAgent(agent.id, { visibility: 'private' })
+      const out = await api.forkAgent(agent.id, { visibility: 'private', reason: 'manual fork from UI', rejoin_strategy: 'manual' })
       const created = normalizeAgent(out?.agent)
+      const lineage = normalizeForkLineage(out?.fork)
+      if (created && lineage) {
+        setForkLineageByAgentId((prev) => ({ ...prev, [created.id]: lineage }))
+      }
       setScope('my')
       await reloadAgents('my')
       setStatus(created ? `fork 완료: ${created.name}` : `fork 완료: ${agent.name}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusyAgentId(null)
+    }
+  }
+
+  async function handleRejoin(agent: AgentRecord) {
+    setBusyAgentId(agent.id)
+    setError('')
+    setStatus('')
+    try {
+      const out = await api.rejoinAgent(agent.id, { summary: 'manual rejoin from UI' })
+      const lineage = normalizeForkLineage(out?.fork)
+      setForkLineageByAgentId((prev) => ({ ...prev, [agent.id]: lineage }))
+      setStatus(`rejoin 완료: ${agent.name}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -716,6 +766,12 @@ export default function AgentsPage({ onNavigate }: Props) {
                           {agent.source_agent_id ? ` · source ${agent.source_agent_id.slice(0, 8)}` : ''}
                           {agent.is_system_default ? ' · system' : ''}
                         </div>
+                        {forkLineageByAgentId[agent.id] ? (
+                          <div className="muted">
+                            lineage: {forkLineageByAgentId[agent.id]?.scope_mode || 'shared_only'} · {forkLineageByAgentId[agent.id]?.rejoin_status || 'forked'}
+                            {forkLineageByAgentId[agent.id]?.publish_surface_ids?.length ? ` · publish=${forkLineageByAgentId[agent.id]?.publish_surface_ids.join(', ')}` : ''}
+                          </div>
+                        ) : null}
                       </td>
                       <td>{agent.visibility}</td>
                       <td>{agent.model || '-'}</td>
@@ -738,6 +794,11 @@ export default function AgentsPage({ onNavigate }: Props) {
                           <button onClick={() => void handleFork(agent)} disabled={isBusy}>
                             {isBusy ? 'Working...' : 'Fork'}
                           </button>
+                          {agent.source_agent_id ? (
+                            <button onClick={() => void handleRejoin(agent)} disabled={isBusy}>
+                              {isBusy ? 'Working...' : 'Rejoin'}
+                            </button>
+                          ) : null}
                           <button onClick={() => void handleAddToConversation(agent)} disabled={addDisabled}>
                             {addLabel}
                           </button>

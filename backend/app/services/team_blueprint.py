@@ -13,6 +13,7 @@ from app.services.team_manifest import (
     _legacy_capability_id,
 )
 from app.services.team_blueprint_templates import list_team_blueprint_templates
+from app.services.team_admission import build_memory_acl_summary, build_team_capability_contract, compile_team_admission_decision
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -221,7 +222,9 @@ def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:
         'memory_plan': memory_plan,
         'primary_schema': 'team_blueprint_v1',
     }
-    capability_contract = _build_capability_contract(team_seed, blueprint)
+    capability_contract = build_team_capability_contract({**team_seed, 'requirements': row.get('requirements') or team.get('requirements') or {}})
+    admission_decision = compile_team_admission_decision(capability_contract)
+    memory_acl_summary = build_memory_acl_summary(memory_plan, team_seed.get('agents') or team.get('agents') or [], structure.get('participants') or [])
     return {
         **row,
         'kind': 'ddalggak_team_blueprint',
@@ -230,6 +233,12 @@ def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:
         'summary': {
             **summary,
             'memory_surface_count': len(list(_as_dict(memory_plan).get('surfaces') or [])),
+            'runtime_bound': admission_decision.get('runtime_bound') is True,
+            'admission_status': _clean_text(admission_decision.get('status'), 32) or None,
+            'admission_decision': _clean_text(admission_decision.get('decision'), 32) or None,
+            'blocking_reason_codes': _as_list(admission_decision.get('blocking_reason_codes'))[:8],
+            'degrade_reason_codes': _as_list(admission_decision.get('degrade_reason_codes'))[:8],
+            'memory_acl_summary': memory_acl_summary[:8],
         },
         'blueprint': {
             'blueprint_id': _clean_text(blueprint.get('blueprint_id') or row.get('thread_id') or title.lower().replace(' ', '_'), 128),
@@ -243,8 +252,10 @@ def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:
             'runtime_policy': runtime_policy,
             'artifact_contract': artifact_contract,
             'capability_contract': capability_contract,
+            'admission_decision': admission_decision,
             'catalog': catalog,
             'team_seed': team_seed,
+            'memory_acl_summary': memory_acl_summary,
         },
         'team': team_seed,
     }

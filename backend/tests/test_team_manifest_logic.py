@@ -1,7 +1,8 @@
 import unittest
 
 try:
-    from sqlmodel import SQLModel, Session, create_engine
+    from sqlmodel import SQLModel, Session
+    from tests.db_test_utils import create_test_engine as create_engine
     from app.models import Conversation, Thread
     from app.services.team_manifest import (
         export_thread_team_manifest,

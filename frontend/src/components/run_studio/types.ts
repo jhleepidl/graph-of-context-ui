@@ -172,6 +172,11 @@ export type TeamBlueprintSummary = {
   topology_pattern?: string | null
   execution_pattern?: string | null
   capability_status?: string | null
+  runtime_bound?: boolean | null
+  admission_status?: string | null
+  admission_decision?: string | null
+  blocking_reason_codes?: string[]
+  degrade_reason_codes?: string[]
   required_tool_count?: number | null
   optional_tool_count?: number | null
   missing_required_tool_count?: number | null
@@ -204,6 +209,17 @@ export type TeamBlueprintSummary = {
     write_policy?: string | null
     target_roles?: string[]
     semantic_slots?: string[]
+  }>
+  memory_acl_summary?: Array<{
+    role_id?: string | null
+    read_scope_mode?: string | null
+    write_scope_mode?: string | null
+    publish_scope_mode?: string | null
+    read_surface_ids?: string[]
+    write_surface_ids?: string[]
+    publish_surface_ids?: string[]
+    can_publish_final_answer?: boolean | null
+    can_publish_artifact_index?: boolean | null
   }>
 }
 
@@ -270,6 +286,46 @@ export type ScopeProjection = {
   count?: number
   grant_counts?: Record<string, number>
   visibility_counts?: Record<string, number>
+}
+
+
+
+export type MemoryProjectionDetail = {
+  projection_id?: string | null
+  run_id?: string | null
+  agent_id?: string | null
+  role_id?: string | null
+  summary?: {
+    role_id?: string | null
+    agent_id?: string | null
+    visible_surface_count?: number
+    blocked_surface_count?: number
+    visible_node_count?: number
+    blocked_node_count?: number
+  } | null
+  visible_node_ids?: string[]
+  blocked_node_ids?: string[]
+  created_at?: string | null
+}
+
+export type MemoryConflictDetail = {
+  id?: string | null
+  surface_id?: string | null
+  left_node_id?: string | null
+  right_node_id?: string | null
+  status?: string | null
+  reason?: string | null
+  resolution_status?: string | null
+  winning_node_id?: string | null
+  losing_node_ids?: string[]
+}
+
+export type RunStudioMemoryGraph = {
+  projections?: MemoryProjectionDetail[]
+  projection_count?: number
+  conflicts?: MemoryConflictDetail[]
+  conflict_count?: number
+  conflict_status_counts?: Record<string, number>
 }
 
 export type VisibilityProjection = {

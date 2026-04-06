@@ -7,6 +7,7 @@ import {
   type RunStudioEvidence,
   type RunStudioSkillUsage,
   type RunStudioSummary,
+  type RunStudioMemoryGraph,
 } from '../components/run_studio/types'
 
 type RefreshOptions = {
@@ -14,7 +15,7 @@ type RefreshOptions = {
   includeLoadedDetails?: boolean
 }
 
-type DetailKey = 'agentTeam' | 'contextDecisions' | 'evidence' | 'contextPacks' | 'skillUsage'
+type DetailKey = 'agentTeam' | 'contextDecisions' | 'evidence' | 'contextPacks' | 'skillUsage' | 'memoryGraph'
 
 type DetailState = Record<DetailKey, boolean>
 
@@ -28,6 +29,7 @@ const EMPTY_DETAIL_STATE: DetailState = {
   evidence: false,
   contextPacks: false,
   skillUsage: false,
+  memoryGraph: false,
 }
 
 function toErrorMessage(error: unknown): string {
@@ -54,6 +56,7 @@ export function useRunStudioData() {
   const [evidence, setEvidence] = useState<RunStudioEvidence | null>(null)
   const [contextPacks, setContextPacks] = useState<RunStudioContextPacks | null>(null)
   const [skillUsage, setSkillUsage] = useState<RunStudioSkillUsage | null>(null)
+  const [memoryGraph, setMemoryGraph] = useState<RunStudioMemoryGraph | null>(null)
   const [detailLoaded, setDetailLoaded] = useState<DetailState>(EMPTY_DETAIL_STATE)
   const [detailLoading, setDetailLoading] = useState<DetailState>(EMPTY_DETAIL_STATE)
   const [loading, setLoading] = useState(false)
@@ -86,6 +89,7 @@ export function useRunStudioData() {
     setEvidence(null)
     setContextPacks(null)
     setSkillUsage(null)
+    setMemoryGraph(null)
     setDetailLoaded(EMPTY_DETAIL_STATE)
     setDetailLoading(EMPTY_DETAIL_STATE)
     setError('')
@@ -167,6 +171,25 @@ export function useRunStudioData() {
     }
   }, [markDetailLoaded, markDetailLoading])
 
+  const loadMemoryGraph = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
+    const tId = (threadId || '').trim()
+    if (!tId) return null
+    const rId = (runId || '').trim()
+    markDetailLoading('memoryGraph', true)
+    if (!options?.silent) setError('')
+    try {
+      const nextMemoryGraph = await api.runStudioMemoryGraph(tId, rId || undefined)
+      setMemoryGraph(nextMemoryGraph)
+      markDetailLoaded('memoryGraph', true)
+      return nextMemoryGraph
+    } catch (detailError) {
+      if (!options?.silent) setError(toErrorMessage(detailError))
+      return null
+    } finally {
+      markDetailLoading('memoryGraph', false)
+    }
+  }, [markDetailLoaded, markDetailLoading])
+
   const loadSkillUsage = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = (threadId || '').trim()
     if (!tId) return null
@@ -220,6 +243,9 @@ export function useRunStudioData() {
         if (loadedSnapshot.skillUsage) {
           tasks.push(loadSkillUsage(tId, runId, { silent: true }))
         }
+        if (loadedSnapshot.memoryGraph) {
+          tasks.push(loadMemoryGraph(tId, runId, { silent: true }))
+        }
         if (loadedSnapshot.agentTeam && !nextSummary?.agent_team) {
           tasks.push(loadAgentTeam(tId, { silent: true }))
         }
@@ -232,7 +258,7 @@ export function useRunStudioData() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [applySummary, clear, detailLoaded, loadAgentTeam, loadContextDecisions, loadContextPacks, loadEvidence, loadSkillUsage])
+  }, [applySummary, clear, detailLoaded, loadAgentTeam, loadContextDecisions, loadContextPacks, loadEvidence, loadSkillUsage, loadMemoryGraph])
 
   const derivedRunId = useMemo(() => {
     return String(summary?.current_run_skills?.run_id || '').trim() || null
@@ -245,6 +271,7 @@ export function useRunStudioData() {
     evidence,
     contextPacks,
     skillUsage,
+    memoryGraph,
     detailLoaded,
     detailLoading,
     derivedRunId,
@@ -257,5 +284,6 @@ export function useRunStudioData() {
     loadEvidence,
     loadContextPacks,
     loadSkillUsage,
+    loadMemoryGraph,
   }
 }
