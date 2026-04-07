@@ -1,6 +1,6 @@
 import React from 'react'
 import { api } from '../../api'
-import { type RunStudioMemoryGraph, type MemoryConflictDetail, type MemoryNodeDrilldown } from './types'
+import { type RunStudioMemoryGraph, type MemoryConflictDetail, type MemoryNodeDrilldown, type ConflictHistoryEvent } from './types'
 
 type Props = {
   memoryGraph: RunStudioMemoryGraph | null
@@ -39,6 +39,37 @@ async function resolveQuickly(conflict: MemoryConflictDetail, onRefresh?: () => 
   }
 }
 
+
+
+function renderConflictHistory(events: ConflictHistoryEvent[] | undefined, title = 'History') {
+  const items = Array.isArray(events) ? events.filter(Boolean).slice(-3).reverse() : []
+  if (!items.length) return null
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="runStudioExecutionLaneTitle" style={{ marginBottom: 6 }}>{title}</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {items.map((event, index) => (
+          <div key={`${cleanText(event.created_at || event.event_type || 'evt')}-${index}`} className="runStudioInlineList">
+            <div className="runStudioMetaRow" style={{ marginBottom: 4 }}>
+              {event.event_type && <span className="pill">{cleanText(event.event_type)}</span>}
+              {event.status && <span className="pill">status: {cleanText(event.status)}</span>}
+              {event.previous_status && <span className="pill">from: {cleanText(event.previous_status)}</span>}
+              {event.actor && <span className="pill">actor: {cleanText(event.actor)}</span>}
+              {event.created_at && <span className="pill">{cleanText(event.created_at)}</span>}
+            </div>
+            {event.summary && <div className="muted">{cleanText(event.summary)}</div>}
+            {event.merge_note && <div className="muted">merge note: {cleanText(event.merge_note)}</div>}
+            {!!(event.rationale_codes || []).length && (
+              <div className="runStudioMetaRow" style={{ marginTop: 4 }}>
+                {(event.rationale_codes || []).slice(0, 5).map((code) => <span className="pill" key={code}>{code}</span>)}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 function renderNodeDrilldown(title: string, nodes: MemoryNodeDrilldown[] | undefined, blocked = false) {
   const items = nodes || []
   return (
@@ -197,6 +228,22 @@ export default function MemoryProjectionPanel({
                           {(conflict.losing_node_ids || []).map((nodeId) => <span className="pill" key={nodeId}>loser: {nodeId}</span>)}
                         </div>
                       )}
+                      {conflict.resolution_summary && (
+                        <div className="muted" style={{ marginBottom: 8 }}>rationale: {cleanText(conflict.resolution_summary)}</div>
+                      )}
+                      {!!(conflict.resolution_rationale_codes || []).length && (
+                        <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+                          {(conflict.resolution_rationale_codes || []).slice(0, 5).map((code) => <span className="pill" key={code}>{code}</span>)}
+                        </div>
+                      )}
+                      <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+                        {!!(conflict.supporting_claim_node_ids || []).length && <span className="pill">supporting claims: {(conflict.supporting_claim_node_ids || []).length}</span>}
+                        {!!(conflict.supporting_evidence_node_ids || []).length && <span className="pill">supporting evidence: {(conflict.supporting_evidence_node_ids || []).length}</span>}
+                        {!!(conflict.history_count || 0) && <span className="pill">history events: {conflict.history_count}</span>}
+                        {!!(conflict.merge_history_count || 0) && <span className="pill">merge events: {conflict.merge_history_count}</span>}
+                      </div>
+                      {renderConflictHistory(conflict.history, 'Conflict timeline')}
+                      {renderConflictHistory(conflict.merge_history, 'Merge / resolution timeline')}
                       {cleanText(conflict.status || '').toLowerCase() === 'pending' && (
                         <button onClick={() => resolveQuickly(conflict, onRefresh)}>Resolve (keep latest)</button>
                       )}

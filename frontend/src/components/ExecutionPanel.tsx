@@ -18,6 +18,7 @@ type Props = {
   threadId: string | null
   nodes: any[]
   edges: any[]
+  focusNodeId?: string | null
   onOpenOldGraph?: (nodeId: string | null) => void
 }
 
@@ -344,7 +345,7 @@ function ExecutionNodeCard({ data, selected }: NodeProps<ExecutionNodeData>) {
   )
 }
 
-export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph }: Props) {
+export default function ExecutionPanel({ threadId, nodes, edges, focusNodeId, onOpenOldGraph }: Props) {
   const [filter, setFilter] = useState<FilterState>({
     showMessages: false,
     showTools: false,
@@ -537,6 +538,13 @@ export default function ExecutionPanel({ threadId, nodes, edges, onOpenOldGraph 
     lastFittedLayoutRef.current = layoutSignature
     rfInstance.fitView({ padding: 0.18, duration: 220 })
   }, [rfInstance, rfNodes.length, layoutSignature])
+
+  useEffect(() => {
+    const clean = String(focusNodeId || '').trim()
+    if (!clean) return
+    if (!nodesById.has(clean)) return
+    setSelectedNodeId((prev) => (prev === clean ? prev : clean))
+  }, [focusNodeId, nodesById])
 
   useEffect(() => {
     if (selectedNodeId && nodesById.has(selectedNodeId)) return

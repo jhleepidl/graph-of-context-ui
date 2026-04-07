@@ -148,8 +148,14 @@ export default function WorkspaceApp() {
     contextPacks: runStudioContextPacks,
     skillUsage: runStudioSkillUsage,
     memoryGraph: runStudioMemoryGraph,
+    traceScope: runStudioTraceScope,
+    crossReferences: runStudioCrossReferences,
+    teamSelection: runStudioTeamSelection,
     detailLoaded: runStudioDetailLoaded,
     detailLoading: runStudioDetailLoading,
+    focusedRunId: runStudioFocusedRunId,
+    focusedEventId: runStudioFocusedEventId,
+    focusedEventLabel: runStudioFocusedEventLabel,
     loading: runStudioLoading,
     error: runStudioError,
     refresh: refreshRunStudio,
@@ -160,6 +166,10 @@ export default function WorkspaceApp() {
     loadContextPacks: loadRunStudioContextPacks,
     loadSkillUsage: loadRunStudioSkillUsage,
     loadMemoryGraph: loadRunStudioMemoryGraph,
+    loadTraceScope: loadRunStudioTraceScope,
+    loadTeamSelection: loadRunStudioTeamSelection,
+    focusRunDrilldown: focusRunStudioDrilldown,
+    clearRunDrilldown: clearRunStudioDrilldown,
   } = useRunStudioData()
   const {
     threads,
@@ -185,6 +195,7 @@ export default function WorkspaceApp() {
   const [activeIds, setActiveIds] = useState<string[]>([])
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [detailNodeId, setDetailNodeId] = useState<string | null>(null)
+  const [executionFocusNodeId, setExecutionFocusNodeId] = useState<string | null>(null)
   const [compiledInfo, setCompiledInfo] = useState<any | null>(null)
   const [contextVersions, setContextVersions] = useState<any[]>([])
   const [versionDiff, setVersionDiff] = useState<any | null>(null)
@@ -303,6 +314,7 @@ export default function WorkspaceApp() {
     setActiveIds([])
     setSelectedIds([])
     setDetailNodeId(null)
+    setExecutionFocusNodeId(null)
     setCompiledInfo(null)
     setContextVersions([])
     setVersionDiff(null)
@@ -812,6 +824,14 @@ export default function WorkspaceApp() {
     ctxId,
   })
 
+
+  const openRawTraceNodeFromStudio = useCallback((nodeId: string) => {
+    const clean = String(nodeId || '').trim()
+    if (!clean || !nodesById.has(clean)) return
+    setExecutionFocusNodeId(clean)
+    setWorkspaceMainTab('raw_trace')
+  }, [nodesById, setWorkspaceMainTab])
+
   const leftPanelContent = (
     <>
       {threadResolutionNotice && (
@@ -954,6 +974,9 @@ export default function WorkspaceApp() {
           contextPacks={runStudioContextPacks}
           skillUsage={runStudioSkillUsage}
           memoryGraph={runStudioMemoryGraph}
+          traceScope={runStudioTraceScope}
+          crossReferences={runStudioCrossReferences}
+          teamSelection={runStudioTeamSelection}
           detailLoaded={runStudioDetailLoaded}
           detailLoading={runStudioDetailLoading}
           loading={runStudioLoading}
@@ -968,22 +991,44 @@ export default function WorkspaceApp() {
             void loadRunStudioContextDecisions(threadId || undefined, ctxId || undefined)
           }}
           onLoadEvidence={() => {
-            void loadRunStudioEvidence(threadId || undefined, ctxId || undefined)
+            void loadRunStudioEvidence(threadId || undefined, ctxId || undefined, runStudioFocusedRunId || undefined)
           }}
           onLoadContextPacks={() => {
-            const currentRunId = runStudioSummary?.current_run_skills?.run_id
+            const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
             void loadRunStudioContextPacks(threadId || undefined, currentRunId || undefined)
           }}
           onLoadSkillUsage={() => {
-            const currentRunId = runStudioSummary?.current_run_skills?.run_id
+            const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
             void loadRunStudioSkillUsage(threadId || undefined, currentRunId || undefined)
           }}
           onLoadMemoryGraph={() => {
-            const currentRunId = runStudioSummary?.current_run_skills?.run_id
+            const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
             void loadRunStudioMemoryGraph(threadId || undefined, currentRunId || undefined)
           }}
+          onLoadTraceScope={() => {
+            const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
+            void loadRunStudioTraceScope(threadId || undefined, currentRunId || undefined)
+          }}
+          onLoadTeamSelection={() => {
+            void loadRunStudioTeamSelection(threadId || undefined)
+          }}
+          onInspectTeamSelectionEvent={(row) => {
+            void focusRunStudioDrilldown(
+              threadId || undefined,
+              ctxId || undefined,
+              row?.run_id || undefined,
+              { eventId: row?.event_id || undefined, label: row?.run_id || row?.event_id || undefined },
+            )
+          }}
+          onClearRunDrilldown={() => {
+            void clearRunStudioDrilldown(threadId || undefined, ctxId || undefined)
+          }}
+          focusedRunId={runStudioFocusedRunId}
+          focusedEventId={runStudioFocusedEventId}
+          focusedEventLabel={runStudioFocusedEventLabel}
           onOpenGraph={() => setWorkspaceMainTab('graph')}
           onOpenRawTrace={() => setWorkspaceMainTab('raw_trace')}
+          onOpenRawTraceNode={openRawTraceNodeFromStudio}
           onOpenAdvanced={() => setWorkspaceMainTab('advanced')}
           onFocusNode={focusNodeInGraph}
           onOpenNode={openNodeInGraph}
@@ -1001,6 +1046,7 @@ export default function WorkspaceApp() {
           threadId={threadId}
           nodes={nodes}
           edges={edges}
+          focusNodeId={executionFocusNodeId}
           onOpenOldGraph={(nodeId) => {
             setWorkspaceMainTab('graph')
             if (nodeId) setSelectedIds([nodeId])

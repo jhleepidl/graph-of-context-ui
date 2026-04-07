@@ -225,6 +225,58 @@ def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:
     capability_contract = build_team_capability_contract({**team_seed, 'requirements': row.get('requirements') or team.get('requirements') or {}})
     admission_decision = compile_team_admission_decision(capability_contract)
     memory_acl_summary = build_memory_acl_summary(memory_plan, team_seed.get('agents') or team.get('agents') or [], structure.get('participants') or [])
+    topology_participants = _as_list(structure.get('participants')) or _as_list(topology.get('participants')) or _as_list(team_seed.get('agents'))
+    topology_edges = _as_list(_as_dict(structure.get('topology')).get('edges')) or _as_list(topology.get('edges'))
+    topology_contract = {
+        'pattern': _clean_text(_as_dict(topology).get('pattern') or _as_dict(structure.get('topology')).get('pattern') or 'hybrid', 64) or 'hybrid',
+        'participant_count': len(topology_participants),
+        'edge_count': len(topology_edges),
+        'final_participant_id': _clean_text(_as_dict(topology).get('final_participant_id') or _as_dict(structure.get('topology')).get('final_participant_id'), 128) or None,
+    }
+    surfaces = _as_list(_as_dict(memory_plan).get('surfaces'))
+    shared_surface_count = 0
+    private_surface_count = 0
+    publish_surface_ids: list[str] = []
+    for surface in surfaces:
+        surface_row = _as_dict(surface)
+        visibility_scope = _clean_text(surface_row.get('visibility_scope') or surface_row.get('visibilityScope') or 'shared', 64) or 'shared'
+        surface_id = _clean_text(surface_row.get('surface_id') or surface_row.get('surfaceId') or surface_row.get('id'), 128)
+        if visibility_scope == 'private':
+            private_surface_count += 1
+        else:
+            shared_surface_count += 1
+        if surface_id in {'final_answer', 'artifact_index'}:
+            publish_surface_ids.append(surface_id)
+    memory_governance_policy = {
+        'surface_count': len(surfaces),
+        'shared_surface_count': shared_surface_count,
+        'private_surface_count': private_surface_count,
+        'acl_count': len(memory_acl_summary),
+        'publish_surface_ids': publish_surface_ids,
+    }
+    role_ids = sorted({
+        _clean_id(_as_dict(agent).get('role_profile', {}).get('role') or _as_dict(agent).get('role') or _as_dict(agent).get('id') or _as_dict(agent).get('name') or 'agent', 64)
+        for agent in _as_list(team_seed.get('agents'))
+        if _clean_id(_as_dict(agent).get('role_profile', {}).get('role') or _as_dict(agent).get('role') or _as_dict(agent).get('id') or _as_dict(agent).get('name') or 'agent', 64)
+    })
+    executable_team_definition = {
+        'member_count': len(_as_list(team_seed.get('agents'))),
+        'role_ids': role_ids,
+        'interaction_topology_contract': topology_contract,
+        'memory_governance_policy': memory_governance_policy,
+        'memory_contract': {
+            'surface_count': len(surfaces),
+            'acl_count': len(memory_acl_summary),
+            'publish_capable_roles': sorted({row.get('role_id') for row in memory_acl_summary if _as_dict(row).get('can_publish_final_answer') or _as_dict(row).get('can_publish_artifact_index')}),
+        },
+        'capability_contract': capability_contract,
+        'executable_readiness': {
+            'ready': admission_decision.get('runtime_bound') is True and _clean_text(admission_decision.get('decision'), 32) not in {'block', 'deny'},
+            'runtime_bound': admission_decision.get('runtime_bound') is True,
+            'admission_status': _clean_text(admission_decision.get('status'), 32) or None,
+            'decision': _clean_text(admission_decision.get('decision'), 32) or None,
+        },
+    }
     return {
         **row,
         'kind': 'ddalggak_team_blueprint',
@@ -239,6 +291,10 @@ def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:
             'blocking_reason_codes': _as_list(admission_decision.get('blocking_reason_codes'))[:8],
             'degrade_reason_codes': _as_list(admission_decision.get('degrade_reason_codes'))[:8],
             'memory_acl_summary': memory_acl_summary[:8],
+            'memory_governance_policy': memory_governance_policy,
+            'interaction_topology_contract': topology_contract,
+            'executable_team_definition': executable_team_definition,
+            'executable_definition': executable_team_definition,
         },
         'blueprint': {
             'blueprint_id': _clean_text(blueprint.get('blueprint_id') or row.get('thread_id') or title.lower().replace(' ', '_'), 128),
@@ -249,6 +305,10 @@ def _manifest_to_blueprint_doc(manifest: Any) -> dict[str, Any]:
             'structure': structure,
             'memory_plan': memory_plan,
             'memory_map': list(blueprint.get('memory_map') or []),
+            'memory_governance_policy': memory_governance_policy,
+            'interaction_topology_contract': topology_contract,
+            'executable_team_definition': executable_team_definition,
+            'executable_definition': executable_team_definition,
             'runtime_policy': runtime_policy,
             'artifact_contract': artifact_contract,
             'capability_contract': capability_contract,

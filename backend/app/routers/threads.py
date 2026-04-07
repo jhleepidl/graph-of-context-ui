@@ -36,8 +36,11 @@ from app.services.run_studio import (
     build_run_studio_context_packs,
     build_run_studio_context_decisions,
     build_run_studio_evidence,
+    build_run_studio_memory_graph,
+    build_run_studio_run_bundle,
     build_run_studio_skill_usage,
     build_run_studio_summary,
+    build_run_studio_trace_scope,
 )
 from app.services.scope_materializer import materialize_runtime_scopes
 from app.services.scope_registry import get_scope_spec
@@ -79,6 +82,11 @@ def _has_value(value: Any) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
     return True
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    clean = str(value or '').strip()
+    return clean or None
 
 
 def _merge_meta(existing: dict[str, Any], incoming: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -664,6 +672,7 @@ def get_run_studio_context_decisions(
 def get_run_studio_evidence(
     thread_id: str,
     context_set_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
 ):
     with Session(engine) as s:
         thread = require_thread_access(s, thread_id)
@@ -672,10 +681,46 @@ def get_run_studio_evidence(
                 s,
                 thread=thread,
                 context_set_id=context_set_id,
+                run_id=_clean_optional_text(run_id),
             )
         except ValueError as exc:
             raise HTTPException(404, str(exc))
         return {"ok": True, **evidence}
+
+
+@router.get("/{thread_id}/run_studio/trace_scope")
+def get_run_studio_trace_scope(
+    thread_id: str,
+    run_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        summary = build_run_studio_trace_scope(
+            s,
+            thread=thread,
+            run_id=run_id,
+        )
+        return {"ok": True, **summary}
+
+
+@router.get("/{thread_id}/run_studio/run_bundle")
+def get_run_studio_run_bundle(
+    thread_id: str,
+    context_set_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        try:
+            summary = build_run_studio_run_bundle(
+                s,
+                thread=thread,
+                context_set_id=_clean_optional_text(context_set_id),
+                run_id=_clean_optional_text(run_id),
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc))
+        return {"ok": True, **summary}
 
 
 @router.get("/{thread_id}/run_studio/context_packs")
@@ -688,7 +733,7 @@ def get_run_studio_context_packs(
         summary = build_run_studio_context_packs(
             s,
             thread=thread,
-            run_id=(run_id or "").strip() or None,
+            run_id=_clean_optional_text(run_id),
         )
         return {"ok": True, **summary}
 
@@ -703,7 +748,7 @@ def get_run_studio_skill_usage(
         summary = build_run_studio_skill_usage(
             s,
             thread=thread,
-            run_id=(run_id or "").strip() or None,
+            run_id=_clean_optional_text(run_id),
         )
         return {"ok": True, **summary}
 
@@ -749,7 +794,7 @@ def get_thread_skill_usage(
         summary = build_run_studio_skill_usage(
             s,
             thread=thread,
-            run_id=(run_id or "").strip() or None,
+            run_id=_clean_optional_text(run_id),
         )
         return {"ok": True, **summary}
 
@@ -766,7 +811,7 @@ def export_thread_trace(
     if export_format != "zip":
         raise HTTPException(400, "unsupported format; only zip is currently supported")
 
-    scoped_run_id = (run_id or "").strip() or None
+    scoped_run_id = _clean_optional_text(run_id)
 
     with Session(engine) as s:
         thread = require_thread_access(s, thread_id)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -27,6 +28,17 @@ def _clean_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return default
+
+
+def _clean_timestamp(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    text = _clean_text(value, max_len=64)
+    return text or None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _content_signature(content: Any) -> str:
@@ -123,17 +135,25 @@ def _extract_node_preview(node: dict[str, Any]) -> str:
     return _clean_text(node.get('text'), max_len=160)
 
 
-def _surface_visibility_reason(surface: dict[str, Any], *, clean_role_id: str, include_ids: set[str], exclude_ids: set[str]) -> str:
+def _surface_visibility_reason(surface: dict[str, Any], *, clean_role_id: str, clean_agent_id: str, include_ids: set[str], exclude_ids: set[str]) -> str:
     surface_id = surface['surface_id']
     target_roles = set(surface.get('target_roles') or [])
+    target_agent_ids = set(surface.get('target_agent_ids') or [])
+    visibility_scope = _clean_id(surface.get('visibility_scope') or 'shared', max_len=64) or 'shared'
     if surface_id in exclude_ids:
         return 'excluded_by_request'
     if include_ids and surface_id not in include_ids:
         return 'not_in_requested_scope'
+    if target_agent_ids and clean_agent_id and clean_agent_id not in target_agent_ids:
+        return 'agent_not_allowed'
+    if target_agent_ids and not clean_agent_id:
+        return 'agent_not_declared'
     if target_roles and clean_role_id and clean_role_id not in target_roles:
         return 'role_not_allowed'
     if target_roles and not clean_role_id:
         return 'role_not_declared'
+    if visibility_scope == 'private' and not (target_roles or target_agent_ids):
+        return 'private_scope_requires_target'
     return 'visible'
 
 
@@ -143,29 +163,66 @@ def normalize_memory_surfaces(raw: Any) -> list[dict[str, Any]]:
     seen: set[str] = set()
     for item in _as_list(raw):
         row = _as_dict(item)
+        policy = _as_dict(row.get('policy'))
         surface_id = _clean_id(row.get('surface_id') or row.get('surfaceId') or row.get('id'))
         if not surface_id or surface_id in seen:
             continue
         seen.add(surface_id)
+        min_confidence = _clean_float(policy.get('min_confidence'), default=-1.0)
+        if min_confidence < 0:
+            min_confidence = None
+        min_trust_tier = _clean_id(policy.get('min_trust_tier'), max_len=64) or None
         out.append({
             'surface_id': surface_id,
             'title': _clean_text(row.get('title') or surface_id, max_len=160) or surface_id,
             'semantic_kind': _clean_id(row.get('semantic_kind') or row.get('semanticKind') or 'generic', max_len=64) or 'generic',
             'visibility_scope': _clean_id(row.get('visibility_scope') or row.get('visibilityScope') or 'shared', max_len=64) or 'shared',
             'write_mode': _clean_id(row.get('write_mode') or row.get('writeMode') or row.get('write_policy') or 'shared', max_len=64) or 'shared',
-            'target_roles': [_clean_id(v) for v in _as_list(row.get('target_roles') or row.get('targetRoles')) if _clean_id(v)],
-            'policy': _as_dict(row.get('policy')),
+            'target_roles': [_clean_id(v) for v in _as_list(row.get('target_roles') or row.get('targetRoles') or policy.get('target_roles')) if _clean_id(v)],
+            'target_agent_ids': [_clean_id(v, max_len=128) for v in _as_list(row.get('target_agent_ids') or row.get('targetAgentIds') or policy.get('target_agent_ids')) if _clean_id(v, max_len=128)],
+            'allowed_trust_tiers': [_clean_id(v, max_len=64) for v in _as_list(policy.get('allowed_trust_tiers')) if _clean_id(v, max_len=64)],
+            'min_trust_tier': min_trust_tier,
+            'min_confidence': min_confidence,
+            'policy': policy,
         })
     return out
 
 
+def _node_visibility_reason(node: dict[str, Any], *, visible_surface_ids: set[str], surface_reason_map: dict[str, str], surface_lookup: dict[str, dict[str, Any]], unresolved_conflict_node_ids: set[str]) -> str:
+    surface_id = _clean_id(node.get('surface_id') or node.get('surfaceId'))
+    node_id = _clean_text(node.get('id') or node.get('node_id'), max_len=128)
+    if surface_id not in visible_surface_ids:
+        return surface_reason_map.get(surface_id) or 'surface_not_visible'
+    status = _clean_id(node.get('status') or 'draft', max_len=64) or 'draft'
+    if node_id and node_id in unresolved_conflict_node_ids:
+        return 'pending_conflict'
+    if status == 'conflicted':
+        return 'pending_conflict'
+    if status in {'quarantined', 'superseded', 'rejected', 'deleted', 'archived', 'blocked', 'pending_merge'}:
+        return f'status_{status}'
+    surface = surface_lookup.get(surface_id) or {}
+    allowed_trust_tiers = set(surface.get('allowed_trust_tiers') or [])
+    trust_tier = _extract_trust_tier(node)
+    if allowed_trust_tiers and trust_tier not in allowed_trust_tiers:
+        return 'trust_tier_not_allowed'
+    min_trust_tier = surface.get('min_trust_tier')
+    if min_trust_tier and _trust_rank(trust_tier) < _trust_rank(min_trust_tier):
+        return 'trust_tier_below_minimum'
+    min_confidence = surface.get('min_confidence')
+    if min_confidence is not None and _extract_confidence(node) < float(min_confidence):
+        return 'confidence_below_minimum'
+    return 'visible'
 
-def build_memory_projection(*, role_id: Any = None, agent_id: Any = None, surfaces: Any = None, nodes: Any = None, include_surface_ids: Any = None, exclude_surface_ids: Any = None) -> dict[str, Any]:
+
+
+def build_memory_projection(*, role_id: Any = None, agent_id: Any = None, surfaces: Any = None, nodes: Any = None, include_surface_ids: Any = None, exclude_surface_ids: Any = None, unresolved_conflict_node_ids: Any = None) -> dict[str, Any]:
     clean_role_id = _clean_id(role_id)
-    clean_agent_id = _clean_id(agent_id)
+    clean_agent_id = _clean_id(agent_id, max_len=128)
     include_ids = {_clean_id(v) for v in _as_list(include_surface_ids) if _clean_id(v)}
     exclude_ids = {_clean_id(v) for v in _as_list(exclude_surface_ids) if _clean_id(v)}
+    unresolved_conflict_ids = {_clean_text(v, max_len=128) for v in _as_list(unresolved_conflict_node_ids) if _clean_text(v, max_len=128)}
     surface_rows = normalize_memory_surfaces(surfaces)
+    surface_lookup = {surface['surface_id']: surface for surface in surface_rows}
     visible_surface_ids: list[str] = []
     blocked_surface_ids: list[str] = []
     visible_surfaces: list[dict[str, Any]] = []
@@ -173,7 +230,13 @@ def build_memory_projection(*, role_id: Any = None, agent_id: Any = None, surfac
     surface_reasons: dict[str, str] = {}
     for surface in surface_rows:
         surface_id = surface['surface_id']
-        reason = _surface_visibility_reason(surface, clean_role_id=clean_role_id, include_ids=include_ids, exclude_ids=exclude_ids)
+        reason = _surface_visibility_reason(
+            surface,
+            clean_role_id=clean_role_id,
+            clean_agent_id=clean_agent_id,
+            include_ids=include_ids,
+            exclude_ids=exclude_ids,
+        )
         surface_reasons[surface_id] = reason
         if reason == 'visible':
             visible_surface_ids.append(surface_id)
@@ -181,10 +244,12 @@ def build_memory_projection(*, role_id: Any = None, agent_id: Any = None, surfac
         else:
             blocked_surface_ids.append(surface_id)
             blocked_surfaces.append({**surface, 'reason': reason})
+    visible_surface_id_set = set(visible_surface_ids)
     visible_node_ids: list[str] = []
     blocked_node_ids: list[str] = []
     visible_nodes: list[dict[str, Any]] = []
     blocked_nodes: list[dict[str, Any]] = []
+    node_reason_map: dict[str, str] = {}
     for item in _as_list(nodes):
         row = _as_dict(item)
         node_id = _clean_text(row.get('id') or row.get('node_id'), max_len=128)
@@ -204,11 +269,20 @@ def build_memory_projection(*, role_id: Any = None, agent_id: Any = None, surfac
             'content_preview': _extract_node_preview(row),
             'provenance_fingerprint': _extract_provenance_fingerprint(row) or None,
         }
-        if surface_id in visible_surface_ids:
+        reason = _node_visibility_reason(
+            row,
+            visible_surface_ids=visible_surface_id_set,
+            surface_reason_map=surface_reasons,
+            surface_lookup=surface_lookup,
+            unresolved_conflict_node_ids=unresolved_conflict_ids,
+        )
+        node_reason_map[node_id] = reason
+        if reason == 'visible':
+            detail['visibility_reason'] = reason
             visible_node_ids.append(node_id)
             visible_nodes.append(detail)
         else:
-            detail['blocked_reason'] = surface_reasons.get(surface_id) or 'surface_not_visible'
+            detail['blocked_reason'] = reason
             blocked_node_ids.append(node_id)
             blocked_nodes.append(detail)
     return {
@@ -223,6 +297,7 @@ def build_memory_projection(*, role_id: Any = None, agent_id: Any = None, surfac
         'visible_nodes': visible_nodes,
         'blocked_nodes': blocked_nodes,
         'surface_reason_map': surface_reasons,
+        'node_reason_map': node_reason_map,
         'visible_node_count': len(visible_node_ids),
         'blocked_node_count': len(blocked_node_ids),
     }
@@ -235,7 +310,7 @@ def summarize_memory_projection(projection: dict[str, Any]) -> dict[str, Any]:
     blocked_surfaces = _as_list(row.get('blocked_surfaces'))
     return {
         'role_id': _clean_id(row.get('role_id')) or None,
-        'agent_id': _clean_id(row.get('agent_id')) or None,
+        'agent_id': _clean_id(row.get('agent_id'), max_len=128) or None,
         'visible_surface_count': len(_as_list(row.get('visible_surface_ids')) or visible_surfaces),
         'blocked_surface_count': len(_as_list(row.get('blocked_surface_ids')) or blocked_surfaces),
         'visible_node_count': int(row.get('visible_node_count') or len(_as_list(row.get('visible_node_ids'))) or 0),
@@ -326,6 +401,10 @@ def detect_memory_conflicts(*, new_node: dict[str, Any], existing_nodes: Any, ex
 def summarize_memory_conflict(conflict: Any) -> dict[str, Any]:
     row = _as_dict(conflict)
     resolution = _as_dict(row.get('resolution') or row.get('resolution_json'))
+    history = [normalize_conflict_history_entry(item) for item in _as_list(resolution.get('history'))]
+    merge_history = [normalize_conflict_history_entry(item) for item in _as_list(resolution.get('merge_history'))]
+    latest_event = normalize_conflict_history_entry(resolution.get('latest_event')) if _as_dict(resolution.get('latest_event')) else (history[-1] if history else None)
+    latest_merge_event = normalize_conflict_history_entry(resolution.get('latest_merge_event')) if _as_dict(resolution.get('latest_merge_event')) else (merge_history[-1] if merge_history else None)
     return {
         'id': _clean_text(row.get('id'), max_len=128) or None,
         'surface_id': _clean_id(row.get('surface_id')) or None,
@@ -343,6 +422,17 @@ def summarize_memory_conflict(conflict: Any) -> dict[str, Any]:
         'resolution_status': _clean_id(resolution.get('status') or '', max_len=64) or None,
         'winning_node_id': _clean_text(resolution.get('winning_node_id'), max_len=128) or None,
         'losing_node_ids': [_clean_text(v, max_len=128) for v in _as_list(resolution.get('losing_node_ids')) if _clean_text(v, max_len=128)],
+        'resolution_summary': _clean_text(resolution.get('summary'), max_len=400) or None,
+        'resolution_rationale_codes': [_clean_id(v, max_len=96) for v in _as_list(resolution.get('rationale_codes')) if _clean_id(v, max_len=96)],
+        'supporting_claim_node_ids': [_clean_text(v, max_len=128) for v in _as_list(resolution.get('supporting_claim_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_evidence_node_ids': [_clean_text(v, max_len=128) for v in _as_list(resolution.get('supporting_evidence_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_memory_node_ids': [_clean_text(v, max_len=128) for v in _as_list(resolution.get('supporting_memory_node_ids')) if _clean_text(v, max_len=128)],
+        'history': history,
+        'history_count': len(history),
+        'latest_history_event': latest_event,
+        'merge_history': merge_history,
+        'merge_history_count': len(merge_history),
+        'latest_merge_event': latest_merge_event,
     }
 
 
@@ -365,15 +455,68 @@ def summarize_memory_conflicts(conflicts: Any) -> dict[str, Any]:
 
 
 
+def normalize_conflict_history_entry(raw: Any, *, default_event_type: str | None = None, default_source: str | None = None, default_created_at: str | None = None) -> dict[str, Any]:
+    row = _as_dict(raw)
+    return {
+        'event_type': _clean_id(row.get('event_type') or row.get('type') or default_event_type or 'conflict_update', max_len=96) or 'conflict_update',
+        'status': _clean_id(row.get('status') or row.get('resolution_status') or '', max_len=64) or None,
+        'previous_status': _clean_id(row.get('previous_status') or '', max_len=64) or None,
+        'actor': _clean_text(row.get('actor') or row.get('resolved_by') or row.get('actor_label'), max_len=120) or None,
+        'source': _clean_id(row.get('source') or row.get('resolution_source') or default_source or 'system', max_len=96) or 'system',
+        'created_at': _clean_timestamp(row.get('created_at')) or default_created_at or _now_iso(),
+        'summary': _clean_text(row.get('summary') or row.get('resolution_summary') or row.get('note'), max_len=400) or None,
+        'merge_note': _clean_text(row.get('merge_note'), max_len=240) or None,
+        'winning_node_id': _clean_text(row.get('winning_node_id'), max_len=128) or None,
+        'losing_node_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('losing_node_ids')) if _clean_text(v, max_len=128)],
+        'rationale_codes': [_clean_id(v, max_len=96) for v in _as_list(row.get('rationale_codes')) if _clean_id(v, max_len=96)],
+        'supporting_claim_node_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('supporting_claim_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_evidence_node_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('supporting_evidence_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_memory_node_ids': [_clean_text(v, max_len=128) for v in _as_list(row.get('supporting_memory_node_ids')) if _clean_text(v, max_len=128)],
+    }
+
+
+def append_conflict_history(resolution: Any, event: Any, *, max_items: int = 50) -> dict[str, Any]:
+    out = _as_dict(resolution).copy()
+    history = [normalize_conflict_history_entry(item) for item in _as_list(out.get('history'))]
+    clean_event = normalize_conflict_history_entry(event)
+    history.append(clean_event)
+    history = history[-max_items:]
+    merge_history = [
+        item for item in history
+        if item.get('event_type') in {'conflict_resolved', 'conflict_merged', 'conflict_quarantined', 'conflict_reopened'}
+        or item.get('status') in {'resolved', 'merged', 'accepted', 'quarantined', 'pending'}
+    ]
+    out['history'] = history
+    out['merge_history'] = merge_history[-max_items:]
+    out['latest_event'] = clean_event
+    if merge_history:
+        out['latest_merge_event'] = merge_history[-1]
+    return out
+
+
 def normalize_conflict_resolution(raw: Any) -> dict[str, Any]:
     row = _as_dict(raw)
     status = _clean_id(row.get('status') or 'resolved', max_len=64) or 'resolved'
     winning = _clean_text(row.get('winning_node_id'), max_len=128) or None
     losing = [_clean_text(v, max_len=128) for v in _as_list(row.get('losing_node_ids')) if _clean_text(v, max_len=128)]
     summary = _clean_text(row.get('summary'), max_len=400)
+    rationale_codes = [_clean_id(v, max_len=96) for v in _as_list(row.get('rationale_codes')) if _clean_id(v, max_len=96)]
+    supporting_claim_node_ids = [_clean_text(v, max_len=128) for v in _as_list(row.get('supporting_claim_node_ids')) if _clean_text(v, max_len=128)]
+    supporting_evidence_node_ids = [_clean_text(v, max_len=128) for v in _as_list(row.get('supporting_evidence_node_ids')) if _clean_text(v, max_len=128)]
+    supporting_memory_node_ids = [_clean_text(v, max_len=128) for v in _as_list(row.get('supporting_memory_node_ids')) if _clean_text(v, max_len=128)]
+    resolved_by = _clean_text(row.get('resolved_by'), max_len=120) or None
+    resolution_source = _clean_id(row.get('resolution_source') or 'operator', max_len=96) or 'operator'
+    merge_note = _clean_text(row.get('merge_note'), max_len=240) or None
     return {
         'status': status,
         'winning_node_id': winning,
         'losing_node_ids': losing,
         'summary': summary or None,
+        'rationale_codes': rationale_codes,
+        'supporting_claim_node_ids': supporting_claim_node_ids,
+        'supporting_evidence_node_ids': supporting_evidence_node_ids,
+        'supporting_memory_node_ids': supporting_memory_node_ids,
+        'resolved_by': resolved_by,
+        'resolution_source': resolution_source,
+        'merge_note': merge_note,
     }

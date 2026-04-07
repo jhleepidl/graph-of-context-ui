@@ -8,14 +8,18 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import SQLModel, Session
 from tests.db_test_utils import create_test_engine as create_engine
 
-from app.models import Agent, ContextSet, Conversation, ConversationAgent, Node, Thread
+from app.models import Agent, ContextSet, Conversation, ConversationAgent, Edge, Node, Thread
 from app.services.graph_projections import memory_context_projection
 from app.services.run_studio import (
     _agent_team_summary,
+    _build_run_bundle_cross_references,
     _evidence_summary,
     _extract_runtime_team_snapshot,
     _now_panel_summary,
+    build_run_studio_evidence,
+    build_run_studio_run_bundle,
     build_run_studio_summary,
+    build_run_studio_trace_scope,
 )
 
 
@@ -58,6 +62,68 @@ def make_edge(edge_id: str, from_id: str, to_id: str, edge_type: str) -> FakeEdg
 
 
 class RunStudioLogicTests(unittest.TestCase):
+
+    def test_cross_reference_summary_links_claims_memory_and_conflicts(self) -> None:
+        summary = _build_run_bundle_cross_references(
+            evidence={
+                "run_id": "run-1",
+                "scope": "run",
+                "items": [
+                    {
+                        "claim_node_id": "claim-1",
+                        "claim_node_type": "Plan",
+                        "claim_text": "Use memory item M1 before finalization",
+                        "related_node_ids": ["claim-1", "mem-1", "citation-1"],
+                        "conflict_node_ids": ["mem-2"],
+                        "evidence_nodes": [{"id": "citation-1", "type": "Citation"}],
+                    }
+                ],
+            },
+            memory_graph={
+                "run_id": "run-1",
+                "scope": "run",
+                "projections": [
+                    {
+                        "role_id": "planner",
+                        "visible_nodes": [
+                            {"node_id": "mem-1", "surface_id": "shared", "status": "published", "owner_role_id": "planner"}
+                        ],
+                        "blocked_nodes": [
+                            {"node_id": "mem-2", "surface_id": "shared", "status": "conflicted", "owner_role_id": "reviewer"}
+                        ],
+                    }
+                ],
+                "conflicts": [
+                    {
+                        "id": "conf-1",
+                        "surface_id": "shared",
+                        "left_node_id": "mem-1",
+                        "right_node_id": "mem-2",
+                        "status": "pending",
+                        "reason": "conflicting write",
+                        "history": [
+                            {"event_type": "conflict_detected", "status": "pending", "summary": "Detected conflict"}
+                        ],
+                        "history_count": 1,
+                        "latest_history_event": {"event_type": "conflict_detected", "status": "pending", "summary": "Detected conflict"},
+                    }
+                ],
+            },
+            trace_scope={"run_id": "run-1", "scope": "run", "anchor_node_id": "mem-1"},
+        )
+
+        self.assertEqual(summary["counts"]["claims_with_memory_links"], 1)
+        self.assertEqual(summary["counts"]["claims_with_conflicts"], 1)
+        self.assertEqual(summary["claim_links"][0]["related_memory_node_ids"], ["mem-1", "mem-2"])
+        self.assertEqual(summary["claim_links"][0]["related_conflict_ids"], ["conf-1"])
+        self.assertIn("claim-1", summary["memory_links"][0]["related_claim_node_ids"])
+        self.assertIn("claim-1", summary["conflict_links"][0]["related_claim_node_ids"])
+        self.assertEqual(summary["conflict_links"][0]["suggested_resolution"]["winning_node_id"], "mem-1")
+        self.assertIn("linked_claim_support", summary["conflict_links"][0]["suggested_resolution"]["rationale_codes"])
+        self.assertEqual(summary["conflict_links"][0]["history_count"], 1)
+        self.assertEqual(summary["counts"]["conflicts_with_suggested_resolution"], 1)
+        self.assertEqual(summary["counts"]["conflicts_with_history"], 1)
+
     def test_runtime_team_snapshot_prefers_canonical_runtime_snapshot_shape(self) -> None:
         base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
         nodes = [
@@ -676,6 +742,159 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertEqual((summary.get("collaboration") or {}).get("count"), 0)
         self.assertEqual((summary.get("authority") or {}).get("count"), 0)
         self.assertEqual((summary.get("checkpoints") or {}).get("counts", {}).get("total"), 0)
+    def test_build_run_studio_evidence_can_scope_to_specific_run(self) -> None:
+        engine = create_engine()
+        SQLModel.metadata.create_all(engine)
+        base = datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc)
+
+        with Session(engine) as session:
+            thread = Thread(id="thread-run-evidence", title="Run Evidence Thread")
+            session.add(thread)
+            context_set = ContextSet(
+                id="ctx-run-evidence",
+                thread_id=thread.id,
+                name="default",
+                active_node_ids_json=json.dumps(["claim-run-a", "evidence-run-a", "claim-run-b"]),
+            )
+            session.add(context_set)
+            session.add(Node(id="run-a", thread_id=thread.id, type="Run", text="Run A", payload_json=json.dumps({"status": "done"}), created_at=base))
+            session.add(Node(id="run-b", thread_id=thread.id, type="Run", text="Run B", payload_json=json.dumps({"status": "done"}), created_at=base + timedelta(minutes=5)))
+            session.add(Node(id="claim-run-a", thread_id=thread.id, type="Decision", text="Claim A", payload_json=json.dumps({"claim": "Claim A", "run_id": "run-a"}), created_at=base + timedelta(minutes=1)))
+            session.add(Node(id="evidence-run-a", thread_id=thread.id, type="Artifact", text="Evidence A", payload_json=json.dumps({"run_id": "run-a"}), created_at=base + timedelta(minutes=2)))
+            session.add(Node(id="claim-run-b", thread_id=thread.id, type="Decision", text="Claim B", payload_json=json.dumps({"claim": "Claim B", "run_id": "run-b"}), created_at=base + timedelta(minutes=6)))
+            session.add(Edge(id="edge-run-a-claim", thread_id=thread.id, from_id="run-a", to_id="claim-run-a", type="IN_RUN", payload_json="{}", created_at=base + timedelta(minutes=1)))
+            session.add(Edge(id="edge-run-b-claim", thread_id=thread.id, from_id="run-b", to_id="claim-run-b", type="IN_RUN", payload_json="{}", created_at=base + timedelta(minutes=6)))
+            session.add(Edge(id="edge-evidence-supports", thread_id=thread.id, from_id="evidence-run-a", to_id="claim-run-a", type="SUPPORTS", payload_json="{}", created_at=base + timedelta(minutes=2)))
+            session.commit()
+
+            scoped = build_run_studio_evidence(session, thread=thread, context_set_id=context_set.id, run_id="run-a")
+            unscoped = build_run_studio_evidence(session, thread=thread, context_set_id=context_set.id)
+
+        self.assertEqual(scoped.get("run_id"), "run-a")
+        self.assertEqual(scoped.get("scope"), "run")
+        scoped_items = scoped.get("items") or []
+        self.assertEqual(len(scoped_items), 1)
+        self.assertEqual(scoped_items[0].get("claim_node_id"), "claim-run-a")
+        self.assertEqual((scoped_items[0].get("evidence_nodes") or [])[0].get("id"), "evidence-run-a")
+        self.assertEqual((scoped.get("counts") or {}).get("claims"), 1)
+        self.assertEqual((unscoped.get("counts") or {}).get("claims"), 2)
+
+
+    def test_build_run_studio_trace_scope_filters_to_requested_run(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            thread = Thread(title="Trace Scope", owner_user_id="u1", service_id="svc")
+            session.add(thread)
+            session.commit()
+            session.refresh(thread)
+
+            run_a = Node(thread_id=thread.id, type="Run", text="Run A", payload_json=json.dumps({}))
+            run_b = Node(thread_id=thread.id, type="Run", text="Run B", payload_json=json.dumps({}))
+            session.add(run_a)
+            session.add(run_b)
+            session.flush()
+
+            step_a = Node(thread_id=thread.id, type="Step", text="step a", payload_json=json.dumps({"run_id": run_a.id}))
+            step_b = Node(thread_id=thread.id, type="Step", text="step b", payload_json=json.dumps({"run_id": run_b.id}))
+            evidence_a = Node(thread_id=thread.id, type="Decision", text="evidence a", payload_json=json.dumps({"run_id": run_a.id}))
+            memory_a = Node(thread_id=thread.id, type="ContextSummary", text="memory a", payload_json=json.dumps({"run_id": run_a.id, "surface_id": "surface-a"}))
+            session.add(step_a)
+            session.add(step_b)
+            session.add(evidence_a)
+            session.add(memory_a)
+            session.flush()
+
+            session.add(Edge(thread_id=thread.id, from_id=run_a.id, to_id=step_a.id, type="HAS_STEP"))
+            session.add(Edge(thread_id=thread.id, from_id=step_a.id, to_id=evidence_a.id, type="SUPPORTS"))
+            session.add(Edge(thread_id=thread.id, from_id=step_a.id, to_id=memory_a.id, type="DEPENDS"))
+            session.add(Edge(thread_id=thread.id, from_id=run_b.id, to_id=step_b.id, type="HAS_STEP"))
+            session.commit()
+
+            summary = build_run_studio_trace_scope(session, thread=thread, run_id=run_a.id)
+
+            self.assertEqual(summary["run_id"], run_a.id)
+            self.assertEqual(summary["run_node_id"], run_a.id)
+            self.assertEqual(summary["anchor_node_id"], run_a.id)
+            self.assertIn(step_a.id, summary["step_node_ids"])
+            self.assertNotIn(step_b.id, summary["node_ids"])
+            self.assertIn(evidence_a.id, summary["evidence_node_ids"])
+            self.assertIn(memory_a.id, summary["memory_node_ids"])
+
+
+    def test_build_run_studio_run_bundle_scopes_all_detail_panels_to_requested_run(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            thread = Thread(title="Run Bundle", owner_user_id="u1", service_id="svc")
+            session.add(thread)
+            session.commit()
+            session.refresh(thread)
+
+            context_set = ContextSet(
+                thread_id=thread.id,
+                name="default",
+                active_node_ids_json=json.dumps([]),
+            )
+            session.add(context_set)
+            session.commit()
+            session.refresh(context_set)
+
+            run_a = Node(thread_id=thread.id, type="Run", text="Run A", payload_json=json.dumps({}))
+            run_b = Node(thread_id=thread.id, type="Run", text="Run B", payload_json=json.dumps({}))
+            session.add(run_a)
+            session.add(run_b)
+            session.flush()
+
+            step_a = Node(thread_id=thread.id, type="Step", text="step a", payload_json=json.dumps({"run_id": run_a.id}))
+            step_b = Node(thread_id=thread.id, type="Step", text="step b", payload_json=json.dumps({"run_id": run_b.id}))
+            claim_a = Node(thread_id=thread.id, type="Decision", text="claim a", payload_json=json.dumps({"run_id": run_a.id, "claim": "Claim A"}))
+            artifact_a = Node(thread_id=thread.id, type="Artifact", text="artifact a", payload_json=json.dumps({"run_id": run_a.id}))
+            session.add(step_a)
+            session.add(step_b)
+            session.add(claim_a)
+            session.add(artifact_a)
+            session.flush()
+
+            session.add(Edge(thread_id=thread.id, from_id=run_a.id, to_id=step_a.id, type="HAS_STEP"))
+            session.add(Edge(thread_id=thread.id, from_id=run_b.id, to_id=step_b.id, type="HAS_STEP"))
+            session.add(Edge(thread_id=thread.id, from_id=artifact_a.id, to_id=claim_a.id, type="SUPPORTS"))
+
+            from app.models import MemorySurface, MemoryNode, MemoryProjection
+
+            session.add(MemorySurface(thread_id=thread.id, surface_id="working_memory", title="Working Memory", visibility_scope="shared", policy_json=json.dumps({})))
+            memory_node = MemoryNode(
+                thread_id=thread.id,
+                surface_id="working_memory",
+                node_type="context",
+                content_json=json.dumps({"summary": "run a memory"}),
+                provenance_json=json.dumps({"confidence": 0.9}),
+                status="published",
+                trust_tier="reported",
+                owner_role_id="builder",
+                created_run_id=run_a.id,
+            )
+            session.add(memory_node)
+            session.flush()
+            session.add(MemoryProjection(
+                thread_id=thread.id,
+                run_id=run_a.id,
+                role_id="builder",
+                summary_json=json.dumps({"visible_surface_ids": ["working_memory"], "blocked_surface_ids": [], "surface_reason_map": {}, "node_reason_map": {memory_node.id: "visible"}}),
+                visible_node_ids_json=json.dumps([memory_node.id]),
+                blocked_node_ids_json=json.dumps([]),
+            ))
+            session.commit()
+
+            bundle = build_run_studio_run_bundle(session, thread=thread, context_set_id=context_set.id, run_id=run_a.id)
+
+        self.assertEqual(bundle.get("run_id"), run_a.id)
+        self.assertEqual((bundle.get("trace_scope") or {}).get("run_node_id"), run_a.id)
+        self.assertEqual((bundle.get("evidence") or {}).get("run_id"), run_a.id)
+        self.assertEqual((bundle.get("memory_graph") or {}).get("run_id"), run_a.id)
+        self.assertEqual((bundle.get("memory_graph") or {}).get("projection_count"), 1)
+        self.assertIn(memory_node.id, ((bundle.get("memory_graph") or {}).get("projections") or [])[0].get("visible_node_ids", []))
+        self.assertNotIn(step_b.id, (bundle.get("trace_scope") or {}).get("node_ids", []))
 
 
 if __name__ == "__main__":

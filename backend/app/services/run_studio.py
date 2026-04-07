@@ -6,12 +6,13 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.models import ContextSet, Edge, Node, Thread
+from app.models import ContextSet, Edge, MemoryConflict, MemoryNode, MemoryProjection, Node, Thread
 from app.services.conversation_team import build_conversation_team_projection
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
 from app.services.graph_projections import build_logical_projections
 from app.services.resolved_runtime import resolve_runtime_projection, resolve_runtime_scope_state
+from app.services.runtime_scope import filter_nodes_for_run
 from app.services.runtime_snapshot import (
     created_sort_key as _created_sort_key,
     extract_runtime_team_snapshot as _extract_runtime_team_snapshot,
@@ -22,6 +23,8 @@ from app.services.run_skill_summary import (
     build_thread_context_pack_summary,
     build_thread_skill_usage_summary,
 )
+from app.services.memory_graph import summarize_memory_conflicts
+from app.services.runtime_scope import build_step_run_id_index
 
 
 CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary"}
@@ -324,6 +327,40 @@ def _context_decisions_summary(
     )
 
 
+
+
+def _scope_graph_for_run(
+    *,
+    nodes: list[Node],
+    edges: list[Edge],
+    run_id: str | None,
+) -> tuple[list[Node], list[Edge]]:
+    clean_run_id = str(run_id or "").strip()
+    if not clean_run_id:
+        return nodes, edges
+
+    scoped_nodes = filter_nodes_for_run(nodes, edges, run_id=clean_run_id)
+    scoped_ids = {str(getattr(node, "id", "") or "") for node in scoped_nodes if str(getattr(node, "id", "") or "")}
+    if not scoped_ids:
+        return [], []
+
+    relation_edge_types = EVIDENCE_EDGE_TYPES | CONFLICT_EDGE_TYPES
+    for edge in edges:
+        if edge.type not in relation_edge_types:
+            continue
+        if edge.from_id in scoped_ids and edge.to_id:
+            scoped_ids.add(edge.to_id)
+        if edge.to_id in scoped_ids and edge.from_id:
+            scoped_ids.add(edge.from_id)
+
+    filtered_nodes = [node for node in nodes if str(getattr(node, "id", "") or "") in scoped_ids]
+    filtered_edges = [
+        edge
+        for edge in edges
+        if str(getattr(edge, "from_id", "") or "") in scoped_ids and str(getattr(edge, "to_id", "") or "") in scoped_ids
+    ]
+    return filtered_nodes, filtered_edges
+
 def _evidence_summary(
     *,
     nodes: list[Node],
@@ -618,12 +655,600 @@ def build_run_studio_evidence(
     *,
     thread: Thread,
     context_set_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     context_set = _resolve_context_set(session, thread_id=thread.id, context_set_id=context_set_id)
     active_ids = _active_ids(context_set)
     nodes, edges = load_thread_graph(session, thread.id)
-    return _evidence_summary(nodes=nodes, edges=edges, active_ids=active_ids)
+    scoped_nodes, scoped_edges = _scope_graph_for_run(nodes=nodes, edges=edges, run_id=run_id)
+    active_scope = set(str(node_id).strip() for node_id in active_ids if str(node_id).strip())
+    if run_id:
+        scoped_node_ids = {str(getattr(node, 'id', '') or '') for node in scoped_nodes}
+        active_ids = [node_id for node_id in active_ids if node_id in scoped_node_ids]
+    summary = _evidence_summary(nodes=scoped_nodes, edges=scoped_edges, active_ids=active_ids)
+    summary['run_id'] = str(run_id or '').strip() or None
+    summary['scope'] = 'run' if str(run_id or '').strip() else 'thread'
+    summary['active_context_count'] = len(active_scope.intersection({str(getattr(node, 'id', '') or '') for node in scoped_nodes})) if run_id else len(active_ids)
+    return summary
 
+
+def build_run_studio_trace_scope(
+    session: Session,
+    *,
+    thread: Thread,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    nodes, edges = load_thread_graph(session, thread.id)
+    scoped_nodes, scoped_edges = _scope_graph_for_run(nodes=nodes, edges=edges, run_id=run_id)
+    clean_run_id = str(run_id or '').strip() or None
+    step_run_id_by_step_id = build_step_run_id_index(nodes, edges)
+
+    node_ids: list[str] = []
+    step_node_ids: list[str] = []
+    evidence_node_ids: list[str] = []
+    memory_node_ids: list[str] = []
+    run_node_id: str | None = None
+    anchor_node_id: str | None = None
+
+    for node in scoped_nodes:
+        node_id = str(getattr(node, 'id', '') or '').strip()
+        if not node_id:
+            continue
+        node_ids.append(node_id)
+        node_type = str(getattr(node, 'type', '') or '').strip()
+        payload = _node_payload(node)
+        payload_run_id = str(payload.get('run_id') or '').strip()
+        if node_type == 'Run' and (not clean_run_id or node_id == clean_run_id):
+            run_node_id = node_id
+        if node_type == 'Step':
+            node_run_id = step_run_id_by_step_id.get(node_id) or payload_run_id or None
+            if not clean_run_id or node_run_id == clean_run_id:
+                step_node_ids.append(node_id)
+        if node_type in CLAIM_NODE_TYPES or node_type in {'Evidence', 'Observation', 'Citation'}:
+            evidence_node_ids.append(node_id)
+        if payload.get('surface_id') is not None or payload.get('memory_surface_id') is not None or payload.get('memory_node_id') is not None:
+            memory_node_ids.append(node_id)
+
+    anchor_node_id = run_node_id or (step_node_ids[-1] if step_node_ids else (node_ids[0] if node_ids else None))
+
+    return {
+        'run_id': clean_run_id,
+        'scope': 'run' if clean_run_id else 'thread',
+        'node_ids': node_ids,
+        'edge_ids': [str(getattr(edge, 'id', '') or '') for edge in scoped_edges if str(getattr(edge, 'id', '') or '').strip()],
+        'node_count': len(node_ids),
+        'edge_count': len(scoped_edges),
+        'run_node_id': run_node_id,
+        'anchor_node_id': anchor_node_id,
+        'step_node_ids': step_node_ids,
+        'step_count': len(step_node_ids),
+        'evidence_node_ids': evidence_node_ids,
+        'evidence_node_count': len(evidence_node_ids),
+        'memory_node_ids': memory_node_ids,
+        'memory_node_count': len(memory_node_ids),
+    }
+
+
+
+
+
+
+def _clean_node_ids(values: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(values, list):
+        return out
+    for value in values:
+        clean = str(value or '').strip()
+        if not clean or clean in seen:
+            continue
+        out.append(clean)
+        seen.add(clean)
+    return out
+
+
+_XREF_TRUST_RANKS = {
+    'untrusted': -2,
+    'speculative': -1,
+    'derived': 0,
+    'inferred': 0,
+    'asserted': 1,
+    'reported': 1,
+    'verified': 2,
+    'source': 2,
+    'authoritative': 3,
+}
+
+
+def _xref_trust_rank(value: Any) -> int:
+    clean = str(value or '').strip().lower()
+    return _XREF_TRUST_RANKS.get(clean, 0)
+
+
+
+def _build_conflict_resolution_suggestion(
+    conflict_entry: dict[str, Any],
+    *,
+    memory_by_id: dict[str, dict[str, Any]],
+    claim_links_by_id: dict[str, dict[str, Any]],
+    anchor_node_id: str | None,
+) -> dict[str, Any] | None:
+    node_ids = _clean_node_ids(list(conflict_entry.get('node_ids') or []))
+    if not node_ids:
+        return None
+    candidates: list[dict[str, Any]] = []
+    for node_id in node_ids:
+        memory_entry = memory_by_id.get(node_id) or {}
+        trust_tier = str(memory_entry.get('trust_tier') or '').strip() or None
+        confidence = float(memory_entry.get('confidence') or 0.0)
+        visible_projection_count = int(memory_entry.get('visible_projection_count') or 0)
+        blocked_projection_count = int(memory_entry.get('blocked_projection_count') or 0)
+        status = str(memory_entry.get('status') or '').strip().lower() or None
+        status_bonus = 0.0
+        if status == 'published':
+            status_bonus = 1.0
+        elif status in {'conflicted', 'quarantined', 'superseded'}:
+            status_bonus = -1.0
+        score = (
+            (_xref_trust_rank(trust_tier) * 100.0)
+            + (confidence * 10.0)
+            + (visible_projection_count * 2.0)
+            - float(blocked_projection_count)
+            + status_bonus
+        )
+        candidates.append({
+            'node_id': node_id,
+            'score': score,
+            'trust_tier': trust_tier,
+            'confidence': confidence,
+            'visible_projection_count': visible_projection_count,
+            'blocked_projection_count': blocked_projection_count,
+            'status': status,
+            'content_preview': str(memory_entry.get('content_preview') or '').strip() or None,
+        })
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda item: (
+            float(item.get('score') or 0.0),
+            _xref_trust_rank(item.get('trust_tier')),
+            float(item.get('confidence') or 0.0),
+            int(item.get('visible_projection_count') or 0),
+            str(item.get('node_id') or ''),
+        ),
+        reverse=True,
+    )
+    winner = candidates[0]
+    losers = candidates[1:]
+    rationale_codes: list[str] = []
+    if losers:
+        best_loser = losers[0]
+        if _xref_trust_rank(winner.get('trust_tier')) > _xref_trust_rank(best_loser.get('trust_tier')):
+            rationale_codes.append('higher_trust_tier')
+        if float(winner.get('confidence') or 0.0) >= float(best_loser.get('confidence') or 0.0) + 0.05:
+            rationale_codes.append('higher_confidence')
+        if int(winner.get('visible_projection_count') or 0) > int(best_loser.get('visible_projection_count') or 0):
+            rationale_codes.append('broader_projection_visibility')
+    supporting_claim_ids = _clean_node_ids(list(conflict_entry.get('related_claim_node_ids') or []))
+    claim_entries = [claim_links_by_id[claim_id] for claim_id in supporting_claim_ids if claim_id in claim_links_by_id]
+    claim_entries.sort(key=lambda item: (float(item.get('score') or 0.0), str(item.get('claim_node_id') or '')), reverse=True)
+    if claim_entries:
+        rationale_codes.append('linked_claim_support')
+    top_claim = claim_entries[0] if claim_entries else None
+    supporting_evidence_node_ids = _clean_node_ids([
+        *(conflict_entry.get('supporting_evidence_node_ids') or []),
+        *[evidence_id for claim in claim_entries for evidence_id in (claim.get('related_evidence_node_ids') or [])],
+    ])
+    supporting_memory_node_ids = _clean_node_ids([
+        *(conflict_entry.get('supporting_memory_node_ids') or []),
+        *node_ids,
+    ])
+    if top_claim and top_claim.get('related_evidence_node_ids'):
+        rationale_codes.append('linked_evidence_nodes')
+    if anchor_node_id and winner.get('node_id') == anchor_node_id:
+        rationale_codes.append('trace_anchor_alignment')
+    rationale_codes = _clean_node_ids(rationale_codes)
+
+    summary_parts: list[str] = [f"Keep {winner['node_id']} as the winning memory node"]
+    if rationale_codes:
+        reason_fragments: list[str] = []
+        if 'higher_trust_tier' in rationale_codes:
+            reason_fragments.append('it has a stronger trust tier')
+        if 'higher_confidence' in rationale_codes:
+            reason_fragments.append('it carries higher confidence')
+        if 'broader_projection_visibility' in rationale_codes:
+            reason_fragments.append('it remains visible in more role-conditioned projections')
+        if 'linked_claim_support' in rationale_codes and top_claim:
+            claim_text = str(top_claim.get('claim_text') or '').strip()
+            if claim_text:
+                reason_fragments.append(f'it is better aligned with the linked claim “{_short_text(claim_text, 120)}”')
+            else:
+                reason_fragments.append('it is better aligned with the linked execution claim')
+        if 'linked_evidence_nodes' in rationale_codes:
+            reason_fragments.append('the linked claim is backed by evidence nodes in the same run')
+        if 'trace_anchor_alignment' in rationale_codes:
+            reason_fragments.append('it aligns with the focused trace anchor')
+        if reason_fragments:
+            summary_parts.append('because ' + '; '.join(reason_fragments))
+    summary = ' '.join(summary_parts).strip()
+
+    return {
+        'winning_node_id': winner.get('node_id'),
+        'losing_node_ids': [item.get('node_id') for item in losers if item.get('node_id')],
+        'summary': summary,
+        'rationale_codes': rationale_codes,
+        'supporting_claim_node_ids': supporting_claim_ids,
+        'supporting_evidence_node_ids': supporting_evidence_node_ids,
+        'supporting_memory_node_ids': supporting_memory_node_ids,
+        'top_claim_node_id': top_claim.get('claim_node_id') if top_claim else None,
+        'top_claim_text': str(top_claim.get('claim_text') or '').strip() or None if top_claim else None,
+    }
+
+
+
+def _build_run_bundle_cross_references(
+    *,
+    evidence: dict[str, Any] | None,
+    memory_graph: dict[str, Any] | None,
+    trace_scope: dict[str, Any] | None,
+) -> dict[str, Any]:
+    evidence_obj = evidence or {}
+    memory_obj = memory_graph or {}
+    trace_obj = trace_scope or {}
+    anchor_node_id = str(trace_obj.get('anchor_node_id') or '').strip() or None
+
+    memory_by_id: dict[str, dict[str, Any]] = {}
+    for projection in memory_obj.get('projections') or []:
+        projection_role_id = str(projection.get('role_id') or '').strip() or None
+        for blocked in (False, True):
+            for node in projection.get('blocked_nodes' if blocked else 'visible_nodes') or []:
+                node_id = str(node.get('node_id') or '').strip()
+                if not node_id:
+                    continue
+                entry = memory_by_id.setdefault(
+                    node_id,
+                    {
+                        'memory_node_id': node_id,
+                        'surface_id': str(node.get('surface_id') or '').strip() or None,
+                        'node_type': str(node.get('node_type') or '').strip() or None,
+                        'status': str(node.get('status') or '').strip() or None,
+                        'owner_role_id': str(node.get('owner_role_id') or '').strip() or None,
+                        'trust_tier': str(node.get('trust_tier') or '').strip() or None,
+                        'confidence': float(node.get('confidence') or 0.0),
+                        'content_preview': str(node.get('content_preview') or '').strip() or None,
+                        'provenance_fingerprint': str(node.get('provenance_fingerprint') or '').strip() or None,
+                        'projection_role_ids': [],
+                        'visible_projection_count': 0,
+                        'blocked_projection_count': 0,
+                        'related_claim_node_ids': [],
+                        'related_conflict_ids': [],
+                        'trace_anchor_related': False,
+                    },
+                )
+                if projection_role_id and projection_role_id not in entry['projection_role_ids']:
+                    entry['projection_role_ids'].append(projection_role_id)
+                if blocked:
+                    entry['blocked_projection_count'] += 1
+                else:
+                    entry['visible_projection_count'] += 1
+                if anchor_node_id and node_id == anchor_node_id:
+                    entry['trace_anchor_related'] = True
+
+    conflict_by_id: dict[str, dict[str, Any]] = {}
+    node_to_conflict_ids: dict[str, set[str]] = {}
+    for conflict in memory_obj.get('conflicts') or []:
+        conflict_id = str(conflict.get('id') or '').strip()
+        if not conflict_id:
+            continue
+        node_ids = _clean_node_ids([
+            conflict.get('left_node_id'),
+            conflict.get('right_node_id'),
+            conflict.get('winning_node_id'),
+            *list(conflict.get('losing_node_ids') or []),
+        ])
+        entry = {
+            'conflict_id': conflict_id,
+            'surface_id': str(conflict.get('surface_id') or '').strip() or None,
+            'status': str(conflict.get('status') or '').strip() or None,
+            'reason': str(conflict.get('reason') or '').strip() or None,
+            'node_ids': node_ids,
+            'winning_node_id': str(conflict.get('winning_node_id') or '').strip() or None,
+            'losing_node_ids': _clean_node_ids(list(conflict.get('losing_node_ids') or [])),
+            'resolution_summary': str(conflict.get('resolution_summary') or '').strip() or None,
+            'resolution_rationale_codes': _clean_node_ids(list(conflict.get('resolution_rationale_codes') or [])),
+            'supporting_claim_node_ids': _clean_node_ids(list(conflict.get('supporting_claim_node_ids') or [])),
+            'supporting_evidence_node_ids': _clean_node_ids(list(conflict.get('supporting_evidence_node_ids') or [])),
+            'supporting_memory_node_ids': _clean_node_ids(list(conflict.get('supporting_memory_node_ids') or [])),
+            'history': [item for item in (conflict.get('history') or []) if isinstance(item, dict)],
+            'history_count': int(conflict.get('history_count') or len(conflict.get('history') or [])),
+            'latest_history_event': conflict.get('latest_history_event') if isinstance(conflict.get('latest_history_event'), dict) else None,
+            'merge_history': [item for item in (conflict.get('merge_history') or []) if isinstance(item, dict)],
+            'merge_history_count': int(conflict.get('merge_history_count') or len(conflict.get('merge_history') or [])),
+            'latest_merge_event': conflict.get('latest_merge_event') if isinstance(conflict.get('latest_merge_event'), dict) else None,
+            'related_claim_node_ids': [],
+            'related_memory_node_ids': [node_id for node_id in node_ids if node_id in memory_by_id],
+            'trace_anchor_related': bool(anchor_node_id and anchor_node_id in node_ids),
+        }
+        conflict_by_id[conflict_id] = entry
+        for node_id in node_ids:
+            node_to_conflict_ids.setdefault(node_id, set()).add(conflict_id)
+
+    memory_to_claim_ids: dict[str, set[str]] = {node_id: set() for node_id in memory_by_id}
+    conflict_to_claim_ids: dict[str, set[str]] = {conflict_id: set() for conflict_id in conflict_by_id}
+    claim_links: list[dict[str, Any]] = []
+    claim_links_by_id: dict[str, dict[str, Any]] = {}
+    for item in evidence_obj.get('items') or []:
+        claim_node_id = str(item.get('claim_node_id') or '').strip()
+        if not claim_node_id:
+            continue
+        related_ids = _clean_node_ids([
+            claim_node_id,
+            *list(item.get('related_node_ids') or []),
+            *[row.get('id') for row in (item.get('evidence_nodes') or []) if isinstance(row, dict)],
+            *list(item.get('conflict_node_ids') or []),
+        ])
+        linked_memory_ids = sorted({node_id for node_id in related_ids if node_id in memory_by_id})
+        linked_conflict_ids = sorted({
+            conflict_id
+            for node_id in related_ids
+            for conflict_id in node_to_conflict_ids.get(node_id, set())
+            if conflict_id in conflict_by_id
+        })
+        for memory_node_id in linked_memory_ids:
+            memory_to_claim_ids.setdefault(memory_node_id, set()).add(claim_node_id)
+        for conflict_id in linked_conflict_ids:
+            conflict_to_claim_ids.setdefault(conflict_id, set()).add(claim_node_id)
+        entry = {
+            'claim_node_id': claim_node_id,
+            'claim_node_type': str(item.get('claim_node_type') or '').strip() or None,
+            'claim_text': str(item.get('claim_text') or '').strip() or None,
+            'related_memory_node_ids': linked_memory_ids,
+            'related_conflict_ids': linked_conflict_ids,
+            'related_evidence_node_ids': _clean_node_ids([row.get('id') for row in (item.get('evidence_nodes') or []) if isinstance(row, dict)]),
+            'compare_node_ids': _clean_node_ids([
+                claim_node_id,
+                *linked_memory_ids,
+                *[node_id for conflict_id in linked_conflict_ids for node_id in conflict_by_id.get(conflict_id, {}).get('node_ids', [])],
+                *[row.get('id') for row in (item.get('evidence_nodes') or []) if isinstance(row, dict)],
+            ]),
+            'trace_anchor_related': bool(anchor_node_id and anchor_node_id in related_ids),
+            'selected_in_context': bool(item.get('selected_in_context')),
+            'pinned': bool(item.get('pinned')),
+            'score': item.get('score'),
+        }
+        claim_links.append(entry)
+        claim_links_by_id[claim_node_id] = entry
+
+    for memory_node_id, claim_ids in memory_to_claim_ids.items():
+        entry = memory_by_id.get(memory_node_id)
+        if not entry:
+            continue
+        entry['related_claim_node_ids'] = sorted(claim_ids)
+        entry['related_conflict_ids'] = sorted(node_to_conflict_ids.get(memory_node_id, set()))
+        if anchor_node_id and memory_node_id == anchor_node_id:
+            entry['trace_anchor_related'] = True
+
+    for conflict_id, claim_ids in conflict_to_claim_ids.items():
+        entry = conflict_by_id.get(conflict_id)
+        if not entry:
+            continue
+        entry['related_claim_node_ids'] = sorted(claim_ids)
+        entry['supporting_claim_node_ids'] = _clean_node_ids([
+            *(entry.get('supporting_claim_node_ids') or []),
+            *sorted(claim_ids),
+        ])
+        linked_claim_entries = [claim_links_by_id[claim_id] for claim_id in entry['related_claim_node_ids'] if claim_id in claim_links_by_id]
+        entry['supporting_evidence_node_ids'] = _clean_node_ids([
+            *(entry.get('supporting_evidence_node_ids') or []),
+            *[evidence_id for claim in linked_claim_entries for evidence_id in (claim.get('related_evidence_node_ids') or [])],
+        ])
+        entry['supporting_memory_node_ids'] = _clean_node_ids([
+            *(entry.get('supporting_memory_node_ids') or []),
+            *(entry.get('related_memory_node_ids') or []),
+        ])
+        entry['suggested_resolution'] = _build_conflict_resolution_suggestion(
+            entry,
+            memory_by_id=memory_by_id,
+            claim_links_by_id=claim_links_by_id,
+            anchor_node_id=anchor_node_id,
+        )
+        if anchor_node_id and anchor_node_id in entry.get('node_ids', []):
+            entry['trace_anchor_related'] = True
+
+    claim_links.sort(key=lambda item: (
+        len(item.get('related_memory_node_ids') or []),
+        len(item.get('related_conflict_ids') or []),
+        float(item.get('score') or 0),
+        str(item.get('claim_node_id') or ''),
+    ), reverse=True)
+    memory_links = sorted(
+        memory_by_id.values(),
+        key=lambda item: (
+            len(item.get('related_claim_node_ids') or []),
+            len(item.get('related_conflict_ids') or []),
+            int(item.get('visible_projection_count') or 0),
+            str(item.get('memory_node_id') or ''),
+        ),
+        reverse=True,
+    )
+    conflict_links = sorted(
+        conflict_by_id.values(),
+        key=lambda item: (
+            len(item.get('related_claim_node_ids') or []),
+            len(item.get('related_memory_node_ids') or []),
+            int(bool(item.get('resolution_summary'))),
+            str(item.get('conflict_id') or ''),
+        ),
+        reverse=True,
+    )
+
+    return {
+        'run_id': str(evidence_obj.get('run_id') or memory_obj.get('run_id') or trace_obj.get('run_id') or '').strip() or None,
+        'scope': str(evidence_obj.get('scope') or memory_obj.get('scope') or trace_obj.get('scope') or 'thread').strip() or 'thread',
+        'anchor_node_id': anchor_node_id,
+        'claim_links': claim_links[:24],
+        'memory_links': memory_links[:24],
+        'conflict_links': conflict_links[:24],
+        'counts': {
+            'claim_links': len(claim_links),
+            'memory_links': len(memory_links),
+            'conflict_links': len(conflict_links),
+            'claims_with_memory_links': sum(1 for item in claim_links if item.get('related_memory_node_ids')),
+            'claims_with_conflicts': sum(1 for item in claim_links if item.get('related_conflict_ids')),
+            'memory_nodes_with_claims': sum(1 for item in memory_links if item.get('related_claim_node_ids')),
+            'conflicts_with_claims': sum(1 for item in conflict_links if item.get('related_claim_node_ids')),
+            'conflicts_with_resolution_rationale': sum(1 for item in conflict_links if item.get('resolution_summary')),
+            'conflicts_with_suggested_resolution': sum(1 for item in conflict_links if item.get('suggested_resolution')),
+            'conflicts_with_history': sum(1 for item in conflict_links if int(item.get('history_count') or 0) > 0),
+            'conflicts_with_merge_history': sum(1 for item in conflict_links if int(item.get('merge_history_count') or 0) > 0),
+            'conflict_history_events': sum(int(item.get('history_count') or 0) for item in conflict_links),
+        },
+        'anchor_related': {
+            'claim_node_ids': [item['claim_node_id'] for item in claim_links if item.get('trace_anchor_related')],
+            'memory_node_ids': [item['memory_node_id'] for item in memory_links if item.get('trace_anchor_related')],
+            'conflict_ids': [item['conflict_id'] for item in conflict_links if item.get('trace_anchor_related')],
+        },
+    }
+
+def build_run_studio_memory_graph(
+    session: Session,
+    *,
+    thread: Thread,
+    run_id: str | None = None,
+    projection_limit: int = 12,
+    conflict_limit: int = 30,
+) -> dict[str, Any]:
+    clean_run_id = str(run_id or '').strip() or None
+    clean_projection_limit = max(1, min(int(projection_limit or 12), 50))
+    clean_conflict_limit = max(1, min(int(conflict_limit or 30), 100))
+
+    statement = select(MemoryProjection).where(MemoryProjection.thread_id == thread.id)
+    if clean_run_id:
+        statement = statement.where(MemoryProjection.run_id == clean_run_id)
+    rows = session.exec(statement.order_by(MemoryProjection.created_at.desc()).limit(clean_projection_limit)).all()
+    node_map = {row.id: row for row in session.exec(select(MemoryNode).where(MemoryNode.thread_id == thread.id)).all()}
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        summary = _jload(row.summary_json, {})
+        visible_node_ids = _jload(row.visible_node_ids_json, [])
+        blocked_node_ids = _jload(row.blocked_node_ids_json, [])
+        surface_reason_map = summary.get('surface_reason_map') or {}
+        node_reason_map = summary.get('node_reason_map') or {}
+
+        def _node_detail(node_id: str, *, blocked: bool = False) -> dict[str, Any]:
+            node = node_map.get(node_id)
+            if not node:
+                return {'node_id': node_id, 'blocked_reason': 'missing'} if blocked else {'node_id': node_id}
+            content = _jload(node.content_json, {})
+            provenance = _jload(node.provenance_json, {})
+            preview = ''
+            if isinstance(content, dict):
+                for key in ('claim', 'value', 'text', 'summary', 'decision', 'answer', 'note'):
+                    value = str(content.get(key) or '').strip()
+                    if value:
+                        preview = value[:160]
+                        break
+                if not preview:
+                    preview = json.dumps(content, ensure_ascii=False, sort_keys=True)[:160]
+            else:
+                preview = str(content or '')[:160]
+            detail = {
+                'node_id': node.id,
+                'surface_id': node.surface_id,
+                'node_type': node.node_type,
+                'status': node.status,
+                'trust_tier': node.trust_tier,
+                'confidence': provenance.get('confidence') or provenance.get('confidence_score') or (content.get('confidence') if isinstance(content, dict) else 0) or (content.get('confidence_score') if isinstance(content, dict) else 0) or 0,
+                'owner_agent_id': node.owner_agent_id,
+                'owner_role_id': node.owner_role_id,
+                'created_run_id': node.created_run_id,
+                'content_preview': preview,
+                'provenance_fingerprint': (provenance.get('source_id') or provenance.get('document_id') or provenance.get('url') or provenance.get('entity') or provenance.get('topic')),
+            }
+            if blocked:
+                detail['blocked_reason'] = node_reason_map.get(node.id) or surface_reason_map.get(node.surface_id) or 'surface_not_visible'
+            else:
+                detail['visibility_reason'] = node_reason_map.get(node.id) or 'visible'
+            return detail
+
+        items.append({
+            'projection_id': row.id,
+            'run_id': row.run_id,
+            'agent_id': row.agent_id,
+            'role_id': row.role_id,
+            'summary': summary,
+            'visible_surface_ids': summary.get('visible_surface_ids') or [],
+            'blocked_surface_ids': summary.get('blocked_surface_ids') or [],
+            'visible_node_ids': visible_node_ids,
+            'blocked_node_ids': blocked_node_ids,
+            'visible_nodes': [_node_detail(node_id) for node_id in visible_node_ids],
+            'blocked_nodes': [_node_detail(node_id, blocked=True) for node_id in blocked_node_ids],
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+        })
+
+    conflict_statement = select(MemoryConflict).where(MemoryConflict.thread_id == thread.id)
+    conflict_rows = session.exec(conflict_statement.order_by(MemoryConflict.updated_at.desc()).limit(clean_conflict_limit)).all()
+    if clean_run_id:
+        allowed_node_ids = {row.id for row in node_map.values() if str(getattr(row, 'created_run_id', '') or '').strip() == clean_run_id}
+        conflict_rows = [
+            row for row in conflict_rows
+            if row.left_node_id in allowed_node_ids or row.right_node_id in allowed_node_ids
+        ]
+    conflict_summary = summarize_memory_conflicts([
+        {
+            'id': row.id,
+            'surface_id': row.surface_id,
+            'left_node_id': row.left_node_id,
+            'right_node_id': row.right_node_id,
+            'status': row.status,
+            'reason': row.reason,
+            'resolution_json': _jload(row.resolution_json, {}),
+        }
+        for row in conflict_rows
+    ])
+    return {
+        'run_id': clean_run_id,
+        'scope': 'run' if clean_run_id else 'thread',
+        'projections': items,
+        'projection_count': len(items),
+        'conflicts': conflict_summary.get('items') or [],
+        'conflict_count': conflict_summary.get('count') or 0,
+        'conflict_status_counts': conflict_summary.get('status_counts') or {},
+        'conflict_reason_counts': conflict_summary.get('reason_counts') or {},
+    }
+
+
+def build_run_studio_run_bundle(
+    session: Session,
+    *,
+    thread: Thread,
+    context_set_id: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    clean_run_id = str(run_id or '').strip() or None
+    context_set = _resolve_context_set(session, thread_id=thread.id, context_set_id=context_set_id)
+    evidence = build_run_studio_evidence(session, thread=thread, context_set_id=getattr(context_set, 'id', None), run_id=clean_run_id)
+    context_packs = build_run_studio_context_packs(session, thread=thread, run_id=clean_run_id)
+    skill_usage = build_run_studio_skill_usage(session, thread=thread, run_id=clean_run_id)
+    memory_graph = build_run_studio_memory_graph(session, thread=thread, run_id=clean_run_id)
+    trace_scope = build_run_studio_trace_scope(session, thread=thread, run_id=clean_run_id)
+    cross_references = _build_run_bundle_cross_references(
+        evidence=evidence,
+        memory_graph=memory_graph,
+        trace_scope=trace_scope,
+    )
+    return {
+        'run_id': clean_run_id,
+        'scope': 'run' if clean_run_id else 'thread',
+        'context_set_id': getattr(context_set, 'id', None),
+        'evidence': evidence,
+        'context_packs': context_packs,
+        'skill_usage': skill_usage,
+        'memory_graph': memory_graph,
+        'trace_scope': trace_scope,
+        'cross_references': cross_references,
+    }
 
 def build_run_studio_context_packs(
     session: Session,

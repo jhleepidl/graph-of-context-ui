@@ -29,6 +29,7 @@ export default function ContextPackPanel({
     authority?.fallback_reason || effectiveContextPacks?.fallback_reason || summary?.fallback_reason || '',
   ).trim()
 
+  const scopedRunId = String(effectiveContextPacks?.run_id || '').trim()
   const sharedCount = items.reduce((acc, item) => acc + Number(item.shared_items_count || 0), 0)
   const roleSpecificCount = items.reduce((acc, item) => acc + Number(item.role_specific_items_count || 0), 0)
   const skillScopedCount = items.reduce(
@@ -49,6 +50,7 @@ export default function ContextPackPanel({
           <span className="pill">shared: {sharedCount}</span>
           <span className="pill">role-specific: {roleSpecificCount}</span>
           <span className="pill">skill-scoped: {skillScopedCount}</span>
+          {scopedRunId && <span className="pill">run: {scopedRunId}</span>}
           {onLoadDetail && (
             <button className="tiny" onClick={onLoadDetail} disabled={Boolean(detailLoading)}>
               {detailLoading ? 'Loading...' : (detailLoaded ? 'Refresh detail' : 'Load detail')}

@@ -20,6 +20,9 @@ import MissingContextPanel from './MissingContextPanel'
 import SkillUsagePanel from './SkillUsagePanel'
 import AdvancedToolsPanel from './AdvancedToolsPanel'
 import MemoryProjectionPanel from './MemoryProjectionPanel'
+import TeamRecommendationPanel from './TeamRecommendationPanel'
+import SelectionOutcomePanel from './SelectionOutcomePanel'
+import CrossReferencePanel from './CrossReferencePanel'
 import {
   type RunStudioAgentTeam,
   type RunStudioContextPacks,
@@ -28,6 +31,10 @@ import {
   type RunStudioSkillUsage,
   type RunStudioSummary,
   type RunStudioMemoryGraph,
+  type RunStudioTraceScope,
+  type RunStudioCrossReferences,
+  type TeamSelectionDataset,
+  type TeamSelectionDatasetRow,
 } from './types'
 import {
   selectEffectiveAgentTeam,
@@ -49,6 +56,8 @@ type DetailState = {
   contextPacks?: boolean
   skillUsage?: boolean
   memoryGraph?: boolean
+  traceScope?: boolean
+  teamSelection?: boolean
 }
 
 type Props = {
@@ -59,6 +68,9 @@ type Props = {
   contextPacks: RunStudioContextPacks | null
   skillUsage: RunStudioSkillUsage | null
   memoryGraph: RunStudioMemoryGraph | null
+  traceScope: RunStudioTraceScope | null
+  crossReferences: RunStudioCrossReferences | null
+  teamSelection: TeamSelectionDataset | null
   detailLoaded?: DetailState
   detailLoading?: DetailState
   loading: boolean
@@ -70,8 +82,16 @@ type Props = {
   onLoadContextPacks?: () => void
   onLoadSkillUsage?: () => void
   onLoadMemoryGraph?: () => void
+  onLoadTraceScope?: () => void
+  onLoadTeamSelection?: () => void
+  onInspectTeamSelectionEvent?: (row: TeamSelectionDatasetRow) => void
+  onClearRunDrilldown?: () => void
+  focusedRunId?: string | null
+  focusedEventId?: string | null
+  focusedEventLabel?: string | null
   onOpenGraph: () => void
   onOpenRawTrace: () => void
+  onOpenRawTraceNode?: (nodeId: string) => void
   onOpenAdvanced: () => void
   onFocusNode?: (nodeId: string) => void
   onOpenNode?: (nodeId: string) => void
@@ -89,6 +109,9 @@ export default function RunStudioLayout({
   contextPacks,
   skillUsage,
   memoryGraph,
+  traceScope,
+  crossReferences,
+  teamSelection,
   detailLoaded,
   detailLoading,
   loading,
@@ -100,8 +123,16 @@ export default function RunStudioLayout({
   onLoadContextPacks,
   onLoadSkillUsage,
   onLoadMemoryGraph,
+  onLoadTraceScope,
+  onLoadTeamSelection,
+  onInspectTeamSelectionEvent,
+  onClearRunDrilldown,
+  focusedRunId,
+  focusedEventId,
+  focusedEventLabel,
   onOpenGraph,
   onOpenRawTrace,
+  onOpenRawTraceNode,
   onOpenAdvanced,
   onFocusNode,
   onOpenNode,
@@ -203,6 +234,78 @@ export default function RunStudioLayout({
       </div>
 
       <WhyThisTeamPanel teamView={teamView} whyThisTeam={whyThisTeam} />
+
+      <TeamRecommendationPanel
+        teamSelection={teamSelection}
+        onLoadDetail={onLoadTeamSelection}
+        detailLoading={Boolean(detailLoading?.teamSelection)}
+        detailLoaded={Boolean(detailLoaded?.teamSelection)}
+      />
+
+      <SelectionOutcomePanel
+        teamSelection={teamSelection}
+        onInspectEvent={(row) => onInspectTeamSelectionEvent?.(row)}
+        onClearInspect={onClearRunDrilldown}
+        inspectedRunId={focusedRunId}
+        inspectedEventId={focusedEventId}
+      />
+
+      {focusedRunId && (
+        <section className="card runStudioPanel">
+          <div className="runStudioPanelHeader">
+            <div>
+              <h3>Focused Drill-down</h3>
+              <div className="muted">Inspecting run-scoped evidence, context packs, skill usage, memory projection, and graph trace from a team-selection event.</div>
+            </div>
+            <div className="row">
+              {traceScope?.node_ids && traceScope.node_ids.length > 0 && onFocusTrace && (
+                <button onClick={() => onFocusTrace(traceScope.node_ids || [])}>Focus trace in Graph</button>
+              )}
+              {traceScope?.node_ids && traceScope.node_ids.length > 0 && onOpenTrace && (
+                <button onClick={() => onOpenTrace(traceScope.node_ids || [])}>Open trace detail</button>
+              )}
+              {traceScope?.anchor_node_id && onOpenRawTraceNode && (
+                <button onClick={() => onOpenRawTraceNode(traceScope.anchor_node_id || '')}>Open in Raw Trace</button>
+              )}
+              {!onOpenRawTraceNode && traceScope?.anchor_node_id && (
+                <button onClick={onOpenRawTrace}>Open Raw Trace</button>
+              )}
+              {onClearRunDrilldown && (
+                <button onClick={onClearRunDrilldown}>Clear focus</button>
+              )}
+            </div>
+          </div>
+          <div className="runStudioMetaRow">
+            <span className="pill">run: {focusedRunId}</span>
+            {focusedEventId && <span className="pill">event: {focusedEventId}</span>}
+            {focusedEventLabel && <span className="pill">label: {focusedEventLabel}</span>}
+            {typeof traceScope?.node_count === 'number' && <span className="pill">trace nodes: {traceScope.node_count}</span>}
+            {typeof traceScope?.edge_count === 'number' && <span className="pill">trace edges: {traceScope.edge_count}</span>}
+            {typeof traceScope?.step_count === 'number' && <span className="pill">steps: {traceScope.step_count}</span>}
+            {typeof traceScope?.memory_node_count === 'number' && <span className="pill">memory nodes: {traceScope.memory_node_count}</span>}
+            {typeof traceScope?.evidence_node_count === 'number' && <span className="pill">evidence nodes: {traceScope.evidence_node_count}</span>}
+          </div>
+          {traceScope?.anchor_node_id && (
+            <div className="muted" style={{ marginTop: 8 }}>anchor node: {traceScope.anchor_node_id}</div>
+          )}
+          {!traceScope?.node_ids?.length && onLoadTraceScope && (
+            <div className="row" style={{ marginTop: 8 }}>
+              <button onClick={onLoadTraceScope}>Load trace scope</button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {focusedRunId && (
+        <CrossReferencePanel
+          crossReferences={crossReferences}
+          onFocusNode={onFocusNode}
+          onOpenNode={onOpenNode}
+          onFocusTrace={onFocusTrace}
+          onOpenTrace={onOpenTrace}
+          onRefresh={onRefresh}
+        />
+      )}
 
       <div className="runStudioGrid runStudioGrid--bottom">
         <ScopeGrantPanel

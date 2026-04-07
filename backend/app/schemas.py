@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field
+from sqlmodel import SQLModel
 
 
 class ThreadCreate(BaseModel):
@@ -477,6 +478,13 @@ class MemoryConflictResolveRequest(SQLModel):
     winning_node_id: str | None = None
     losing_node_ids: list[str] | None = None
     summary: str | None = None
+    rationale_codes: list[str] | None = None
+    supporting_claim_node_ids: list[str] | None = None
+    supporting_evidence_node_ids: list[str] | None = None
+    supporting_memory_node_ids: list[str] | None = None
+    resolved_by: str | None = None
+    resolution_source: str | None = None
+    merge_note: str | None = None
 
 class TeamRecommendationRequest(SQLModel):
     task_text: str

@@ -25,6 +25,7 @@ export default function SkillUsagePanel({
     authority?.skill_catalog_source || effectiveSkillUsage?.skill_catalog_source || summary?.skill_catalog_source || 'local',
   )
   const degradedMode = Boolean(authority?.degraded_mode ?? effectiveSkillUsage?.degraded_mode ?? summary?.degraded_mode)
+  const scopedRunId = String(effectiveSkillUsage?.run_id || summary?.current_run_skills?.run_id || '').trim()
   const fallbackReason = String(
     authority?.fallback_reason || effectiveSkillUsage?.fallback_reason || summary?.fallback_reason || '',
   ).trim()
@@ -38,7 +39,7 @@ export default function SkillUsagePanel({
           <span className="pill">skills: {skillSource}</span>
           {degradedMode && <span className="pill">degraded fallback</span>}
           <span className="pill">events: {items.length}</span>
-          <span className="pill">run: {summary?.current_run_skills?.run_id ? String(summary.current_run_skills.run_id).slice(0, 8) : '-'}</span>
+          <span className="pill">run: {scopedRunId ? scopedRunId.slice(0, 12) : '-'}</span>
           {onLoadDetail && (
             <button className="tiny" onClick={onLoadDetail} disabled={Boolean(detailLoading)}>
               {detailLoading ? 'Loading...' : (detailLoaded ? 'Refresh detail' : 'Load detail')}

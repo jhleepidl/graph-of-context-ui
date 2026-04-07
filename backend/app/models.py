@@ -234,6 +234,9 @@ class ConversationTeamConfigRevision(SQLModel, table=True):
 
 class MemorySurface(SQLModel, table=True):
     __tablename__ = "memory_surfaces"
+    __table_args__ = (UniqueConstraint("thread_id", "surface_id", name="uq_memory_surfaces_thread_surface"),)
+
+    __tablename__ = "memory_surfaces"
 
     id: str = Field(default_factory=new_id, primary_key=True)
     thread_id: str = Field(index=True)
@@ -281,6 +284,7 @@ class MemoryProjection(SQLModel, table=True):
 
 class MemoryConflict(SQLModel, table=True):
     __tablename__ = "memory_conflicts"
+    __table_args__ = (UniqueConstraint("thread_id", "surface_id", "left_node_id", "right_node_id", name="uq_memory_conflicts_pair"),)
 
     id: str = Field(default_factory=new_id, primary_key=True)
     thread_id: str = Field(index=True)

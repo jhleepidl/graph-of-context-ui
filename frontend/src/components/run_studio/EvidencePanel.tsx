@@ -22,6 +22,8 @@ export default function EvidencePanel({
 }: Props) {
   const items = evidence?.items || []
   const counts = evidence?.counts || {}
+  const scope = String(evidence?.scope || 'thread').trim()
+  const runId = String(evidence?.run_id || '').trim()
 
   return (
     <section className="card runStudioPanel">
@@ -32,6 +34,8 @@ export default function EvidencePanel({
           <span className="pill">supported: {counts.supported ?? 0}</span>
           <span className="pill">uncertain: {counts.with_uncertainty ?? 0}</span>
           <span className="pill">conflicts: {counts.with_conflicts ?? 0}</span>
+          <span className="pill">scope: {scope}</span>
+          {runId && <span className="pill">run: {runId}</span>}
         </div>
       </div>
 

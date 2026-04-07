@@ -566,12 +566,23 @@ export const api = {
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/context_decisions${suffix}`))
   },
-  runStudioEvidence: (threadId: string, contextSetId?: string | null) => {
+  runStudioEvidence: (threadId: string, contextSetId?: string | null, runId?: string | null) => {
     const q = new URLSearchParams()
-    const clean = (contextSetId || '').trim()
-    if (clean) q.set('context_set_id', clean)
+    const cleanContextSetId = (contextSetId || '').trim()
+    const cleanRunId = (runId || '').trim()
+    if (cleanContextSetId) q.set('context_set_id', cleanContextSetId)
+    if (cleanRunId) q.set('run_id', cleanRunId)
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/evidence${suffix}`))
+  },
+  runStudioRunBundle: (threadId: string, contextSetId?: string | null, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanContextSetId = (contextSetId || '').trim()
+    const cleanRunId = (runId || '').trim()
+    if (cleanContextSetId) q.set('context_set_id', cleanContextSetId)
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/run_bundle${suffix}`))
   },
   runStudioContextPacks: (threadId: string, runId?: string | null) => {
     const q = new URLSearchParams()
@@ -579,6 +590,13 @@ export const api = {
     if (cleanRunId) q.set('run_id', cleanRunId)
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/context_packs${suffix}`))
+  },
+  runStudioTraceScope: (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/trace_scope${suffix}`))
   },
   runStudioMemoryGraph: async (threadId: string, runId?: string | null) => {
     const q = new URLSearchParams()
@@ -598,7 +616,7 @@ export const api = {
       conflict_reason_counts: conflicts?.reason_counts || {},
     }
   },
-  resolveMemoryConflict: (conflictId: string, body: { status?: string | null; winning_node_id?: string | null; losing_node_ids?: string[] | null; summary?: string | null }) =>
+  resolveMemoryConflict: (conflictId: string, body: { status?: string | null; winning_node_id?: string | null; losing_node_ids?: string[] | null; summary?: string | null; rationale_codes?: string[] | null; supporting_claim_node_ids?: string[] | null; supporting_evidence_node_ids?: string[] | null; supporting_memory_node_ids?: string[] | null; resolved_by?: string | null; resolution_source?: string | null; merge_note?: string | null }) =>
     j<any>(apiFetch(`/api/memory/conflicts/${conflictId}/resolve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

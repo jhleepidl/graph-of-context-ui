@@ -290,6 +290,120 @@ export type ScopeProjection = {
 
 
 
+
+export type TeamSelectionCandidateFeature = {
+  template_id?: string | null
+  title?: string | null
+  task_archetype?: string | null
+  score?: number | null
+  semantic_score?: number | null
+  topology_pattern?: string | null
+  participant_count?: number | null
+  edge_count?: number | null
+  surface_count?: number | null
+  shared_surface_count?: number | null
+  final_answer_surface_ready?: boolean | null
+  append_only_surface_count?: number | null
+  member_count?: number | null
+  role_ids?: string[]
+  ready?: boolean | null
+  runtime_bound?: boolean | null
+  admission_status?: string | null
+  blocking_reason_codes?: string[]
+  degrade_reason_codes?: string[]
+  feature_score_breakdown?: Record<string, number>
+  rationale?: string[]
+}
+
+export type TeamSelectionDatasetRow = {
+  event_id?: string | null
+  thread_id?: string | null
+  run_id?: string | null
+  task_text?: string | null
+  task_archetype?: string | null
+  selected_blueprint_id?: string | null
+  selected_candidate_found?: boolean
+  selected_candidate_source?: string | null
+  selected_candidate_rank?: number | null
+  recommendation_alignment?: string | null
+  candidate_count?: number
+  training_eligible?: boolean
+  exclusion_reasons?: string[]
+  selected_score?: number | null
+  selected_topology_pattern?: string | null
+  selected_memory_surface_count?: number | null
+  selected_final_answer_surface_ready?: boolean | null
+  selected_member_count?: number | null
+  selected_role_ids?: string[]
+  selected_ready?: boolean | null
+  selected_runtime_bound?: boolean | null
+  selected_blocking_reason_codes?: string[]
+  selected_degrade_reason_codes?: string[]
+  candidate_features?: TeamSelectionCandidateFeature[]
+  recommended_candidates?: TeamSelectionCandidateFeature[]
+  top_recommended_candidate?: TeamSelectionCandidateFeature | null
+  recommendation_gap?: number | null
+  input_features?: Record<string, unknown>
+  selected_features?: TeamSelectionCandidateFeature | null
+  outcome_labels?: {
+    success?: boolean
+    quality_score?: number | null
+    artifact_quality?: number | null
+    token_cost?: number | null
+    latency_ms?: number | null
+    human_override?: boolean
+    human_override_reason?: string | null
+    recovery_count?: number | null
+    approval_friction?: number | null
+    memory_fit_failure?: boolean
+  } | null
+  success?: boolean
+  quality_score?: number | null
+  artifact_quality?: number | null
+  token_cost?: number | null
+  latency_ms?: number | null
+  human_override?: boolean
+  human_override_reason?: string | null
+  recovery_count?: number | null
+  approval_friction?: number | null
+  memory_fit_failure?: boolean
+  created_at?: string | null
+}
+
+export type TeamSelectionOutcomeSample = {
+  event_id?: string | null
+  run_id?: string | null
+  created_at?: string | null
+  selected_blueprint_id?: string | null
+  recommendation_alignment?: string | null
+  success?: boolean
+  artifact_quality?: number | null
+  recommendation_gap?: number | null
+  training_eligible?: boolean
+  exclusion_reasons?: string[]
+}
+
+export type TeamSelectionDataset = {
+  kind?: string | null
+  schema_version?: number | null
+  count?: number
+  eligible_count?: number
+  excluded_count?: number
+  archetype_counts?: Record<string, number>
+  success_counts?: Record<string, number>
+  exclusion_reason_counts?: Record<string, number>
+  selection_outcome_summary?: {
+    alignment_counts?: Record<string, number>
+    success_rate_by_alignment?: Record<string, number>
+    average_artifact_quality_by_alignment?: Record<string, number>
+    average_recommendation_gap_by_alignment?: Record<string, number | null>
+    human_override_count?: number
+    memory_fit_failure_count?: number
+    alignment_event_samples?: Record<string, TeamSelectionOutcomeSample[]>
+  } | null
+  rows?: TeamSelectionDatasetRow[]
+}
+
 export type MemoryProjectionDetail = {
   projection_id?: string | null
   run_id?: string | null
@@ -308,6 +422,29 @@ export type MemoryProjectionDetail = {
   created_at?: string | null
 }
 
+export type ConflictHistoryEvent = {
+  event_type?: string | null
+  status?: string | null
+  previous_status?: string | null
+  actor?: string | null
+  source?: string | null
+  created_at?: string | null
+  summary?: string | null
+  merge_note?: string | null
+  winning_node_id?: string | null
+  losing_node_ids?: string[]
+  rationale_codes?: string[]
+  supporting_claim_node_ids?: string[]
+  supporting_evidence_node_ids?: string[]
+  supporting_memory_node_ids?: string[]
+  history?: ConflictHistoryEvent[]
+  history_count?: number
+  latest_history_event?: ConflictHistoryEvent | null
+  merge_history?: ConflictHistoryEvent[]
+  merge_history_count?: number
+  latest_merge_event?: ConflictHistoryEvent | null
+}
+
 export type MemoryConflictDetail = {
   id?: string | null
   surface_id?: string | null
@@ -318,6 +455,11 @@ export type MemoryConflictDetail = {
   resolution_status?: string | null
   winning_node_id?: string | null
   losing_node_ids?: string[]
+  resolution_summary?: string | null
+  resolution_rationale_codes?: string[]
+  supporting_claim_node_ids?: string[]
+  supporting_evidence_node_ids?: string[]
+  supporting_memory_node_ids?: string[]
 }
 
 export type RunStudioMemoryGraph = {
@@ -326,6 +468,108 @@ export type RunStudioMemoryGraph = {
   conflicts?: MemoryConflictDetail[]
   conflict_count?: number
   conflict_status_counts?: Record<string, number>
+}
+
+export type RunStudioTraceScope = {
+  run_id?: string | null
+  scope?: string | null
+  node_ids?: string[]
+  edge_ids?: string[]
+  node_count?: number
+  edge_count?: number
+  run_node_id?: string | null
+  anchor_node_id?: string | null
+  step_node_ids?: string[]
+  step_count?: number
+  evidence_node_ids?: string[]
+  evidence_node_count?: number
+  memory_node_ids?: string[]
+  memory_node_count?: number
+}
+
+
+export type RunStudioCrossReferences = {
+  run_id?: string | null
+  scope?: string | null
+  anchor_node_id?: string | null
+  claim_links?: Array<{
+    claim_node_id: string
+    claim_node_type?: string | null
+    claim_text?: string | null
+    related_memory_node_ids?: string[]
+    related_conflict_ids?: string[]
+    related_evidence_node_ids?: string[]
+    compare_node_ids?: string[]
+    trace_anchor_related?: boolean
+    selected_in_context?: boolean
+    pinned?: boolean
+    score?: number
+  }>
+  memory_links?: Array<{
+    memory_node_id: string
+    surface_id?: string | null
+    node_type?: string | null
+    status?: string | null
+    owner_role_id?: string | null
+    projection_role_ids?: string[]
+    visible_projection_count?: number
+    blocked_projection_count?: number
+    related_claim_node_ids?: string[]
+    related_conflict_ids?: string[]
+    trace_anchor_related?: boolean
+  }>
+  conflict_links?: Array<{
+    conflict_id: string
+    surface_id?: string | null
+    status?: string | null
+    reason?: string | null
+    node_ids?: string[]
+    winning_node_id?: string | null
+    losing_node_ids?: string[]
+    resolution_summary?: string | null
+    resolution_rationale_codes?: string[]
+    supporting_claim_node_ids?: string[]
+    supporting_evidence_node_ids?: string[]
+    supporting_memory_node_ids?: string[]
+    history?: ConflictHistoryEvent[]
+    history_count?: number
+    latest_history_event?: ConflictHistoryEvent | null
+    merge_history?: ConflictHistoryEvent[]
+    merge_history_count?: number
+    latest_merge_event?: ConflictHistoryEvent | null
+    suggested_resolution?: {
+      winning_node_id?: string | null
+      losing_node_ids?: string[]
+      summary?: string | null
+      rationale_codes?: string[]
+      supporting_claim_node_ids?: string[]
+      supporting_evidence_node_ids?: string[]
+      supporting_memory_node_ids?: string[]
+      top_claim_node_id?: string | null
+      top_claim_text?: string | null
+    } | null
+    related_claim_node_ids?: string[]
+    related_memory_node_ids?: string[]
+    trace_anchor_related?: boolean
+  }>
+  counts?: Record<string, number>
+  anchor_related?: {
+    claim_node_ids?: string[]
+    memory_node_ids?: string[]
+    conflict_ids?: string[]
+  } | null
+}
+
+export type RunStudioRunBundle = {
+  run_id?: string | null
+  scope?: string | null
+  context_set_id?: string | null
+  evidence?: RunStudioEvidence | null
+  context_packs?: RunStudioContextPacks | null
+  skill_usage?: RunStudioSkillUsage | null
+  memory_graph?: RunStudioMemoryGraph | null
+  trace_scope?: RunStudioTraceScope | null
+  cross_references?: RunStudioCrossReferences | null
 }
 
 export type VisibilityProjection = {
@@ -910,6 +1154,9 @@ export type RunStudioContextDecisions = {
 }
 
 export type RunStudioEvidence = {
+  run_id?: string | null
+  scope?: string | null
+  active_context_count?: number
   items?: Array<{
     claim_node_id: string
     claim_node_type?: string | null
