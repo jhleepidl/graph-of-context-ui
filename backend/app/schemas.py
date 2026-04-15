@@ -405,6 +405,16 @@ class ConversationTeamConfigRequest(BaseModel):
 
 
 
+class HarnessSpecRead(BaseModel):
+    thread_id: str
+    harness_spec: dict[str, Any] = Field(default_factory=dict)
+    harness_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class HarnessSpecUpdateRequest(BaseModel):
+    harness_spec: dict[str, Any] = Field(default_factory=dict)
+
+
 class TeamManifestValidateRequest(BaseModel):
     manifest: dict[str, Any]
     apply_state: Optional[Literal["active", "pending"]] = "active"
@@ -471,6 +481,25 @@ class MemoryProjectionRequest(SQLModel):
     exclude_surface_ids: list[str] | None = None
 
 
+class MemoryEdgeCreateRequest(SQLModel):
+    edge_type: str
+    from_node_id: str
+    to_node_id: str
+    status: str | None = None
+    rationale: str | None = None
+    provenance: dict[str, Any] | None = None
+    created_run_id: str | None = None
+
+
+class MemoryNodeTransitionRequest(SQLModel):
+    to_status: str
+    summary: str | None = None
+    actor: str | None = None
+    source: str | None = None
+    event_metadata: dict[str, Any] | None = Field(default=None, alias="metadata")
+    created_run_id: str | None = None
+    published_from_node_id: str | None = None
+    supersedes_node_ids: list[str] | None = None
 
 
 class MemoryConflictResolveRequest(SQLModel):

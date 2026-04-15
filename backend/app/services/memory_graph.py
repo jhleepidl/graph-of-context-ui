@@ -318,6 +318,164 @@ def summarize_memory_projection(projection: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+VALID_MEMORY_EDGE_TYPES = {
+    'supports',
+    'derived_from',
+    'contradicts',
+    'supersedes',
+    'published_from',
+    'related_to',
+}
+
+VALID_MEMORY_LIFECYCLE_EVENT_TYPES = {
+    'node_drafted',
+    'node_published',
+    'node_conflicted',
+    'node_quarantined',
+    'node_superseded',
+    'node_merged',
+    'node_reopened',
+    'node_updated',
+}
+
+
+_LIFECYCLE_EVENT_TITLES = {
+    'node_drafted': 'Node drafted',
+    'node_published': 'Node published',
+    'node_conflicted': 'Node conflicted',
+    'node_quarantined': 'Node quarantined',
+    'node_superseded': 'Node superseded',
+    'node_merged': 'Node merged',
+    'node_reopened': 'Node reopened',
+    'node_updated': 'Node updated',
+}
+
+
+def lifecycle_event_type_for_status(status: Any, *, default: str = 'node_updated') -> str:
+    clean_status = _clean_id(status or '', max_len=64) or ''
+    mapping = {
+        'draft': 'node_drafted',
+        'published': 'node_published',
+        'conflicted': 'node_conflicted',
+        'quarantined': 'node_quarantined',
+        'superseded': 'node_superseded',
+        'merged': 'node_merged',
+        'pending': 'node_reopened',
+    }
+    return mapping.get(clean_status, default)
+
+
+def normalize_memory_lifecycle_event(event: dict[str, Any]) -> dict[str, Any]:
+    row = _as_dict(event)
+    event_type = _clean_id(row.get('event_type') or row.get('type') or 'node_updated', max_len=64) or 'node_updated'
+    if event_type not in VALID_MEMORY_LIFECYCLE_EVENT_TYPES:
+        event_type = 'node_updated'
+    return {
+        'id': _clean_text(row.get('id') or row.get('event_id'), max_len=128) or None,
+        'thread_id': _clean_text(row.get('thread_id'), max_len=128) or None,
+        'node_id': _clean_text(row.get('node_id'), max_len=128) or None,
+        'surface_id': _clean_id(row.get('surface_id') or row.get('surfaceId')) or None,
+        'event_type': event_type,
+        'from_status': _clean_id(row.get('from_status') or row.get('fromStatus'), max_len=64) or None,
+        'to_status': _clean_id(row.get('to_status') or row.get('toStatus'), max_len=64) or None,
+        'actor': _clean_text(row.get('actor'), max_len=128) or None,
+        'source': _clean_text(row.get('source'), max_len=128) or None,
+        'summary': _clean_text(row.get('summary') or row.get('rationale') or '', max_len=320) or None,
+        'metadata': _as_dict(row.get('metadata') or row.get('metadata_json')),
+        'created_run_id': _clean_text(row.get('created_run_id') or row.get('run_id'), max_len=128) or None,
+        'created_at': _clean_timestamp(row.get('created_at')),
+    }
+
+
+def summarize_memory_lifecycle_event(event: dict[str, Any]) -> dict[str, Any]:
+    row = normalize_memory_lifecycle_event(event)
+    metadata = _as_dict(row.get('metadata'))
+    return {
+        'id': row.get('id'),
+        'thread_id': row.get('thread_id'),
+        'node_id': row.get('node_id'),
+        'surface_id': row.get('surface_id'),
+        'event_type': row.get('event_type'),
+        'event_title': _LIFECYCLE_EVENT_TITLES.get(row.get('event_type') or '', str(row.get('event_type') or 'node_updated').replace('_', ' ').title()),
+        'from_status': row.get('from_status'),
+        'to_status': row.get('to_status'),
+        'actor': row.get('actor'),
+        'source': row.get('source'),
+        'summary': row.get('summary'),
+        'metadata': metadata,
+        'created_run_id': row.get('created_run_id'),
+        'created_at': row.get('created_at'),
+        'related_edge_ids': [_clean_text(v, max_len=128) for v in _as_list(metadata.get('related_edge_ids')) if _clean_text(v, max_len=128)],
+        'related_conflict_ids': [_clean_text(v, max_len=128) for v in _as_list(metadata.get('related_conflict_ids')) if _clean_text(v, max_len=128)],
+        'supporting_memory_node_ids': [_clean_text(v, max_len=128) for v in _as_list(metadata.get('supporting_memory_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_claim_node_ids': [_clean_text(v, max_len=128) for v in _as_list(metadata.get('supporting_claim_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_evidence_node_ids': [_clean_text(v, max_len=128) for v in _as_list(metadata.get('supporting_evidence_node_ids')) if _clean_text(v, max_len=128)],
+    }
+
+
+def normalize_memory_edge(edge: dict[str, Any]) -> dict[str, Any]:
+    row = _as_dict(edge)
+    edge_type = _clean_id(row.get('edge_type') or row.get('type') or 'related_to', max_len=64) or 'related_to'
+    if edge_type not in VALID_MEMORY_EDGE_TYPES:
+        edge_type = 'related_to'
+    return {
+        'id': _clean_text(row.get('id') or row.get('edge_id'), max_len=128) or None,
+        'edge_type': edge_type,
+        'from_node_id': _clean_text(row.get('from_node_id') or row.get('source_node_id') or row.get('left_node_id'), max_len=128),
+        'to_node_id': _clean_text(row.get('to_node_id') or row.get('target_node_id') or row.get('right_node_id'), max_len=128),
+        'from_surface_id': _clean_id(row.get('from_surface_id') or row.get('source_surface_id') or row.get('surface_id')) or None,
+        'to_surface_id': _clean_id(row.get('to_surface_id') or row.get('target_surface_id') or row.get('surface_id')) or None,
+        'status': _clean_id(row.get('status') or 'active', max_len=64) or 'active',
+        'rationale': _clean_text(row.get('rationale') or row.get('summary') or '', max_len=320) or None,
+        'created_run_id': _clean_text(row.get('created_run_id') or row.get('run_id'), max_len=128) or None,
+        'provenance': _as_dict(row.get('provenance') or row.get('provenance_json')),
+        'created_at': _clean_timestamp(row.get('created_at')),
+        'updated_at': _clean_timestamp(row.get('updated_at')),
+    }
+
+
+_EDGE_TYPE_TITLES = {
+    'supports': 'Supports',
+    'derived_from': 'Derived from',
+    'contradicts': 'Contradicts',
+    'supersedes': 'Supersedes',
+    'published_from': 'Published from',
+    'related_to': 'Related to',
+}
+
+
+def summarize_memory_edge(edge: dict[str, Any], node_lookup: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    row = normalize_memory_edge(edge)
+    node_lookup = node_lookup or {}
+    from_node = _as_dict(node_lookup.get(row['from_node_id']))
+    to_node = _as_dict(node_lookup.get(row['to_node_id']))
+    provenance = _as_dict(row.get('provenance'))
+    return {
+        'id': row.get('id'),
+        'edge_type': row['edge_type'],
+        'edge_type_title': _EDGE_TYPE_TITLES.get(row['edge_type'], row['edge_type'].replace('_', ' ').title()),
+        'from_node_id': row['from_node_id'],
+        'to_node_id': row['to_node_id'],
+        'from_surface_id': row.get('from_surface_id'),
+        'to_surface_id': row.get('to_surface_id'),
+        'status': row.get('status') or 'active',
+        'rationale': row.get('rationale'),
+        'created_run_id': row.get('created_run_id'),
+        'created_at': row.get('created_at'),
+        'updated_at': row.get('updated_at'),
+        'from_node_type': _clean_id(from_node.get('node_type') or from_node.get('nodeType'), max_len=64) or None,
+        'to_node_type': _clean_id(to_node.get('node_type') or to_node.get('nodeType'), max_len=64) or None,
+        'from_node_preview': _extract_node_preview(from_node) or None,
+        'to_node_preview': _extract_node_preview(to_node) or None,
+        'from_owner_role_id': _clean_id(from_node.get('owner_role_id'), max_len=128) or None,
+        'to_owner_role_id': _clean_id(to_node.get('owner_role_id'), max_len=128) or None,
+        'provenance_fingerprint': _extract_provenance_fingerprint({'provenance_json': provenance}) or None,
+        'evidence_node_ids': [_clean_text(v, max_len=128) for v in _as_list(provenance.get('evidence_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_claim_node_ids': [_clean_text(v, max_len=128) for v in _as_list(provenance.get('supporting_claim_node_ids')) if _clean_text(v, max_len=128)],
+        'supporting_memory_node_ids': [_clean_text(v, max_len=128) for v in _as_list(provenance.get('supporting_memory_node_ids')) if _clean_text(v, max_len=128)],
+    }
+
+
 
 def detect_memory_conflicts(*, new_node: dict[str, Any], existing_nodes: Any, existing_conflicts: Any = None) -> list[dict[str, Any]]:
     row = _as_dict(new_node)

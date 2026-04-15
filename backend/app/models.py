@@ -282,6 +282,43 @@ class MemoryProjection(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class MemoryEdge(SQLModel, table=True):
+    __tablename__ = "memory_edges"
+    __table_args__ = (UniqueConstraint("thread_id", "edge_type", "from_node_id", "to_node_id", name="uq_memory_edges_pair"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    edge_type: str = Field(default="related_to", index=True)
+    from_node_id: str = Field(index=True)
+    to_node_id: str = Field(index=True)
+    from_surface_id: Optional[str] = Field(default=None, index=True)
+    to_surface_id: Optional[str] = Field(default=None, index=True)
+    status: str = Field(default="active", index=True)
+    rationale: str = Field(default="")
+    provenance_json: str = Field(default="{}")
+    created_run_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryLifecycleEvent(SQLModel, table=True):
+    __tablename__ = "memory_lifecycle_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    node_id: str = Field(index=True)
+    surface_id: str = Field(index=True)
+    event_type: str = Field(default="node_drafted", index=True)
+    from_status: Optional[str] = Field(default=None, index=True)
+    to_status: Optional[str] = Field(default=None, index=True)
+    actor: Optional[str] = Field(default=None, index=True)
+    source: Optional[str] = Field(default=None, index=True)
+    summary: str = Field(default="")
+    metadata_json: str = Field(default="{}")
+    created_run_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class MemoryConflict(SQLModel, table=True):
     __tablename__ = "memory_conflicts"
     __table_args__ = (UniqueConstraint("thread_id", "surface_id", "left_node_id", "right_node_id", name="uq_memory_conflicts_pair"),)

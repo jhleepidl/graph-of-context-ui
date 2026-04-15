@@ -150,6 +150,11 @@ export default function WorkspaceApp() {
     memoryGraph: runStudioMemoryGraph,
     traceScope: runStudioTraceScope,
     crossReferences: runStudioCrossReferences,
+    auditTimeline: runStudioAuditTimeline,
+    projectionRetrieval: runStudioProjectionRetrieval,
+    graphCompression: runStudioGraphCompression,
+    harnessSpec: runStudioHarnessSpec,
+    harnessSummary: runStudioHarnessSummary,
     teamSelection: runStudioTeamSelection,
     detailLoaded: runStudioDetailLoaded,
     detailLoading: runStudioDetailLoading,
@@ -976,6 +981,11 @@ export default function WorkspaceApp() {
           memoryGraph={runStudioMemoryGraph}
           traceScope={runStudioTraceScope}
           crossReferences={runStudioCrossReferences}
+          auditTimeline={runStudioAuditTimeline}
+          projectionRetrieval={runStudioProjectionRetrieval}
+          graphCompression={runStudioGraphCompression}
+          harnessSpec={runStudioHarnessSpec}
+          harnessSummary={runStudioHarnessSummary}
           teamSelection={runStudioTeamSelection}
           detailLoaded={runStudioDetailLoaded}
           detailLoading={runStudioDetailLoading}

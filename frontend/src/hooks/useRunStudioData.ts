@@ -11,6 +11,11 @@ import {
   type RunStudioRunBundle,
   type RunStudioCrossReferences,
   type RunStudioTraceScope,
+  type RunStudioAuditTimeline,
+  type RunStudioProjectionRetrieval,
+  type RunStudioGraphCompression,
+  type RunStudioHarnessSpec,
+  type RunStudioHarnessSummary,
   type TeamSelectionDataset,
 } from '../components/run_studio/types'
 
@@ -69,6 +74,11 @@ export function useRunStudioData() {
   const [memoryGraph, setMemoryGraph] = useState<RunStudioMemoryGraph | null>(null)
   const [traceScope, setTraceScope] = useState<RunStudioTraceScope | null>(null)
   const [crossReferences, setCrossReferences] = useState<RunStudioCrossReferences | null>(null)
+  const [auditTimeline, setAuditTimeline] = useState<RunStudioAuditTimeline | null>(null)
+  const [projectionRetrieval, setProjectionRetrieval] = useState<RunStudioProjectionRetrieval | null>(null)
+  const [graphCompression, setGraphCompression] = useState<RunStudioGraphCompression | null>(null)
+  const [harnessSpec, setHarnessSpec] = useState<RunStudioHarnessSpec | null>(null)
+  const [harnessSummary, setHarnessSummary] = useState<RunStudioHarnessSummary | null>(null)
   const [teamSelection, setTeamSelection] = useState<TeamSelectionDataset | null>(null)
   const [detailLoaded, setDetailLoaded] = useState<DetailState>(EMPTY_DETAIL_STATE)
   const [detailLoading, setDetailLoading] = useState<DetailState>(EMPTY_DETAIL_STATE)
@@ -105,6 +115,11 @@ export function useRunStudioData() {
     setMemoryGraph(null)
     setTraceScope(null)
     setCrossReferences(null)
+    setAuditTimeline(null)
+    setProjectionRetrieval(null)
+    setGraphCompression(null)
+    setHarnessSpec(null)
+    setHarnessSummary(null)
     setTeamSelection(null)
     setDetailLoaded(EMPTY_DETAIL_STATE)
     setDetailLoading(EMPTY_DETAIL_STATE)
@@ -217,6 +232,21 @@ export function useRunStudioData() {
     if (bundle.cross_references) {
       setCrossReferences(bundle.cross_references)
     }
+    if (bundle.projection_retrieval) {
+      setProjectionRetrieval(bundle.projection_retrieval)
+    }
+    if (bundle.audit_timeline) {
+      setAuditTimeline(bundle.audit_timeline)
+    }
+    if (bundle.graph_native_compression) {
+      setGraphCompression(bundle.graph_native_compression)
+    }
+    if (bundle.harness_spec) {
+      setHarnessSpec(bundle.harness_spec)
+    }
+    if (bundle.harness_summary) {
+      setHarnessSummary(bundle.harness_summary)
+    }
     return bundle
   }, [markDetailLoaded])
 
@@ -264,11 +294,16 @@ export function useRunStudioData() {
         memoryGraph,
         traceScope,
         cross_references: crossReferences,
+        projection_retrieval: projectionRetrieval,
+        audit_timeline: auditTimeline,
+        graph_native_compression: graphCompression,
+        harness_spec: harnessSpec,
+        harness_summary: harnessSummary,
       }
     }
 
     return await loadRunBundle(tId, cId, rId, options)
-  }, [contextPacks, detailLoaded.contextPacks, detailLoaded.evidence, detailLoaded.memoryGraph, detailLoaded.skillUsage, detailLoaded.traceScope, evidence, focusedRunId, loadRunBundle, memoryGraph, skillUsage, traceScope, crossReferences])
+  }, [auditTimeline, contextPacks, detailLoaded.contextPacks, detailLoaded.evidence, detailLoaded.memoryGraph, detailLoaded.skillUsage, detailLoaded.traceScope, evidence, focusedRunId, loadRunBundle, memoryGraph, skillUsage, traceScope, crossReferences, projectionRetrieval, graphCompression, harnessSpec, harnessSummary])
 
   const clearRunDrilldown = useCallback(async (threadId?: string | null, contextSetId?: string | null, options?: LoadDetailOptions) => {
     const hadFocusedRun = !!cleanText(focusedRunId)
@@ -335,6 +370,11 @@ export function useRunStudioData() {
     memoryGraph,
     traceScope,
     crossReferences,
+    projectionRetrieval,
+    graphCompression,
+    harnessSpec,
+    harnessSummary,
+    auditTimeline,
     teamSelection,
     detailLoaded,
     detailLoading,

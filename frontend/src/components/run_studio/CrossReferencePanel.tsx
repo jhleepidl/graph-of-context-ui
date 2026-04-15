@@ -64,8 +64,6 @@ async function resolveWithSuggestedBasis(item: NonNullable<RunStudioCrossReferen
   onRefresh?.()
 }
 
-
-
 function renderTimelineEvents(events: ConflictHistoryEvent[] | undefined, title: string) {
   const items = Array.isArray(events) ? events.filter(Boolean).slice(-3).reverse() : []
   if (!items.length) return null
@@ -89,6 +87,7 @@ function renderTimelineEvents(events: ConflictHistoryEvent[] | undefined, title:
     </div>
   )
 }
+
 export default function CrossReferencePanel({
   crossReferences,
   onFocusNode,
@@ -98,7 +97,9 @@ export default function CrossReferencePanel({
   onRefresh,
 }: Props) {
   const claimLinks = crossReferences?.claim_links || []
+  const edgeLinks = crossReferences?.edge_links || []
   const conflictLinks = crossReferences?.conflict_links || []
+  const lifecycleLinks = crossReferences?.lifecycle_links || []
   const memoryLinks = crossReferences?.memory_links || []
   const counts = crossReferences?.counts || {}
   const anchorNodeId = cleanText(crossReferences?.anchor_node_id)
@@ -109,16 +110,24 @@ export default function CrossReferencePanel({
       <div className="runStudioPanelHeader">
         <div>
           <h3>Cross-reference Layer</h3>
-          <div className="muted">Connects selected evidence claims, memory projections, and memory conflicts inside the focused run.</div>
+          <div className="muted">Connects selected evidence claims, memory projections, memory edges, and memory conflicts inside the focused run.</div>
         </div>
       </div>
 
       <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
         <span className="pill">claim links: {counts.claim_links ?? claimLinks.length}</span>
         <span className="pill">memory links: {counts.memory_links ?? memoryLinks.length}</span>
+        <span className="pill">edge links: {counts.edge_links ?? edgeLinks.length}</span>
         <span className="pill">conflict links: {counts.conflict_links ?? conflictLinks.length}</span>
+        <span className="pill">lifecycle links: {counts.lifecycle_links ?? lifecycleLinks.length}</span>
         <span className="pill">claims↔memory: {counts.claims_with_memory_links ?? 0}</span>
+        <span className="pill">claims↔edges: {counts.claims_with_edge_links ?? 0}</span>
         <span className="pill">claims↔conflicts: {counts.claims_with_conflicts ?? 0}</span>
+        <span className="pill">claims↔lifecycle: {counts.claims_with_lifecycle_links ?? 0}</span>
+        <span className="pill">edges↔claims: {counts.edges_with_claims ?? 0}</span>
+        <span className="pill">edges↔conflicts: {counts.edges_with_conflicts ?? 0}</span>
+        <span className="pill">lifecycle↔claims: {counts.lifecycle_with_claims ?? 0}</span>
+        <span className="pill">lifecycle↔evidence: {counts.lifecycle_with_evidence ?? 0}</span>
         <span className="pill">rationales: {counts.conflicts_with_resolution_rationale ?? 0}</span>
         <span className="pill">suggested: {counts.conflicts_with_suggested_resolution ?? 0}</span>
         <span className="pill">history: {counts.conflicts_with_history ?? 0}</span>
@@ -130,7 +139,9 @@ export default function CrossReferencePanel({
         <div className="runStudioMetaRow" style={{ marginBottom: 10 }}>
           {(anchorRelated.claim_node_ids || []).length > 0 && <span className="pill">anchor claims: {(anchorRelated.claim_node_ids || []).length}</span>}
           {(anchorRelated.memory_node_ids || []).length > 0 && <span className="pill">anchor memory: {(anchorRelated.memory_node_ids || []).length}</span>}
+          {(anchorRelated.edge_ids || []).length > 0 && <span className="pill">anchor edges: {(anchorRelated.edge_ids || []).length}</span>}
           {(anchorRelated.conflict_ids || []).length > 0 && <span className="pill">anchor conflicts: {(anchorRelated.conflict_ids || []).length}</span>}
+          {(anchorRelated.lifecycle_event_ids || []).length > 0 && <span className="pill">anchor lifecycle: {(anchorRelated.lifecycle_event_ids || []).length}</span>}
         </div>
       )}
 
@@ -161,7 +172,9 @@ export default function CrossReferencePanel({
                     <div className="muted" style={{ marginBottom: 8 }}>{cleanText(item.claim_text || '(no claim text)')}</div>
                     <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
                       <span className="pill">memory: {(item.related_memory_node_ids || []).length}</span>
+                      <span className="pill">edges: {(item.related_memory_edge_ids || []).length}</span>
                       <span className="pill">conflicts: {(item.related_conflict_ids || []).length}</span>
+                      {(item.related_lifecycle_event_ids || []).length > 0 && <span className="pill">lifecycle: {(item.related_lifecycle_event_ids || []).length}</span>}
                       {(item.related_evidence_node_ids || []).length > 0 && <span className="pill">evidence: {(item.related_evidence_node_ids || []).length}</span>}
                     </div>
                     <div className="row">
@@ -179,6 +192,104 @@ export default function CrossReferencePanel({
 
         <section className="runStudioTeamGroup">
           <div className="runStudioTeamGroupHeader">
+            <div className="runStudioExecutionLaneTitle">Memory edge links</div>
+            <div className="muted">{edgeLinks.length}</div>
+          </div>
+          {edgeLinks.length === 0 ? (
+            <div className="muted">No cross-linked memory edges were found for this run.</div>
+          ) : (
+            <div className="runStudioAgentCardGrid">
+              {edgeLinks.slice(0, 6).map((item) => {
+                const compareNodeIds = uniqueNodeIds([
+                  item.from_node_id,
+                  item.to_node_id,
+                  ...(item.related_memory_node_ids || []),
+                  ...(item.related_claim_node_ids || []),
+                  ...(item.evidence_node_ids || []),
+                ])
+                return (
+                  <article key={item.edge_id} className="runStudioAgentCard">
+                    <div className="runStudioAgentCardHeader">
+                      <div>
+                        <div className="runStudioAgentCardTitle">{cleanText(item.edge_type_title || item.edge_type || 'Memory edge')}</div>
+                        <div className="muted">{cleanText(item.edge_id)}</div>
+                      </div>
+                      <span className="runStudioStatusChip runStudioStatus--idle">{cleanText(item.status || 'active')}</span>
+                    </div>
+                    <div className="muted" style={{ marginBottom: 8 }}>
+                      {cleanText(item.rationale || `${cleanText(item.from_node_id)} → ${cleanText(item.to_node_id)}`)}
+                    </div>
+                    <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+                      {item.from_node_id && <span className="pill">from: {cleanText(item.from_node_id)}</span>}
+                      {item.to_node_id && <span className="pill">to: {cleanText(item.to_node_id)}</span>}
+                      <span className="pill">claims: {(item.related_claim_node_ids || []).length}</span>
+                      <span className="pill">conflicts: {(item.related_conflict_ids || []).length}</span>
+                      {(item.evidence_node_ids || []).length > 0 && <span className="pill">evidence: {(item.evidence_node_ids || []).length}</span>}
+                    </div>
+                    {item.from_node_preview && <div className="muted">from preview: {cleanText(item.from_node_preview)}</div>}
+                    {item.to_node_preview && <div className="muted">to preview: {cleanText(item.to_node_preview)}</div>}
+                    <div className="row" style={{ marginTop: 8 }}>
+                      {item.from_node_id && onFocusNode && <button className="tiny" onClick={() => onFocusNode(item.from_node_id || '')}>Focus from</button>}
+                      {item.to_node_id && onOpenNode && <button className="tiny" onClick={() => onOpenNode(item.to_node_id || '')}>Open to</button>}
+                      {compareNodeIds.length > 1 && onFocusTrace && <button className="tiny" onClick={() => onFocusTrace(compareNodeIds)}>Focus edge path</button>}
+                      {compareNodeIds.length > 1 && onOpenTrace && <button className="tiny" onClick={() => onOpenTrace(compareNodeIds)}>Compare linked nodes</button>}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="runStudioTeamGroup">
+          <div className="runStudioTeamGroupHeader">
+            <div className="runStudioExecutionLaneTitle">Lifecycle ↔ evidence links</div>
+            <div className="muted">{lifecycleLinks.length}</div>
+          </div>
+          {lifecycleLinks.length === 0 ? (
+            <div className="muted">No lifecycle transitions were directly linked to claims or evidence in this run.</div>
+          ) : (
+            <div className="runStudioAgentCardGrid">
+              {lifecycleLinks.slice(0, 6).map((item) => {
+                const compareNodeIds = uniqueNodeIds([
+                  item.node_id,
+                  ...(item.supporting_memory_node_ids || []),
+                  ...(item.related_claim_node_ids || []),
+                  ...(item.related_evidence_node_ids || []),
+                ])
+                return (
+                  <article key={item.event_id} className="runStudioAgentCard">
+                    <div className="runStudioAgentCardHeader">
+                      <div>
+                        <div className="runStudioAgentCardTitle">{cleanText(item.event_title || item.event_type || 'Lifecycle event')}</div>
+                        <div className="muted">{cleanText(item.event_id)}</div>
+                      </div>
+                      <span className="runStudioStatusChip runStudioStatus--idle">{cleanText(item.to_status || item.event_type || 'event')}</span>
+                    </div>
+                    <div className="muted" style={{ marginBottom: 8 }}>{cleanText(item.summary || '(no summary)')}</div>
+                    <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+                      {item.node_id && <span className="pill">node: {cleanText(item.node_id)}</span>}
+                      {(item.related_claim_node_ids || []).length > 0 && <span className="pill">claims: {(item.related_claim_node_ids || []).length}</span>}
+                      {(item.related_evidence_node_ids || []).length > 0 && <span className="pill">evidence: {(item.related_evidence_node_ids || []).length}</span>}
+                      {(item.related_edge_ids || []).length > 0 && <span className="pill">edges: {(item.related_edge_ids || []).length}</span>}
+                      {(item.related_conflict_ids || []).length > 0 && <span className="pill">conflicts: {(item.related_conflict_ids || []).length}</span>}
+                    </div>
+                    <div className="row">
+                      {item.node_id && onFocusNode && <button className="tiny" onClick={() => onFocusNode(item.node_id || '')}>Focus node</button>}
+                      {item.node_id && onOpenNode && <button className="tiny" onClick={() => onOpenNode(item.node_id || '')}>Open node</button>}
+                      {compareNodeIds.length > 1 && onFocusTrace && <button className="tiny" onClick={() => onFocusTrace(compareNodeIds)}>Focus linked trace</button>}
+                      {compareNodeIds.length > 1 && onOpenTrace && <button className="tiny" onClick={() => onOpenTrace(compareNodeIds)}>Compare linked nodes</button>}
+                    </div>
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+
+        <section className="runStudioTeamGroup">
+          <div className="runStudioTeamGroupHeader">
             <div className="runStudioExecutionLaneTitle">Conflict ↔ claim links</div>
             <div className="muted">{conflictLinks.length}</div>
           </div>
@@ -187,7 +298,11 @@ export default function CrossReferencePanel({
           ) : (
             <div className="runStudioAgentCardGrid">
               {conflictLinks.slice(0, 6).map((item) => {
-                const compareNodeIds = uniqueNodeIds(item.node_ids || [])
+                const compareNodeIds = uniqueNodeIds([
+                  ...(item.node_ids || []),
+                  ...(item.related_claim_node_ids || []),
+                  ...(item.related_memory_node_ids || []),
+                ])
                 const suggested = item.suggested_resolution || null
                 const rationaleSummary = cleanText(item.resolution_summary || suggested?.summary)
                 const rationaleCodes = uniqueNodeIds([
@@ -207,6 +322,7 @@ export default function CrossReferencePanel({
                     <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
                       <span className="pill">claims: {(item.related_claim_node_ids || []).length}</span>
                       <span className="pill">memory nodes: {(item.related_memory_node_ids || []).length}</span>
+                      <span className="pill">edges: {(item.related_edge_ids || []).length}</span>
                       <span className="pill">pair size: {(item.node_ids || []).length}</span>
                       {(item.supporting_evidence_node_ids || suggested?.supporting_evidence_node_ids || []).length > 0 && <span className="pill">evidence basis: {(item.supporting_evidence_node_ids || suggested?.supporting_evidence_node_ids || []).length}</span>}
                       {!!(item.history_count || 0) && <span className="pill">history events: {item.history_count}</span>}

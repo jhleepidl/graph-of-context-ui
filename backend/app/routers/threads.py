@@ -27,6 +27,8 @@ from app.schemas import (
     TeamManifestValidateRequest,
     TeamManifestInstallRequest,
     TeamManifestDiffRequest,
+    HarnessSpecRead,
+    HarnessSpecUpdateRequest,
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
@@ -47,6 +49,7 @@ from app.services.scope_registry import get_scope_spec
 from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy
 from app.services.team_manifest import export_thread_team_manifest, install_thread_team_manifest, validate_team_manifest_payload, diff_team_manifest_payload
 from app.services.team_blueprint import export_thread_team_blueprint, install_thread_team_blueprint, validate_team_blueprint_payload, diff_team_blueprint_payload
+from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -622,6 +625,22 @@ def get_graph(thread_id: str):
             "thread": _thread_to_response(t),
             **graph,
         }
+
+
+@router.get("/{thread_id}/harness_spec", response_model=HarnessSpecRead)
+def get_harness_spec(thread_id: str):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        spec = get_thread_harness_spec(thread)
+        return HarnessSpecRead(thread_id=thread.id, harness_spec=spec, harness_summary=build_harness_summary(spec))
+
+
+@router.put("/{thread_id}/harness_spec", response_model=HarnessSpecRead)
+def put_harness_spec(thread_id: str, body: HarnessSpecUpdateRequest):
+    with Session(engine) as s:
+        thread = require_thread_write_access(s, thread_id)
+        spec = save_thread_harness_spec(s, thread, body.harness_spec)
+        return HarnessSpecRead(thread_id=thread.id, harness_spec=spec, harness_summary=build_harness_summary(spec))
 
 
 @router.get("/{thread_id}/run_studio/summary")

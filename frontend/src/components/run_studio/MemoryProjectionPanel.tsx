@@ -1,6 +1,6 @@
 import React from 'react'
 import { api } from '../../api'
-import { type RunStudioMemoryGraph, type MemoryConflictDetail, type MemoryNodeDrilldown, type ConflictHistoryEvent } from './types'
+import { type RunStudioMemoryGraph, type MemoryConflictDetail, type MemoryEdgeDetail, type MemoryNodeDrilldown, type ConflictHistoryEvent, type MemoryLifecycleEvent } from './types'
 
 type Props = {
   memoryGraph: RunStudioMemoryGraph | null
@@ -70,6 +70,78 @@ function renderConflictHistory(events: ConflictHistoryEvent[] | undefined, title
     </div>
   )
 }
+function renderMemoryEdges(edges: MemoryEdgeDetail[] | undefined) {
+  const items = Array.isArray(edges) ? edges.filter(Boolean) : []
+  if (!items.length) return <div className="muted">No memory edges in the recent view.</div>
+  return (
+    <div className="runStudioAgentCardGrid">
+      {items.map((edge) => (
+        <article key={cleanText(edge.id || `${edge.edge_type}-${edge.from_node_id}-${edge.to_node_id}`)} className="runStudioAgentCard">
+          <div className="runStudioAgentCardHeader">
+            <div>
+              <div className="runStudioAgentCardTitle">{cleanText(edge.edge_type_title || edge.edge_type || 'Memory edge')}</div>
+              <div className="muted">{cleanText(edge.from_node_id)} → {cleanText(edge.to_node_id)}</div>
+            </div>
+            <span className="runStudioStatusChip runStudioStatus--idle">{cleanText(edge.status || 'active')}</span>
+          </div>
+          {cleanText(edge.rationale) && <div className="muted" style={{ marginBottom: 8 }}>{cleanText(edge.rationale)}</div>}
+          <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+            {edge.edge_type && <span className="pill">type: {cleanText(edge.edge_type)}</span>}
+            {edge.from_surface_id && <span className="pill">from surface: {cleanText(edge.from_surface_id)}</span>}
+            {edge.to_surface_id && <span className="pill">to surface: {cleanText(edge.to_surface_id)}</span>}
+            {edge.from_owner_role_id && <span className="pill">from role: {cleanText(edge.from_owner_role_id)}</span>}
+            {edge.to_owner_role_id && <span className="pill">to role: {cleanText(edge.to_owner_role_id)}</span>}
+          </div>
+          {(edge.from_node_preview || edge.to_node_preview) && (
+            <div className="muted" style={{ marginBottom: 8 }}>
+              <div>from: {cleanText(edge.from_node_preview || edge.from_node_type || edge.from_node_id)}</div>
+              <div>to: {cleanText(edge.to_node_preview || edge.to_node_type || edge.to_node_id)}</div>
+            </div>
+          )}
+          <div className="runStudioMetaRow">
+            {!!(edge.supporting_claim_node_ids || []).length && <span className="pill">claims: {(edge.supporting_claim_node_ids || []).length}</span>}
+            {!!(edge.evidence_node_ids || []).length && <span className="pill">evidence: {(edge.evidence_node_ids || []).length}</span>}
+            {!!(edge.supporting_memory_node_ids || []).length && <span className="pill">memory refs: {(edge.supporting_memory_node_ids || []).length}</span>}
+          </div>
+          {edge.provenance_fingerprint && <div className="muted" style={{ marginTop: 8 }}>prov: {cleanText(edge.provenance_fingerprint)}</div>}
+        </article>
+      ))}
+    </div>
+  )
+}
+
+function renderLifecycleEvents(items: MemoryLifecycleEvent[] | undefined) {
+  const rows = items || []
+  if (rows.length === 0) {
+    return <div className="muted">No recent lifecycle transitions.</div>
+  }
+  return (
+    <div className="runStudioAgentCardGrid">
+      {rows.slice(0, 10).map((event) => (
+        <article key={event.id || `${event.node_id}-${event.created_at}`} className="runStudioAgentCard">
+          <div className="runStudioAgentCardHeader">
+            <div>
+              <div className="runStudioAgentCardTitle">{cleanText(event.event_title || event.event_type || 'Lifecycle event')}</div>
+              <div className="muted">node {cleanText(event.node_id || '(unknown)')} · {cleanText(event.created_at || '') || 'time unknown'}</div>
+            </div>
+            <span className="runStudioStatusChip runStudioStatus--idle">{cleanText(event.to_status || event.event_type || 'event')}</span>
+          </div>
+          <div className="muted" style={{ marginBottom: 8 }}>{cleanText(event.summary || '(no summary)')}</div>
+          <div className="runStudioMetaRow">
+            {event.from_status && <span className="pill">from: {cleanText(event.from_status)}</span>}
+            {event.to_status && <span className="pill">to: {cleanText(event.to_status)}</span>}
+            {event.actor && <span className="pill">actor: {cleanText(event.actor)}</span>}
+            {!!(event.supporting_claim_node_ids || []).length && <span className="pill">claims: {(event.supporting_claim_node_ids || []).length}</span>}
+            {!!(event.supporting_evidence_node_ids || []).length && <span className="pill">evidence: {(event.supporting_evidence_node_ids || []).length}</span>}
+            {!!(event.related_edge_ids || []).length && <span className="pill">edges: {(event.related_edge_ids || []).length}</span>}
+            {!!(event.related_conflict_ids || []).length && <span className="pill">conflicts: {(event.related_conflict_ids || []).length}</span>}
+          </div>
+        </article>
+      ))}
+    </div>
+  )
+}
+
 function renderNodeDrilldown(title: string, nodes: MemoryNodeDrilldown[] | undefined, blocked = false) {
   const items = nodes || []
   return (
@@ -93,9 +165,19 @@ function renderNodeDrilldown(title: string, nodes: MemoryNodeDrilldown[] | undef
                 {node.trust_tier && <span className="pill">trust: {node.trust_tier}</span>}
                 {typeof node.confidence === 'number' && <span className="pill">conf: {Number(node.confidence).toFixed(2)}</span>}
                 {node.owner_role_id && <span className="pill">role: {node.owner_role_id}</span>}
+                {!!node.lifecycle_event_count && <span className="pill">lifecycle: {node.lifecycle_event_count}</span>}
                 {blocked && node.blocked_reason && <span className="pill">blocked: {node.blocked_reason}</span>}
               </div>
               {node.provenance_fingerprint && <div className="muted" style={{ marginTop: 6 }}>prov: {node.provenance_fingerprint}</div>}
+              {node.lifecycle_status_path && node.lifecycle_status_path.length > 0 && (
+                <div className="muted" style={{ marginTop: 6 }}>path: {node.lifecycle_status_path.join(' → ')}</div>
+              )}
+              {node.latest_lifecycle_event && (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  latest lifecycle: {cleanText(node.latest_lifecycle_event.event_title || node.latest_lifecycle_event.event_type || 'event')}
+                  {node.latest_lifecycle_event.created_at ? ` @ ${cleanText(node.latest_lifecycle_event.created_at)}` : ''}
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -112,7 +194,9 @@ export default function MemoryProjectionPanel({
   onRefresh,
 }: Props) {
   const projections = memoryGraph?.projections || []
+  const edges = memoryGraph?.edges || []
   const conflicts = memoryGraph?.conflicts || []
+  const lifecycleEvents = memoryGraph?.lifecycle_events || []
 
   return (
     <section className="card runStudioPanel">
@@ -143,7 +227,15 @@ export default function MemoryProjectionPanel({
         <>
           <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
             <span className="pill">projections: {memoryGraph?.projection_count || 0}</span>
+            <span className="pill">edges: {memoryGraph?.edge_count || 0}</span>
+            <span className="pill">lifecycle: {memoryGraph?.lifecycle_event_count || 0}</span>
             <span className="pill">conflicts: {memoryGraph?.conflict_count || 0}</span>
+            {Object.entries(memoryGraph?.edge_type_counts || {}).map(([edgeType, count]) => (
+              <span className="pill" key={`edge-${edgeType}`}>{edgeType}: {count}</span>
+            ))}
+            {Object.entries(memoryGraph?.lifecycle_event_type_counts || {}).map(([eventType, count]) => (
+              <span className="pill" key={`lifecycle-${eventType}`}>{eventType}: {count}</span>
+            ))}
             {Object.entries(memoryGraph?.conflict_status_counts || {}).map(([status, count]) => (
               <span className="pill" key={status}>{status}: {count}</span>
             ))}
@@ -189,6 +281,23 @@ export default function MemoryProjectionPanel({
                   ))}
                 </div>
               )}
+            </section>
+
+
+            <section className="runStudioTeamGroup">
+              <div className="runStudioTeamGroupHeader">
+                <div className="runStudioExecutionLaneTitle">Memory edges</div>
+                <div className="muted">{edges.length}</div>
+              </div>
+              {renderMemoryEdges(edges)}
+            </section>
+
+            <section className="runStudioTeamGroup">
+              <div className="runStudioTeamGroupHeader">
+                <div className="runStudioExecutionLaneTitle">Write lifecycle</div>
+                <div className="muted">{lifecycleEvents.length}</div>
+              </div>
+              {renderLifecycleEvents(lifecycleEvents)}
             </section>
 
             <section className="runStudioTeamGroup">

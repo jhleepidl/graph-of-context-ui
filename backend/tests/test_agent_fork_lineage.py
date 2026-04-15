@@ -1,3 +1,4 @@
+import os
 import unittest
 
 try:
@@ -22,6 +23,9 @@ except ModuleNotFoundError as exc:  # pragma: no cover - dependency may be absen
     _IMPORT_ERROR = exc
 else:
     _IMPORT_ERROR = None
+
+os.environ.setdefault('GOC_ADMIN_KEY', 'dev-admin-key')
+os.environ.setdefault('GOC_UI_TOKEN_SECRET', 'dev-ui-token-secret')
 
 
 @unittest.skipIf(_IMPORT_ERROR is not None, f"missing dependency: {_IMPORT_ERROR}")

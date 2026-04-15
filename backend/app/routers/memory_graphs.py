@@ -5,10 +5,12 @@ from fastapi import APIRouter, HTTPException, Response
 from sqlmodel import Session, select
 
 from app.db import engine
-from app.models import MemoryConflict, MemoryNode, MemoryProjection, MemorySurface, TeamSelectionEvent, Thread, utcnow
+from app.models import MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, MemorySurface, TeamSelectionEvent, Thread, utcnow
 from app.schemas import (
     MemoryConflictResolveRequest,
+    MemoryEdgeCreateRequest,
     MemoryNodeCreateRequest,
+    MemoryNodeTransitionRequest,
     MemoryProjectionRequest,
     MemorySurfaceCreateRequest,
     TeamRecommendationRequest,
@@ -18,10 +20,14 @@ from app.services.memory_graph import (
     append_conflict_history,
     build_memory_projection,
     detect_memory_conflicts,
+    lifecycle_event_type_for_status,
     normalize_conflict_resolution,
+    normalize_memory_edge,
     normalize_memory_surfaces,
     summarize_memory_conflict,
     summarize_memory_conflicts,
+    summarize_memory_edge,
+    summarize_memory_lifecycle_event,
     summarize_memory_projection,
 )
 from app.services.team_recommender import build_team_selection_dataset, recommend_team_blueprints, serialize_team_selection_dataset_jsonl
@@ -39,6 +45,34 @@ def _jload(raw, default):
         return json.loads(raw or '')
     except Exception:
         return default
+
+
+def _extract_supporting_links(*payloads: dict | None) -> dict[str, list[str]]:
+    claim_ids: list[str] = []
+    evidence_ids: list[str] = []
+    memory_ids: list[str] = []
+    seen_claims: set[str] = set()
+    seen_evidence: set[str] = set()
+    seen_memory: set[str] = set()
+
+    def _append_many(target: list[str], seen: set[str], values) -> None:
+        for value in values or []:
+            clean = str(value or '').strip()
+            if not clean or clean in seen:
+                continue
+            seen.add(clean)
+            target.append(clean)
+
+    for payload in payloads:
+        data = payload if isinstance(payload, dict) else {}
+        _append_many(claim_ids, seen_claims, data.get('supporting_claim_node_ids') or data.get('claim_node_ids'))
+        _append_many(evidence_ids, seen_evidence, data.get('supporting_evidence_node_ids') or data.get('evidence_node_ids'))
+        _append_many(memory_ids, seen_memory, data.get('supporting_memory_node_ids'))
+    return {
+        'supporting_claim_node_ids': claim_ids,
+        'supporting_evidence_node_ids': evidence_ids,
+        'supporting_memory_node_ids': memory_ids,
+    }
 
 
 def _active_conflict_node_ids(session: Session, thread_id: str) -> set[str]:
@@ -62,6 +96,75 @@ def _invalidate_thread_projections(session: Session, thread_id: str) -> None:
     for row in rows:
         session.delete(row)
 
+
+def _record_memory_lifecycle_event(
+    session: Session,
+    *,
+    thread_id: str,
+    node: MemoryNode,
+    event_type: str | None = None,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    actor: str | None = None,
+    source: str | None = None,
+    summary: str | None = None,
+    metadata: dict | None = None,
+    created_run_id: str | None = None,
+):
+    row = MemoryLifecycleEvent(
+        thread_id=thread_id,
+        node_id=node.id,
+        surface_id=node.surface_id,
+        event_type=event_type or lifecycle_event_type_for_status(to_status or node.status),
+        from_status=(str(from_status).strip() if from_status else None),
+        to_status=(str(to_status).strip() if to_status else (str(node.status).strip() if node.status else None)),
+        actor=(str(actor).strip() if actor else None),
+        source=(str(source).strip() if source else None),
+        summary=str(summary or '').strip(),
+        metadata_json=_jdump(metadata or {}),
+        created_run_id=(str(created_run_id).strip() if created_run_id else (str(node.created_run_id).strip() if node.created_run_id else None)),
+        created_at=utcnow(),
+    )
+    session.add(row)
+    return row
+
+
+def _upsert_memory_edge(
+    session: Session,
+    *,
+    thread_id: str,
+    edge_type: str,
+    from_node: MemoryNode,
+    to_node: MemoryNode,
+    status: str = 'active',
+    rationale: str | None = None,
+    provenance: dict | None = None,
+    created_run_id: str | None = None,
+):
+    row = session.exec(
+        select(MemoryEdge).where(
+            MemoryEdge.thread_id == thread_id,
+            MemoryEdge.edge_type == edge_type,
+            MemoryEdge.from_node_id == from_node.id,
+            MemoryEdge.to_node_id == to_node.id,
+        )
+    ).first()
+    if row is None:
+        row = MemoryEdge(
+            thread_id=thread_id,
+            edge_type=edge_type,
+            from_node_id=from_node.id,
+            to_node_id=to_node.id,
+        )
+    row.from_surface_id = from_node.surface_id
+    row.to_surface_id = to_node.surface_id
+    row.status = str(status or 'active').strip() or 'active'
+    row.rationale = str(rationale or '').strip()
+    row.provenance_json = _jdump(provenance or {})
+    row.created_run_id = str(created_run_id or from_node.created_run_id or to_node.created_run_id or '').strip() or None
+    row.updated_at = utcnow()
+    session.add(row)
+    return row
 
 
 @router.post('/threads/{thread_id}/memory/surfaces')
@@ -125,6 +228,22 @@ def create_memory_node(thread_id: str, body: MemoryNodeCreateRequest):
         session.add(row)
         session.commit()
         session.refresh(row)
+
+        _record_memory_lifecycle_event(
+            session,
+            thread_id=thread.id,
+            node=row,
+            event_type=lifecycle_event_type_for_status(row.status),
+            to_status=row.status,
+            actor=row.owner_role_id or row.owner_agent_id or 'runtime',
+            source='memory_node_create',
+            summary=f"Node {row.id} created on surface {row.surface_id} as {row.status}",
+            metadata={
+                **_extract_supporting_links(body.provenance if isinstance(body.provenance, dict) else {}),
+                'supporting_memory_node_ids': [row.id],
+            },
+            created_run_id=row.created_run_id,
+        )
 
         existing_nodes = session.exec(
             select(MemoryNode).where(
@@ -214,12 +333,53 @@ def create_memory_node(thread_id: str, body: MemoryNodeCreateRequest):
             created_conflicts.append(conflict)
             conflicted_node_ids.update({left_node_id, right_node_id})
         if created_conflicts:
-            for conflicted_node_id in conflicted_node_ids:
-                conflicted_node = session.get(MemoryNode, conflicted_node_id)
-                if conflicted_node and conflicted_node.status not in {'quarantined', 'superseded'}:
-                    conflicted_node.status = 'conflicted'
-                    conflicted_node.updated_at = utcnow()
-            row.status = 'conflicted'
+            for conflict in created_conflicts:
+                left_node = session.get(MemoryNode, conflict.left_node_id)
+                right_node = session.get(MemoryNode, conflict.right_node_id)
+                if left_node and right_node:
+                    contradiction_links = _extract_supporting_links(
+                        _jload(left_node.provenance_json, {}),
+                        _jload(right_node.provenance_json, {}),
+                    )
+                    contradiction = _upsert_memory_edge(
+                        session,
+                        thread_id=thread.id,
+                        edge_type='contradicts',
+                        from_node=left_node,
+                        to_node=right_node,
+                        rationale=conflict.reason or 'Detected conflicting memory nodes',
+                        provenance={
+                            'related_conflict_ids': [conflict.id],
+                            **contradiction_links,
+                            'supporting_memory_node_ids': [left_node.id, right_node.id],
+                        },
+                        created_run_id=row.created_run_id or left_node.created_run_id or right_node.created_run_id,
+                    )
+                    for target in (left_node, right_node):
+                        previous_status = str(target.status or 'draft').strip() or 'draft'
+                        if previous_status not in {'quarantined', 'superseded'}:
+                            target.status = 'conflicted'
+                            target.updated_at = utcnow()
+                            _record_memory_lifecycle_event(
+                                session,
+                                thread_id=thread.id,
+                                node=target,
+                                event_type='node_conflicted',
+                                from_status=previous_status,
+                                to_status='conflicted',
+                                actor='memory_conflict_detector',
+                                source='memory_conflict_detector',
+                                summary=f"Node {target.id} entered conflicted state",
+                                metadata={
+                                    'related_conflict_ids': [conflict.id],
+                                    'related_edge_ids': [contradiction.id],
+                                    **contradiction_links,
+                                    'supporting_memory_node_ids': [left_node.id, right_node.id],
+                                },
+                                created_run_id=target.created_run_id or row.created_run_id,
+                            )
+                    if row.id in {left_node.id, right_node.id}:
+                        row.status = 'conflicted'
         _invalidate_thread_projections(session, thread.id)
         session.commit()
         for conflict in created_conflicts:
@@ -229,6 +389,125 @@ def create_memory_node(thread_id: str, body: MemoryNodeCreateRequest):
             'node': {'id': row.id, 'surface_id': row.surface_id, 'node_type': row.node_type, 'status': row.status},
             'conflicts': [summarize_memory_conflict({'id': conflict.id, 'surface_id': conflict.surface_id, 'left_node_id': conflict.left_node_id, 'right_node_id': conflict.right_node_id, 'status': conflict.status, 'reason': conflict.reason, 'resolution_json': _jload(conflict.resolution_json, {})}) for conflict in created_conflicts],
         }
+
+
+@router.post('/threads/{thread_id}/memory/edges')
+def create_memory_edge(thread_id: str, body: MemoryEdgeCreateRequest):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        payload = normalize_memory_edge(body.model_dump() if hasattr(body, 'model_dump') else body.dict())
+        from_node_id = str(payload.get('from_node_id') or '').strip()
+        to_node_id = str(payload.get('to_node_id') or '').strip()
+        if not from_node_id or not to_node_id:
+            raise HTTPException(400, 'memory edge requires from_node_id and to_node_id')
+        from_node = session.get(MemoryNode, from_node_id)
+        to_node = session.get(MemoryNode, to_node_id)
+        if not from_node or not to_node:
+            raise HTTPException(400, 'memory edge references missing memory node')
+        if from_node.thread_id != thread.id or to_node.thread_id != thread.id:
+            raise HTTPException(400, 'memory edge nodes must belong to the thread')
+        row = session.exec(
+            select(MemoryEdge).where(
+                MemoryEdge.thread_id == thread.id,
+                MemoryEdge.edge_type == payload['edge_type'],
+                MemoryEdge.from_node_id == from_node_id,
+                MemoryEdge.to_node_id == to_node_id,
+            )
+        ).first()
+        if row is None:
+            row = MemoryEdge(
+                thread_id=thread.id,
+                edge_type=payload['edge_type'],
+                from_node_id=from_node_id,
+                to_node_id=to_node_id,
+            )
+        row.from_surface_id = from_node.surface_id
+        row.to_surface_id = to_node.surface_id
+        row.status = str(payload.get('status') or 'active').strip() or 'active'
+        row.rationale = str(payload.get('rationale') or '').strip()
+        row.provenance_json = _jdump(payload.get('provenance') or {})
+        row.created_run_id = str(payload.get('created_run_id') or from_node.created_run_id or to_node.created_run_id or '').strip() or None
+        row.updated_at = utcnow()
+        session.add(row)
+        _invalidate_thread_projections(session, thread.id)
+        session.commit()
+        session.refresh(row)
+        node_lookup = {
+            from_node.id: {
+                'id': from_node.id,
+                'node_type': from_node.node_type,
+                'owner_role_id': from_node.owner_role_id,
+                'content_json': _jload(from_node.content_json, {}),
+                'provenance_json': _jload(from_node.provenance_json, {}),
+            },
+            to_node.id: {
+                'id': to_node.id,
+                'node_type': to_node.node_type,
+                'owner_role_id': to_node.owner_role_id,
+                'content_json': _jload(to_node.content_json, {}),
+                'provenance_json': _jload(to_node.provenance_json, {}),
+            },
+        }
+        return {'edge': summarize_memory_edge({
+            'id': row.id,
+            'edge_type': row.edge_type,
+            'from_node_id': row.from_node_id,
+            'to_node_id': row.to_node_id,
+            'from_surface_id': row.from_surface_id,
+            'to_surface_id': row.to_surface_id,
+            'status': row.status,
+            'rationale': row.rationale,
+            'provenance_json': _jload(row.provenance_json, {}),
+            'created_run_id': row.created_run_id,
+            'created_at': row.created_at,
+            'updated_at': row.updated_at,
+        }, node_lookup=node_lookup)}
+
+
+@router.get('/threads/{thread_id}/memory/edges')
+def list_memory_edges(thread_id: str, run_id: str | None = None, node_id: str | None = None, limit: int = 40):
+    clean_limit = max(1, min(int(limit or 40), 200))
+    clean_run_id = str(run_id or '').strip() or None
+    clean_node_id = str(node_id or '').strip() or None
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        statement = select(MemoryEdge).where(MemoryEdge.thread_id == thread.id)
+        if clean_run_id:
+            statement = statement.where(MemoryEdge.created_run_id == clean_run_id)
+        rows = session.exec(statement.order_by(MemoryEdge.updated_at.desc()).limit(clean_limit)).all()
+        if clean_node_id:
+            rows = [row for row in rows if row.from_node_id == clean_node_id or row.to_node_id == clean_node_id]
+        node_ids = {row.from_node_id for row in rows} | {row.to_node_id for row in rows}
+        node_rows = session.exec(select(MemoryNode).where(MemoryNode.thread_id == thread.id)).all()
+        node_lookup = {
+            row.id: {
+                'id': row.id,
+                'node_type': row.node_type,
+                'owner_role_id': row.owner_role_id,
+                'content_json': _jload(row.content_json, {}),
+                'provenance_json': _jload(row.provenance_json, {}),
+            }
+            for row in node_rows if row.id in node_ids
+        }
+        items = [summarize_memory_edge({
+            'id': row.id,
+            'edge_type': row.edge_type,
+            'from_node_id': row.from_node_id,
+            'to_node_id': row.to_node_id,
+            'from_surface_id': row.from_surface_id,
+            'to_surface_id': row.to_surface_id,
+            'status': row.status,
+            'rationale': row.rationale,
+            'provenance_json': _jload(row.provenance_json, {}),
+            'created_run_id': row.created_run_id,
+            'created_at': row.created_at,
+            'updated_at': row.updated_at,
+        }, node_lookup=node_lookup) for row in rows]
+        type_counts: dict[str, int] = {}
+        for item in items:
+            key = str(item.get('edge_type') or 'related_to')
+            type_counts[key] = type_counts.get(key, 0) + 1
+        return {'items': items, 'count': len(items), 'type_counts': type_counts}
 
 
 @router.post('/threads/{thread_id}/memory/project')
@@ -350,6 +629,108 @@ def list_memory_projections(thread_id: str, run_id: str | None = None, limit: in
         return {'items': items, 'count': len(items)}
 
 
+@router.post('/threads/{thread_id}/memory/nodes/{node_id}/transition')
+def transition_memory_node(thread_id: str, node_id: str, body: MemoryNodeTransitionRequest):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        node = session.get(MemoryNode, node_id)
+        if not node or node.thread_id != thread.id:
+            raise HTTPException(404, 'memory node not found')
+        to_status = str(body.to_status or '').strip()
+        if not to_status:
+            raise HTTPException(400, 'to_status is required')
+        previous_status = str(node.status or 'draft').strip() or 'draft'
+        node.status = to_status
+        node.updated_at = utcnow()
+        transition_payload = body.event_metadata if isinstance(body.event_metadata, dict) else {}
+        transition_links = _extract_supporting_links(transition_payload, _jload(node.provenance_json, {}))
+        related_edge_ids: list[str] = []
+        published_from_id = str(body.published_from_node_id or '').strip()
+        if published_from_id:
+            source_node = session.get(MemoryNode, published_from_id)
+            if not source_node or source_node.thread_id != thread.id:
+                raise HTTPException(400, 'published_from_node_id must reference a memory node in the thread')
+            published_edge = _upsert_memory_edge(
+                session,
+                thread_id=thread.id,
+                edge_type='published_from',
+                from_node=source_node,
+                to_node=node,
+                rationale=body.summary or f'Published node {node.id} from {source_node.id}',
+                provenance={**transition_links, 'supporting_memory_node_ids': [source_node.id, node.id]},
+                created_run_id=body.created_run_id or node.created_run_id or source_node.created_run_id,
+            )
+            related_edge_ids.append(published_edge.id)
+        supersedes_ids = [str(item).strip() for item in (body.supersedes_node_ids or []) if str(item).strip()]
+        for losing_id in supersedes_ids:
+            losing_node = session.get(MemoryNode, losing_id)
+            if not losing_node or losing_node.thread_id != thread.id:
+                raise HTTPException(400, f'invalid supersedes node: {losing_id}')
+            supersedes_edge = _upsert_memory_edge(
+                session,
+                thread_id=thread.id,
+                edge_type='supersedes',
+                from_node=node,
+                to_node=losing_node,
+                rationale=body.summary or f'Node {node.id} supersedes {losing_node.id}',
+                provenance={**transition_links, 'supporting_memory_node_ids': [node.id, losing_node.id]},
+                created_run_id=body.created_run_id or node.created_run_id or losing_node.created_run_id,
+            )
+            related_edge_ids.append(supersedes_edge.id)
+        _record_memory_lifecycle_event(
+            session,
+            thread_id=thread.id,
+            node=node,
+            event_type=lifecycle_event_type_for_status(to_status),
+            from_status=previous_status,
+            to_status=to_status,
+            actor=body.actor or node.owner_role_id or node.owner_agent_id or 'operator',
+            source=body.source or 'memory_node_transition',
+            summary=body.summary or f'Node {node.id} moved from {previous_status} to {to_status}',
+            metadata={
+                **transition_payload,
+                **transition_links,
+                'related_edge_ids': related_edge_ids,
+                'supporting_memory_node_ids': [node.id, *supersedes_ids, *([published_from_id] if published_from_id else [])],
+            },
+            created_run_id=body.created_run_id or node.created_run_id,
+        )
+        _invalidate_thread_projections(session, thread.id)
+        session.add(node)
+        session.commit()
+        session.refresh(node)
+        return {'node': {'id': node.id, 'surface_id': node.surface_id, 'node_type': node.node_type, 'status': node.status}, 'related_edge_ids': related_edge_ids}
+
+
+@router.get('/threads/{thread_id}/memory/lifecycle-events')
+def list_memory_lifecycle_events(thread_id: str, run_id: str | None = None, node_id: str | None = None, limit: int = 50):
+    clean_limit = max(1, min(int(limit or 50), 200))
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        statement = select(MemoryLifecycleEvent).where(MemoryLifecycleEvent.thread_id == thread.id)
+        if run_id and str(run_id).strip():
+            statement = statement.where(MemoryLifecycleEvent.created_run_id == str(run_id).strip())
+        if node_id and str(node_id).strip():
+            statement = statement.where(MemoryLifecycleEvent.node_id == str(node_id).strip())
+        rows = session.exec(statement.order_by(MemoryLifecycleEvent.created_at.desc()).limit(clean_limit)).all()
+        items = [summarize_memory_lifecycle_event({
+            'id': row.id,
+            'thread_id': row.thread_id,
+            'node_id': row.node_id,
+            'surface_id': row.surface_id,
+            'event_type': row.event_type,
+            'from_status': row.from_status,
+            'to_status': row.to_status,
+            'actor': row.actor,
+            'source': row.source,
+            'summary': row.summary,
+            'metadata_json': _jload(row.metadata_json, {}),
+            'created_run_id': row.created_run_id,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+        }) for row in rows]
+        return {'items': items, 'count': len(items)}
+
+
 @router.get('/threads/{thread_id}/memory/conflicts')
 def list_memory_conflicts(thread_id: str, status: str | None = None, surface_id: str | None = None, limit: int = 30):
     clean_limit = max(1, min(int(limit or 30), 100))
@@ -418,20 +799,99 @@ def resolve_memory_conflict(conflict_id: str, body: MemoryConflictResolveRequest
         winner = session.get(MemoryNode, winner_id) if winner_id else None
         if winner is not None and winner.thread_id != thread.id:
             raise HTTPException(400, 'winning node does not belong to the conflict thread')
+        related_edge_ids: list[str] = []
         if winner:
+            winner_previous_status = str(winner.status or 'draft').strip() or 'draft'
             if row.status in {'resolved', 'accepted', 'merged'}:
                 winner.status = 'published'
             elif row.status == 'quarantined':
                 winner.status = 'quarantined'
             winner.updated_at = utcnow()
+            _record_memory_lifecycle_event(
+                session,
+                thread_id=thread.id,
+                node=winner,
+                event_type=lifecycle_event_type_for_status(winner.status),
+                from_status=winner_previous_status,
+                to_status=winner.status,
+                actor=resolution.get('resolved_by') or 'operator',
+                source=resolution.get('resolution_source') or 'operator_ui',
+                summary=resolution.get('summary') or f'Conflict {row.id} selected node {winner.id}',
+                metadata={
+                    'related_conflict_ids': [row.id],
+                    'rationale_codes': resolution.get('rationale_codes') or [],
+                    'supporting_claim_node_ids': resolution.get('supporting_claim_node_ids') or [],
+                    'supporting_evidence_node_ids': resolution.get('supporting_evidence_node_ids') or [],
+                    'supporting_memory_node_ids': resolution.get('supporting_memory_node_ids') or [winner.id, *list(losing_ids)],
+                },
+                created_run_id=winner.created_run_id,
+            )
         for node_id in losing_ids:
             node = session.get(MemoryNode, node_id)
             if not node:
                 raise HTTPException(400, f'losing node not found: {node_id}')
             if node.thread_id != thread.id:
                 raise HTTPException(400, 'losing node does not belong to the conflict thread')
+            previous_status = str(node.status or 'draft').strip() or 'draft'
             node.status = 'quarantined' if row.status == 'quarantined' else 'superseded'
             node.updated_at = utcnow()
+            _record_memory_lifecycle_event(
+                session,
+                thread_id=thread.id,
+                node=node,
+                event_type=lifecycle_event_type_for_status(node.status),
+                from_status=previous_status,
+                to_status=node.status,
+                actor=resolution.get('resolved_by') or 'operator',
+                source=resolution.get('resolution_source') or 'operator_ui',
+                summary=resolution.get('summary') or f'Conflict {row.id} marked node {node.id} as {node.status}',
+                metadata={
+                    'related_conflict_ids': [row.id],
+                    'winning_node_id': winner.id if winner else None,
+                    'rationale_codes': resolution.get('rationale_codes') or [],
+                    'supporting_claim_node_ids': resolution.get('supporting_claim_node_ids') or [],
+                    'supporting_evidence_node_ids': resolution.get('supporting_evidence_node_ids') or [],
+                    'supporting_memory_node_ids': resolution.get('supporting_memory_node_ids') or ([winner.id] if winner else []) + [node.id],
+                },
+                created_run_id=node.created_run_id,
+            )
+            if winner and row.status in {'resolved', 'accepted', 'merged'}:
+                edge = _upsert_memory_edge(
+                    session,
+                    thread_id=thread.id,
+                    edge_type='supersedes',
+                    from_node=winner,
+                    to_node=node,
+                    rationale=resolution.get('summary') or f'Node {winner.id} supersedes {node.id}',
+                    provenance={
+                        'related_conflict_ids': [row.id],
+                        'supporting_claim_node_ids': resolution.get('supporting_claim_node_ids') or [],
+                        'evidence_node_ids': resolution.get('supporting_evidence_node_ids') or [],
+                        'supporting_memory_node_ids': resolution.get('supporting_memory_node_ids') or [winner.id, node.id],
+                    },
+                    created_run_id=winner.created_run_id or node.created_run_id,
+                )
+                related_edge_ids.append(edge.id)
+        if winner and related_edge_ids:
+            _record_memory_lifecycle_event(
+                session,
+                thread_id=thread.id,
+                node=winner,
+                event_type='node_updated',
+                from_status=winner.status,
+                to_status=winner.status,
+                actor=resolution.get('resolved_by') or 'operator',
+                source='memory_conflict_resolution',
+                summary=f'Conflict {row.id} generated supersession edges',
+                metadata={
+                    'related_conflict_ids': [row.id],
+                    'related_edge_ids': related_edge_ids,
+                    'supporting_claim_node_ids': resolution.get('supporting_claim_node_ids') or [],
+                    'supporting_evidence_node_ids': resolution.get('supporting_evidence_node_ids') or [],
+                    'supporting_memory_node_ids': [winner.id, *list(losing_ids)],
+                },
+                created_run_id=winner.created_run_id,
+            )
         _invalidate_thread_projections(session, thread.id)
         session.add(row)
         session.commit()

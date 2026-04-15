@@ -1,3 +1,4 @@
+import json
 import unittest
 
 try:
@@ -5,9 +6,9 @@ try:
     from sqlmodel import SQLModel, Session, select
 
     from app.auth import Principal, reset_current_principal, set_current_principal
-    from app.models import MemoryConflict, MemoryNode, MemoryProjection, MemorySurface, Thread
+    from app.models import MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, MemorySurface, Thread
     from app.routers import memory_graphs as memory_graphs_router
-    from app.schemas import MemoryConflictResolveRequest, MemoryNodeCreateRequest, MemoryProjectionRequest, MemorySurfaceCreateRequest
+    from app.schemas import MemoryConflictResolveRequest, MemoryNodeCreateRequest, MemoryNodeTransitionRequest, MemoryProjectionRequest, MemorySurfaceCreateRequest
     from tests.db_test_utils import create_test_engine, dispose_tracked_engines
 except ModuleNotFoundError as exc:  # pragma: no cover
     HTTPException = None
@@ -18,6 +19,8 @@ except ModuleNotFoundError as exc:  # pragma: no cover
     reset_current_principal = None
     set_current_principal = None
     MemoryConflict = None
+    MemoryEdge = None
+    MemoryLifecycleEvent = None
     MemoryNode = None
     MemoryProjection = None
     MemorySurface = None
@@ -25,6 +28,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover
     memory_graphs_router = None
     MemoryConflictResolveRequest = None
     MemoryNodeCreateRequest = None
+    MemoryNodeTransitionRequest = None
     MemoryProjectionRequest = None
     MemorySurfaceCreateRequest = None
     create_test_engine = None
@@ -139,6 +143,53 @@ class MemoryGraphRuntimeGuardTests(unittest.TestCase):
             self.assertEqual(node_a.status, 'published')
             self.assertEqual(node_b.status, 'superseded')
             self.assertEqual(session.exec(select(MemoryProjection)).all(), [])
+            lifecycle_rows = session.exec(select(MemoryLifecycleEvent).where(MemoryLifecycleEvent.thread_id == self.thread_id)).all()
+            self.assertGreaterEqual(len(lifecycle_rows), 5)
+            event_types = {row.event_type for row in lifecycle_rows}
+            self.assertIn('node_conflicted', event_types)
+            self.assertIn('node_superseded', event_types)
+            self.assertIn('node_published', event_types)
+
+    def test_transition_memory_node_records_lifecycle_and_edges(self):
+        memory_graphs_router.create_memory_surface(
+            self.thread_id,
+            MemorySurfaceCreateRequest(surface_id='working_memory', title='Working Memory'),
+        )
+        source = memory_graphs_router.create_memory_node(
+            self.thread_id,
+            MemoryNodeCreateRequest(surface_id='working_memory', node_type='draft', content={'summary': 'draft memory'}),
+        )
+        target = memory_graphs_router.create_memory_node(
+            self.thread_id,
+            MemoryNodeCreateRequest(surface_id='working_memory', node_type='context', content={'summary': 'final memory'}),
+        )
+        transitioned = memory_graphs_router.transition_memory_node(
+            self.thread_id,
+            target['node']['id'],
+            MemoryNodeTransitionRequest(
+                to_status='published',
+                summary='Publish final memory from draft',
+                actor='planner',
+                source='operator_ui',
+                metadata={
+                    'supporting_claim_node_ids': ['claim-1'],
+                    'supporting_evidence_node_ids': ['ev-1'],
+                },
+                published_from_node_id=source['node']['id'],
+            ),
+        )
+        self.assertEqual(transitioned['node']['status'], 'published')
+        self.assertEqual(len(transitioned['related_edge_ids']), 1)
+        listed = memory_graphs_router.list_memory_lifecycle_events(self.thread_id, node_id=target['node']['id'])
+        self.assertGreaterEqual(listed['count'], 2)
+        self.assertEqual((listed['items'] or [])[0]['to_status'], 'published')
+        self.assertEqual((listed['items'] or [])[0].get('supporting_claim_node_ids'), ['claim-1'])
+        self.assertEqual((listed['items'] or [])[0].get('supporting_evidence_node_ids'), ['ev-1'])
+        with Session(self.engine) as session:
+            edge = session.exec(select(MemoryEdge).where(MemoryEdge.thread_id == self.thread_id)).first()
+            provenance = json.loads(edge.provenance_json or '{}') if edge else {}
+            self.assertEqual(provenance.get('supporting_claim_node_ids'), ['claim-1'])
+            self.assertEqual(provenance.get('supporting_evidence_node_ids'), ['ev-1'])
 
     def test_create_memory_surface_upserts_by_thread_and_surface_id(self):
         created = memory_graphs_router.create_memory_surface(

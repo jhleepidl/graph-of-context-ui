@@ -163,6 +163,49 @@ export type RuntimeAgentWithSkills = {
   interaction_contract?: Record<string, unknown> | null
 }
 
+export type ExecutableTeamDefinitionSummary = {
+  member_count?: number | null
+  participant_count?: number | null
+  role_ids?: string[]
+  executable_ready?: boolean | null
+  executable_readiness?: {
+    ready?: boolean | null
+    runtime_bound?: boolean | null
+    admission_status?: string | null
+    decision?: string | null
+  } | null
+  topology_contract?: {
+    pattern?: string | null
+    execution_pattern?: string | null
+    edge_count?: number | null
+    [key: string]: unknown
+  } | null
+  interaction_topology_contract?: {
+    pattern?: string | null
+    execution_pattern?: string | null
+    edge_count?: number | null
+    [key: string]: unknown
+  } | null
+  memory_contract?: {
+    surface_count?: number | null
+    writable_surface_count?: number | null
+    final_answer_surface_ready?: boolean | null
+    acl_count?: number | null
+    publish_capable_roles?: string[]
+    [key: string]: unknown
+  } | null
+  memory_governance_policy?: {
+    surface_count?: number | null
+    shared_surface_count?: number | null
+    private_surface_count?: number | null
+    acl_count?: number | null
+    publish_surface_ids?: string[]
+    [key: string]: unknown
+  } | null
+  capability_contract?: Record<string, unknown> | null
+  [key: string]: unknown
+}
+
 export type TeamBlueprintSummary = {
   source?: string | null
   blueprint_id?: string | null
@@ -210,6 +253,7 @@ export type TeamBlueprintSummary = {
     target_roles?: string[]
     semantic_slots?: string[]
   }>
+  executable_definition?: ExecutableTeamDefinitionSummary | null
   memory_acl_summary?: Array<{
     role_id?: string | null
     read_scope_mode?: string | null
@@ -404,6 +448,47 @@ export type TeamSelectionDataset = {
   rows?: TeamSelectionDatasetRow[]
 }
 
+export type MemoryLifecycleEvent = {
+  id?: string | null
+  thread_id?: string | null
+  node_id?: string | null
+  surface_id?: string | null
+  event_type?: string | null
+  event_title?: string | null
+  from_status?: string | null
+  to_status?: string | null
+  actor?: string | null
+  source?: string | null
+  summary?: string | null
+  metadata?: Record<string, unknown> | null
+  created_run_id?: string | null
+  created_at?: string | null
+  related_edge_ids?: string[]
+  related_conflict_ids?: string[]
+  supporting_memory_node_ids?: string[]
+  supporting_claim_node_ids?: string[]
+  supporting_evidence_node_ids?: string[]
+}
+
+export type MemoryNodeDrilldown = {
+  node_id?: string | null
+  surface_id?: string | null
+  node_type?: string | null
+  status?: string | null
+  trust_tier?: string | null
+  confidence?: number | null
+  owner_agent_id?: string | null
+  owner_role_id?: string | null
+  created_run_id?: string | null
+  content_preview?: string | null
+  provenance_fingerprint?: string | null
+  visibility_reason?: string | null
+  blocked_reason?: string | null
+  lifecycle_event_count?: number
+  latest_lifecycle_event?: MemoryLifecycleEvent | null
+  lifecycle_status_path?: string[]
+}
+
 export type MemoryProjectionDetail = {
   projection_id?: string | null
   run_id?: string | null
@@ -416,9 +501,17 @@ export type MemoryProjectionDetail = {
     blocked_surface_count?: number
     visible_node_count?: number
     blocked_node_count?: number
+    visible_surface_ids?: string[]
+    blocked_surface_ids?: string[]
+    surface_reason_map?: Record<string, string>
+    node_reason_map?: Record<string, string>
   } | null
+  visible_surface_ids?: string[]
+  blocked_surface_ids?: string[]
   visible_node_ids?: string[]
   blocked_node_ids?: string[]
+  visible_nodes?: MemoryNodeDrilldown[]
+  blocked_nodes?: MemoryNodeDrilldown[]
   created_at?: string | null
 }
 
@@ -445,13 +538,47 @@ export type ConflictHistoryEvent = {
   latest_merge_event?: ConflictHistoryEvent | null
 }
 
+export type MemoryEdgeDetail = {
+  id?: string | null
+  edge_type?: string | null
+  edge_type_title?: string | null
+  from_node_id?: string | null
+  to_node_id?: string | null
+  from_surface_id?: string | null
+  to_surface_id?: string | null
+  status?: string | null
+  rationale?: string | null
+  created_run_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  from_node_type?: string | null
+  to_node_type?: string | null
+  from_node_preview?: string | null
+  to_node_preview?: string | null
+  from_owner_role_id?: string | null
+  to_owner_role_id?: string | null
+  provenance_fingerprint?: string | null
+  evidence_node_ids?: string[]
+  supporting_claim_node_ids?: string[]
+  supporting_memory_node_ids?: string[]
+}
+
 export type MemoryConflictDetail = {
   id?: string | null
   surface_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
   left_node_id?: string | null
   right_node_id?: string | null
   status?: string | null
   reason?: string | null
+  conflict_key?: string | null
+  left_trust_tier?: string | null
+  right_trust_tier?: string | null
+  left_confidence?: number | null
+  right_confidence?: number | null
+  left_provenance_fingerprint?: string | null
+  right_provenance_fingerprint?: string | null
   resolution_status?: string | null
   winning_node_id?: string | null
   losing_node_ids?: string[]
@@ -460,14 +587,27 @@ export type MemoryConflictDetail = {
   supporting_claim_node_ids?: string[]
   supporting_evidence_node_ids?: string[]
   supporting_memory_node_ids?: string[]
+  history?: ConflictHistoryEvent[]
+  history_count?: number
+  latest_history_event?: ConflictHistoryEvent | null
+  merge_history?: ConflictHistoryEvent[]
+  merge_history_count?: number
+  latest_merge_event?: ConflictHistoryEvent | null
 }
 
 export type RunStudioMemoryGraph = {
   projections?: MemoryProjectionDetail[]
   projection_count?: number
+  edges?: MemoryEdgeDetail[]
+  edge_count?: number
+  edge_type_counts?: Record<string, number>
+  lifecycle_events?: MemoryLifecycleEvent[]
+  lifecycle_event_count?: number
+  lifecycle_event_type_counts?: Record<string, number>
   conflicts?: MemoryConflictDetail[]
   conflict_count?: number
   conflict_status_counts?: Record<string, number>
+  conflict_reason_counts?: Record<string, number>
 }
 
 export type RunStudioTraceScope = {
@@ -497,8 +637,10 @@ export type RunStudioCrossReferences = {
     claim_node_type?: string | null
     claim_text?: string | null
     related_memory_node_ids?: string[]
+    related_memory_edge_ids?: string[]
     related_conflict_ids?: string[]
     related_evidence_node_ids?: string[]
+    related_lifecycle_event_ids?: string[]
     compare_node_ids?: string[]
     trace_anchor_related?: boolean
     selected_in_context?: boolean
@@ -516,6 +658,37 @@ export type RunStudioCrossReferences = {
     blocked_projection_count?: number
     related_claim_node_ids?: string[]
     related_conflict_ids?: string[]
+    related_edge_ids?: string[]
+    related_lifecycle_event_ids?: string[]
+    trace_anchor_related?: boolean
+  }>
+  edge_links?: Array<{
+    edge_id: string
+    edge_type?: string | null
+    edge_type_title?: string | null
+    from_node_id?: string | null
+    to_node_id?: string | null
+    from_surface_id?: string | null
+    to_surface_id?: string | null
+    status?: string | null
+    rationale?: string | null
+    created_run_id?: string | null
+    created_at?: string | null
+    updated_at?: string | null
+    from_node_type?: string | null
+    to_node_type?: string | null
+    from_node_preview?: string | null
+    to_node_preview?: string | null
+    from_owner_role_id?: string | null
+    to_owner_role_id?: string | null
+    provenance_fingerprint?: string | null
+    evidence_node_ids?: string[]
+    supporting_claim_node_ids?: string[]
+    supporting_memory_node_ids?: string[]
+    related_memory_node_ids?: string[]
+    related_claim_node_ids?: string[]
+    related_conflict_ids?: string[]
+    related_lifecycle_event_ids?: string[]
     trace_anchor_related?: boolean
   }>
   conflict_links?: Array<{
@@ -550,14 +723,248 @@ export type RunStudioCrossReferences = {
     } | null
     related_claim_node_ids?: string[]
     related_memory_node_ids?: string[]
+    related_edge_ids?: string[]
+    related_lifecycle_event_ids?: string[]
+    trace_anchor_related?: boolean
+  }>
+  lifecycle_links?: Array<{
+    event_id: string
+    event_type?: string | null
+    event_title?: string | null
+    node_id?: string | null
+    surface_id?: string | null
+    from_status?: string | null
+    to_status?: string | null
+    actor?: string | null
+    source?: string | null
+    summary?: string | null
+    created_run_id?: string | null
+    created_at?: string | null
+    supporting_memory_node_ids?: string[]
+    supporting_claim_node_ids?: string[]
+    supporting_evidence_node_ids?: string[]
+    related_claim_node_ids?: string[]
+    related_evidence_node_ids?: string[]
+    related_conflict_ids?: string[]
+    related_edge_ids?: string[]
     trace_anchor_related?: boolean
   }>
   counts?: Record<string, number>
   anchor_related?: {
     claim_node_ids?: string[]
     memory_node_ids?: string[]
+    edge_ids?: string[]
     conflict_ids?: string[]
+    lifecycle_event_ids?: string[]
   } | null
+}
+
+export type RunStudioAuditTimelineEvent = {
+  event_id: string
+  timestamp?: string | null
+  category?: string | null
+  title?: string | null
+  summary?: string | null
+  status?: string | null
+  run_id?: string | null
+  selection_event_id?: string | null
+  projection_id?: string | null
+  conflict_id?: string | null
+  claim_node_id?: string | null
+  memory_node_id?: string | null
+  primary_node_id?: string | null
+  related_node_ids?: string[]
+  trace_node_ids?: string[]
+  trace_anchor_related?: boolean
+  rationale_codes?: string[]
+  badges?: string[]
+  metadata?: Record<string, unknown> | null
+}
+
+export type RunStudioAuditTimeline = {
+  run_id?: string | null
+  scope?: string | null
+  selection_event_id?: string | null
+  anchor_node_id?: string | null
+  started_at?: string | null
+  ended_at?: string | null
+  count?: number
+  category_counts?: Record<string, number>
+  status_counts?: Record<string, number>
+  items?: RunStudioAuditTimelineEvent[]
+}
+
+export type RunStudioProjectionRetrievalItem = {
+  runtime_instance_id?: string | null
+  role_id?: string | null
+  display_label?: string | null
+  scope_id?: string | null
+  visibility_mode?: string | null
+  grant_labels?: string[]
+  active_node_count?: number
+  authoritative_scope?: boolean
+  empty_scope?: boolean
+  scope_context_set_id?: string | null
+  selection_summary?: string | null
+  selection_confidence?: string | null
+  projection_id?: string | null
+  projection_created_at?: string | null
+  visible_node_count?: number
+  blocked_node_count?: number
+  visible_surface_ids?: string[]
+  blocked_surface_ids?: string[]
+  status?: string | null
+  projection_authoritative?: boolean
+  traceable_in_memory_graph?: boolean
+  context_source?: string | null
+  degraded_mode?: boolean
+  fallback_reason?: string | null
+}
+
+export type RunStudioProjectionRetrieval = {
+  run_id?: string | null
+  scope?: string | null
+  summary?: {
+    status?: string | null
+    projection_authoritative?: boolean
+    scope_first_ready?: boolean
+    context_runtime_mode?: string | null
+    context_source?: string | null
+    degraded_mode?: boolean
+    fallback_reason?: string | null
+    coverage_note?: string | null
+    scope_projection_note?: string | null
+    visibility_relation_count?: number
+  } | null
+  counts?: Record<string, number>
+  items?: RunStudioProjectionRetrievalItem[]
+  planner_system_paths?: RunStudioProjectionRetrievalItem[]
+  visibility_relation_counts?: Record<string, number>
+  runtime_authority?: RuntimeAuthorityProjection
+}
+
+
+export type RunStudioGraphCompressionCluster = {
+  cluster_id: string
+  cluster_type?: string | null
+  label?: string | null
+  headline?: string | null
+  status?: string | null
+  claim_node_ids?: string[]
+  evidence_node_ids?: string[]
+  memory_node_ids?: string[]
+  edge_ids?: string[]
+  lifecycle_event_ids?: string[]
+  conflict_ids?: string[]
+  role_ids?: string[]
+  surface_ids?: string[]
+  representative_claim_node_ids?: string[]
+  representative_evidence_node_ids?: string[]
+  representative_memory_node_ids?: string[]
+  representative_edge_ids?: string[]
+  representative_lifecycle_event_ids?: string[]
+  support_frontier_node_ids?: string[]
+  conflict_frontier_ids?: string[]
+  decision_path_event_ids?: string[]
+  omitted_memory_node_ids?: string[]
+  rendered_summary?: string | null
+  reexpand_handles?: {
+    claim_node_ids?: string[]
+    evidence_node_ids?: string[]
+    memory_node_ids?: string[]
+    edge_ids?: string[]
+    lifecycle_event_ids?: string[]
+    conflict_ids?: string[]
+    trace_anchor_related?: boolean
+  } | null
+}
+
+export type RunStudioGraphCompressionRoleView = {
+  role_id?: string | null
+  display_label?: string | null
+  projection_id?: string | null
+  status?: string | null
+  visible_cluster_ids?: string[]
+  blocked_cluster_ids?: string[]
+  core_claim_node_ids?: string[]
+  support_frontier_node_ids?: string[]
+  conflict_frontier_ids?: string[]
+  decision_path_event_ids?: string[]
+  rendered_context?: string | null
+  reexpand_handles?: {
+    memory_node_ids?: string[]
+    cluster_ids?: string[]
+  } | null
+}
+
+export type RunStudioHarnessSummary = {
+  schema_version?: string | null
+  spec_hash?: string | null
+  name?: string | null
+  description?: string | null
+  tags?: string[]
+  visibility?: string | null
+  shareable?: boolean
+  exportable?: boolean
+  compression_enabled?: boolean
+  role_delivery?: Record<string, string>
+  resolved_role_delivery?: Record<string, {
+    requested_role_id?: string | null
+    effective_role_id?: string | null
+    delivery_mode?: string | null
+    appendix_enabled?: boolean
+    appendix_char_budget_ratio?: number
+    budget_tier?: string | null
+    risk_level?: string | null
+  }>
+  delivery_policy?: {
+    default_delivery_mode?: string | null
+    appendix_char_budget_ratio?: number
+    default_budget_tier?: string | null
+    default_risk_level?: string | null
+    projection_appendix_enabled_by_default?: boolean
+    normalize_orchestration_roles_to_operator?: boolean
+  } | null
+  audit_flags?: Record<string, boolean>
+  updated_at?: string | null
+}
+
+export type RunStudioHarnessSpec = {
+  schema_version?: string | null
+  metadata?: Record<string, unknown> | null
+  projection_policy?: Record<string, unknown> | null
+  compression_policy?: Record<string, unknown> | null
+  tool_policy?: Record<string, unknown> | null
+  approval_policy?: Record<string, unknown> | null
+  audit_policy?: Record<string, unknown> | null
+  sharing?: Record<string, unknown> | null
+}
+
+export type RunStudioGraphCompression = {
+  run_id?: string | null
+  scope?: string | null
+  anchor_node_id?: string | null
+  summary?: {
+    compression_mode?: string | null
+    cluster_count?: number
+    role_view_count?: number
+    core_claim_count?: number
+    support_frontier_count?: number
+    conflict_frontier_count?: number
+    decision_path_count?: number
+    omitted_cluster_count?: number
+    unresolved_conflict_count?: number
+    compression_note?: string | null
+  } | null
+  counts?: Record<string, number>
+  clusters?: RunStudioGraphCompressionCluster[]
+  role_views?: RunStudioGraphCompressionRoleView[]
+  omitted_clusters?: Array<{
+    cluster_id?: string | null
+    cluster_type?: string | null
+    reason?: string | null
+    memory_node_count?: number
+  }>
 }
 
 export type RunStudioRunBundle = {
@@ -570,6 +977,11 @@ export type RunStudioRunBundle = {
   memory_graph?: RunStudioMemoryGraph | null
   trace_scope?: RunStudioTraceScope | null
   cross_references?: RunStudioCrossReferences | null
+  projection_retrieval?: RunStudioProjectionRetrieval | null
+  audit_timeline?: RunStudioAuditTimeline | null
+  graph_native_compression?: RunStudioGraphCompression | null
+  harness_spec?: RunStudioHarnessSpec | null
+  harness_summary?: RunStudioHarnessSummary | null
 }
 
 export type VisibilityProjection = {

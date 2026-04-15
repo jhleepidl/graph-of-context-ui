@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.models import ContextSet, Edge, MemoryConflict, MemoryNode, MemoryProjection, Node, Thread
+from app.models import ContextSet, Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, Node, TeamSelectionEvent, Thread
 from app.services.conversation_team import build_conversation_team_projection
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
@@ -23,11 +27,80 @@ from app.services.run_skill_summary import (
     build_thread_context_pack_summary,
     build_thread_skill_usage_summary,
 )
-from app.services.memory_graph import summarize_memory_conflicts
+from app.services.memory_graph import summarize_memory_conflicts, summarize_memory_edge, summarize_memory_lifecycle_event
+from app.services.run_studio_cross_references import build_run_bundle_cross_references as _build_run_bundle_cross_references_impl
+from app.services.run_studio_audit_timeline import build_run_studio_audit_timeline_impl
+from app.services.run_studio_graph_compression import build_run_studio_graph_compression
+from app.services.context_cache import build_cache_key, get_global_context_cache
+from app.services.harness_spec import get_thread_harness_spec, build_harness_summary
 from app.services.runtime_scope import build_step_run_id_index
+from app.services.team_recommender import build_team_selection_dataset
 
 
 CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary"}
+
+
+RUN_BUNDLE_CACHE_VERSION = "v1"
+PROJECTION_RETRIEVAL_CACHE_VERSION = "v1"
+CROSS_REFERENCE_CACHE_VERSION = "v1"
+AUDIT_TIMELINE_CACHE_VERSION = "v1"
+GRAPH_COMPRESSION_CACHE_VERSION = "v1"
+
+
+def _context_cache_versions() -> dict[str, str]:
+    return {
+        'run_bundle': RUN_BUNDLE_CACHE_VERSION,
+        'projection_retrieval': PROJECTION_RETRIEVAL_CACHE_VERSION,
+        'cross_references': CROSS_REFERENCE_CACHE_VERSION,
+        'audit_timeline': AUDIT_TIMELINE_CACHE_VERSION,
+        'graph_compression': GRAPH_COMPRESSION_CACHE_VERSION,
+    }
+
+
+def _query_version_stats(session: Session, model: Any, field: Any, *, thread_id: str) -> dict[str, Any]:
+    latest, count = session.exec(
+        select(func.max(field), func.count()).where(model.thread_id == thread_id)
+    ).one()
+    return {
+        'latest_at': _iso_or_none(latest),
+        'count': int(count or 0),
+    }
+
+
+def _build_graph_version_payload(session: Session, *, thread: Thread, context_set: ContextSet | None) -> dict[str, Any]:
+    harness_spec = get_thread_harness_spec(thread)
+    harness_summary = build_harness_summary(harness_spec)
+    payload = {
+        'thread_id': thread.id,
+        'context_set_id': getattr(context_set, 'id', None),
+        'context_set_version': int(getattr(context_set, 'version', 0) or 0),
+        'context_set_updated_at': _iso_or_none(getattr(context_set, 'updated_at', None)),
+        'harness_spec_hash': harness_summary.get('spec_hash'),
+        'harness_spec_updated_at': harness_summary.get('updated_at'),
+        'tables': {
+            'nodes': _query_version_stats(session, Node, Node.created_at, thread_id=thread.id),
+            'edges': _query_version_stats(session, Edge, Edge.created_at, thread_id=thread.id),
+            'memory_nodes': _query_version_stats(session, MemoryNode, MemoryNode.updated_at, thread_id=thread.id),
+            'memory_edges': _query_version_stats(session, MemoryEdge, MemoryEdge.updated_at, thread_id=thread.id),
+            'memory_conflicts': _query_version_stats(session, MemoryConflict, MemoryConflict.updated_at, thread_id=thread.id),
+            'memory_lifecycle_events': _query_version_stats(session, MemoryLifecycleEvent, MemoryLifecycleEvent.created_at, thread_id=thread.id),
+            'memory_projections': _query_version_stats(session, MemoryProjection, MemoryProjection.created_at, thread_id=thread.id),
+            'team_selection_events': _query_version_stats(session, TeamSelectionEvent, TeamSelectionEvent.created_at, thread_id=thread.id),
+        },
+    }
+    digest = hashlib.sha1(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode('utf-8')).hexdigest()[:16]
+    payload['graph_version'] = digest
+    return payload
+
+
+def _cached_artifact(cache: Any, *, namespace: str, payload: dict[str, Any], build_fn: Any) -> tuple[Any, bool, str]:
+    key = build_cache_key(namespace, payload)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached, True, key
+    value = build_fn()
+    cache.set(key, value)
+    return value, False, key
 EVIDENCE_EDGE_TYPES = {"SUPPORTS", "REFERENCES", "DEPENDS"}
 CONFLICT_EDGE_TYPES = {"CONFLICTS", "CONTRADICTS"}
 
@@ -44,6 +117,77 @@ def _short_text(value: str, max_len: int = 220) -> str:
     if len(compact) <= max_len:
         return compact
     return f"{compact[:max_len]}..."
+
+
+def _iso_or_none(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    clean = str(value or '').strip()
+    return clean or None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    clean = str(value or '').strip()
+    if not clean:
+        return None
+    try:
+        if clean.endswith('Z'):
+            clean = clean[:-1] + '+00:00'
+        parsed = datetime.fromisoformat(clean)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _timeline_event_sort_key(item: dict[str, Any]) -> tuple[float, str, str]:
+    parsed = _parse_datetime(item.get('timestamp'))
+    ts = parsed.timestamp() if parsed else 0.0
+    return (ts, str(item.get('category') or ''), str(item.get('event_id') or ''))
+
+
+def _push_timeline_event(items: list[dict[str, Any]], seen: set[str], event: dict[str, Any]) -> None:
+    event_id = str(event.get('event_id') or '').strip()
+    if not event_id or event_id in seen:
+        return
+    seen.add(event_id)
+    items.append(event)
+
+def _clean_text(value: Any) -> str | None:
+    clean = str(value or '').strip()
+    return clean or None
+
+
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+    return bool(value)
+
+
+def _count_entries(value: Any) -> int:
+    if isinstance(value, (list, tuple, set)):
+        return len(value)
+    if value is None:
+        return 0
+    return 1
+
+
+def _graph_or_load(
+    session: Session,
+    *,
+    thread_id: str,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
+) -> tuple[list[Node], list[Edge]]:
+    if nodes is not None and edges is not None:
+        return nodes, edges
+    loaded_nodes, loaded_edges = load_thread_graph(session, thread_id)
+    return loaded_nodes, loaded_edges
 
 
 def _resolve_context_set(
@@ -656,10 +800,12 @@ def build_run_studio_evidence(
     thread: Thread,
     context_set_id: str | None = None,
     run_id: str | None = None,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
 ) -> dict[str, Any]:
     context_set = _resolve_context_set(session, thread_id=thread.id, context_set_id=context_set_id)
     active_ids = _active_ids(context_set)
-    nodes, edges = load_thread_graph(session, thread.id)
+    nodes, edges = _graph_or_load(session, thread_id=thread.id, nodes=nodes, edges=edges)
     scoped_nodes, scoped_edges = _scope_graph_for_run(nodes=nodes, edges=edges, run_id=run_id)
     active_scope = set(str(node_id).strip() for node_id in active_ids if str(node_id).strip())
     if run_id:
@@ -677,8 +823,10 @@ def build_run_studio_trace_scope(
     *,
     thread: Thread,
     run_id: str | None = None,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
 ) -> dict[str, Any]:
-    nodes, edges = load_thread_graph(session, thread.id)
+    nodes, edges = _graph_or_load(session, thread_id=thread.id, nodes=nodes, edges=edges)
     scoped_nodes, scoped_edges = _scope_graph_for_run(nodes=nodes, edges=edges, run_id=run_id)
     clean_run_id = str(run_id or '').strip() or None
     step_run_id_by_step_id = build_step_run_id_index(nodes, edges)
@@ -892,223 +1040,90 @@ def _build_run_bundle_cross_references(
     memory_graph: dict[str, Any] | None,
     trace_scope: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    evidence_obj = evidence or {}
-    memory_obj = memory_graph or {}
-    trace_obj = trace_scope or {}
-    anchor_node_id = str(trace_obj.get('anchor_node_id') or '').strip() or None
-
-    memory_by_id: dict[str, dict[str, Any]] = {}
-    for projection in memory_obj.get('projections') or []:
-        projection_role_id = str(projection.get('role_id') or '').strip() or None
-        for blocked in (False, True):
-            for node in projection.get('blocked_nodes' if blocked else 'visible_nodes') or []:
-                node_id = str(node.get('node_id') or '').strip()
-                if not node_id:
-                    continue
-                entry = memory_by_id.setdefault(
-                    node_id,
-                    {
-                        'memory_node_id': node_id,
-                        'surface_id': str(node.get('surface_id') or '').strip() or None,
-                        'node_type': str(node.get('node_type') or '').strip() or None,
-                        'status': str(node.get('status') or '').strip() or None,
-                        'owner_role_id': str(node.get('owner_role_id') or '').strip() or None,
-                        'trust_tier': str(node.get('trust_tier') or '').strip() or None,
-                        'confidence': float(node.get('confidence') or 0.0),
-                        'content_preview': str(node.get('content_preview') or '').strip() or None,
-                        'provenance_fingerprint': str(node.get('provenance_fingerprint') or '').strip() or None,
-                        'projection_role_ids': [],
-                        'visible_projection_count': 0,
-                        'blocked_projection_count': 0,
-                        'related_claim_node_ids': [],
-                        'related_conflict_ids': [],
-                        'trace_anchor_related': False,
-                    },
-                )
-                if projection_role_id and projection_role_id not in entry['projection_role_ids']:
-                    entry['projection_role_ids'].append(projection_role_id)
-                if blocked:
-                    entry['blocked_projection_count'] += 1
-                else:
-                    entry['visible_projection_count'] += 1
-                if anchor_node_id and node_id == anchor_node_id:
-                    entry['trace_anchor_related'] = True
-
-    conflict_by_id: dict[str, dict[str, Any]] = {}
-    node_to_conflict_ids: dict[str, set[str]] = {}
-    for conflict in memory_obj.get('conflicts') or []:
-        conflict_id = str(conflict.get('id') or '').strip()
-        if not conflict_id:
-            continue
-        node_ids = _clean_node_ids([
-            conflict.get('left_node_id'),
-            conflict.get('right_node_id'),
-            conflict.get('winning_node_id'),
-            *list(conflict.get('losing_node_ids') or []),
-        ])
-        entry = {
-            'conflict_id': conflict_id,
-            'surface_id': str(conflict.get('surface_id') or '').strip() or None,
-            'status': str(conflict.get('status') or '').strip() or None,
-            'reason': str(conflict.get('reason') or '').strip() or None,
-            'node_ids': node_ids,
-            'winning_node_id': str(conflict.get('winning_node_id') or '').strip() or None,
-            'losing_node_ids': _clean_node_ids(list(conflict.get('losing_node_ids') or [])),
-            'resolution_summary': str(conflict.get('resolution_summary') or '').strip() or None,
-            'resolution_rationale_codes': _clean_node_ids(list(conflict.get('resolution_rationale_codes') or [])),
-            'supporting_claim_node_ids': _clean_node_ids(list(conflict.get('supporting_claim_node_ids') or [])),
-            'supporting_evidence_node_ids': _clean_node_ids(list(conflict.get('supporting_evidence_node_ids') or [])),
-            'supporting_memory_node_ids': _clean_node_ids(list(conflict.get('supporting_memory_node_ids') or [])),
-            'history': [item for item in (conflict.get('history') or []) if isinstance(item, dict)],
-            'history_count': int(conflict.get('history_count') or len(conflict.get('history') or [])),
-            'latest_history_event': conflict.get('latest_history_event') if isinstance(conflict.get('latest_history_event'), dict) else None,
-            'merge_history': [item for item in (conflict.get('merge_history') or []) if isinstance(item, dict)],
-            'merge_history_count': int(conflict.get('merge_history_count') or len(conflict.get('merge_history') or [])),
-            'latest_merge_event': conflict.get('latest_merge_event') if isinstance(conflict.get('latest_merge_event'), dict) else None,
-            'related_claim_node_ids': [],
-            'related_memory_node_ids': [node_id for node_id in node_ids if node_id in memory_by_id],
-            'trace_anchor_related': bool(anchor_node_id and anchor_node_id in node_ids),
-        }
-        conflict_by_id[conflict_id] = entry
-        for node_id in node_ids:
-            node_to_conflict_ids.setdefault(node_id, set()).add(conflict_id)
-
-    memory_to_claim_ids: dict[str, set[str]] = {node_id: set() for node_id in memory_by_id}
-    conflict_to_claim_ids: dict[str, set[str]] = {conflict_id: set() for conflict_id in conflict_by_id}
-    claim_links: list[dict[str, Any]] = []
-    claim_links_by_id: dict[str, dict[str, Any]] = {}
-    for item in evidence_obj.get('items') or []:
-        claim_node_id = str(item.get('claim_node_id') or '').strip()
-        if not claim_node_id:
-            continue
-        related_ids = _clean_node_ids([
-            claim_node_id,
-            *list(item.get('related_node_ids') or []),
-            *[row.get('id') for row in (item.get('evidence_nodes') or []) if isinstance(row, dict)],
-            *list(item.get('conflict_node_ids') or []),
-        ])
-        linked_memory_ids = sorted({node_id for node_id in related_ids if node_id in memory_by_id})
-        linked_conflict_ids = sorted({
-            conflict_id
-            for node_id in related_ids
-            for conflict_id in node_to_conflict_ids.get(node_id, set())
-            if conflict_id in conflict_by_id
-        })
-        for memory_node_id in linked_memory_ids:
-            memory_to_claim_ids.setdefault(memory_node_id, set()).add(claim_node_id)
-        for conflict_id in linked_conflict_ids:
-            conflict_to_claim_ids.setdefault(conflict_id, set()).add(claim_node_id)
-        entry = {
-            'claim_node_id': claim_node_id,
-            'claim_node_type': str(item.get('claim_node_type') or '').strip() or None,
-            'claim_text': str(item.get('claim_text') or '').strip() or None,
-            'related_memory_node_ids': linked_memory_ids,
-            'related_conflict_ids': linked_conflict_ids,
-            'related_evidence_node_ids': _clean_node_ids([row.get('id') for row in (item.get('evidence_nodes') or []) if isinstance(row, dict)]),
-            'compare_node_ids': _clean_node_ids([
-                claim_node_id,
-                *linked_memory_ids,
-                *[node_id for conflict_id in linked_conflict_ids for node_id in conflict_by_id.get(conflict_id, {}).get('node_ids', [])],
-                *[row.get('id') for row in (item.get('evidence_nodes') or []) if isinstance(row, dict)],
-            ]),
-            'trace_anchor_related': bool(anchor_node_id and anchor_node_id in related_ids),
-            'selected_in_context': bool(item.get('selected_in_context')),
-            'pinned': bool(item.get('pinned')),
-            'score': item.get('score'),
-        }
-        claim_links.append(entry)
-        claim_links_by_id[claim_node_id] = entry
-
-    for memory_node_id, claim_ids in memory_to_claim_ids.items():
-        entry = memory_by_id.get(memory_node_id)
-        if not entry:
-            continue
-        entry['related_claim_node_ids'] = sorted(claim_ids)
-        entry['related_conflict_ids'] = sorted(node_to_conflict_ids.get(memory_node_id, set()))
-        if anchor_node_id and memory_node_id == anchor_node_id:
-            entry['trace_anchor_related'] = True
-
-    for conflict_id, claim_ids in conflict_to_claim_ids.items():
-        entry = conflict_by_id.get(conflict_id)
-        if not entry:
-            continue
-        entry['related_claim_node_ids'] = sorted(claim_ids)
-        entry['supporting_claim_node_ids'] = _clean_node_ids([
-            *(entry.get('supporting_claim_node_ids') or []),
-            *sorted(claim_ids),
-        ])
-        linked_claim_entries = [claim_links_by_id[claim_id] for claim_id in entry['related_claim_node_ids'] if claim_id in claim_links_by_id]
-        entry['supporting_evidence_node_ids'] = _clean_node_ids([
-            *(entry.get('supporting_evidence_node_ids') or []),
-            *[evidence_id for claim in linked_claim_entries for evidence_id in (claim.get('related_evidence_node_ids') or [])],
-        ])
-        entry['supporting_memory_node_ids'] = _clean_node_ids([
-            *(entry.get('supporting_memory_node_ids') or []),
-            *(entry.get('related_memory_node_ids') or []),
-        ])
-        entry['suggested_resolution'] = _build_conflict_resolution_suggestion(
-            entry,
-            memory_by_id=memory_by_id,
-            claim_links_by_id=claim_links_by_id,
-            anchor_node_id=anchor_node_id,
-        )
-        if anchor_node_id and anchor_node_id in entry.get('node_ids', []):
-            entry['trace_anchor_related'] = True
-
-    claim_links.sort(key=lambda item: (
-        len(item.get('related_memory_node_ids') or []),
-        len(item.get('related_conflict_ids') or []),
-        float(item.get('score') or 0),
-        str(item.get('claim_node_id') or ''),
-    ), reverse=True)
-    memory_links = sorted(
-        memory_by_id.values(),
-        key=lambda item: (
-            len(item.get('related_claim_node_ids') or []),
-            len(item.get('related_conflict_ids') or []),
-            int(item.get('visible_projection_count') or 0),
-            str(item.get('memory_node_id') or ''),
-        ),
-        reverse=True,
-    )
-    conflict_links = sorted(
-        conflict_by_id.values(),
-        key=lambda item: (
-            len(item.get('related_claim_node_ids') or []),
-            len(item.get('related_memory_node_ids') or []),
-            int(bool(item.get('resolution_summary'))),
-            str(item.get('conflict_id') or ''),
-        ),
-        reverse=True,
+    return _build_run_bundle_cross_references_impl(
+        evidence=evidence,
+        memory_graph=memory_graph,
+        trace_scope=trace_scope,
     )
 
-    return {
-        'run_id': str(evidence_obj.get('run_id') or memory_obj.get('run_id') or trace_obj.get('run_id') or '').strip() or None,
-        'scope': str(evidence_obj.get('scope') or memory_obj.get('scope') or trace_obj.get('scope') or 'thread').strip() or 'thread',
-        'anchor_node_id': anchor_node_id,
-        'claim_links': claim_links[:24],
-        'memory_links': memory_links[:24],
-        'conflict_links': conflict_links[:24],
-        'counts': {
-            'claim_links': len(claim_links),
-            'memory_links': len(memory_links),
-            'conflict_links': len(conflict_links),
-            'claims_with_memory_links': sum(1 for item in claim_links if item.get('related_memory_node_ids')),
-            'claims_with_conflicts': sum(1 for item in claim_links if item.get('related_conflict_ids')),
-            'memory_nodes_with_claims': sum(1 for item in memory_links if item.get('related_claim_node_ids')),
-            'conflicts_with_claims': sum(1 for item in conflict_links if item.get('related_claim_node_ids')),
-            'conflicts_with_resolution_rationale': sum(1 for item in conflict_links if item.get('resolution_summary')),
-            'conflicts_with_suggested_resolution': sum(1 for item in conflict_links if item.get('suggested_resolution')),
-            'conflicts_with_history': sum(1 for item in conflict_links if int(item.get('history_count') or 0) > 0),
-            'conflicts_with_merge_history': sum(1 for item in conflict_links if int(item.get('merge_history_count') or 0) > 0),
-            'conflict_history_events': sum(int(item.get('history_count') or 0) for item in conflict_links),
-        },
-        'anchor_related': {
-            'claim_node_ids': [item['claim_node_id'] for item in claim_links if item.get('trace_anchor_related')],
-            'memory_node_ids': [item['memory_node_id'] for item in memory_links if item.get('trace_anchor_related')],
-            'conflict_ids': [item['conflict_id'] for item in conflict_links if item.get('trace_anchor_related')],
-        },
-    }
+
+def _team_selection_event_payload(row: TeamSelectionEvent | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    dataset = build_team_selection_dataset([{
+        'id': row.id,
+        'thread_id': row.thread_id,
+        'run_id': row.run_id,
+        'task_text': row.task_text,
+        'selected_blueprint_id': row.selected_blueprint_id,
+        'recommendation': _jload(row.recommendation_json, {}),
+        'outcome': _jload(row.outcome_json, {}),
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+    }])
+    rows = dataset.get('rows') or []
+    return rows[0] if rows else None
+
+
+def _latest_team_selection_event(
+    session: Session,
+    *,
+    thread_id: str,
+    run_id: str | None,
+) -> TeamSelectionEvent | None:
+    statement = select(TeamSelectionEvent).where(TeamSelectionEvent.thread_id == thread_id)
+    clean_run_id = str(run_id or '').strip() or None
+    if clean_run_id:
+        statement = statement.where(TeamSelectionEvent.run_id == clean_run_id)
+    return session.exec(statement.order_by(TeamSelectionEvent.created_at.desc()).limit(1)).first()
+
+
+
+def build_run_studio_audit_timeline(
+    session: Session,
+    *,
+    thread: Thread,
+    context_set_id: str | None = None,
+    run_id: str | None = None,
+    evidence: dict[str, Any] | None = None,
+    memory_graph: dict[str, Any] | None = None,
+    trace_scope: dict[str, Any] | None = None,
+    cross_references: dict[str, Any] | None = None,
+    projection_retrieval: dict[str, Any] | None = None,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
+) -> dict[str, Any]:
+    return build_run_studio_audit_timeline_impl(
+        session,
+        thread=thread,
+        context_set_id=context_set_id,
+        run_id=run_id,
+        evidence=evidence,
+        memory_graph=memory_graph,
+        trace_scope=trace_scope,
+        cross_references=cross_references,
+        projection_retrieval=projection_retrieval,
+        nodes=nodes,
+        edges=edges,
+        _build_run_bundle_cross_references=_build_run_bundle_cross_references,
+        _clean_node_ids=_clean_node_ids,
+        _clean_text=_clean_text,
+        _graph_or_load=_graph_or_load,
+        _iso_or_none=_iso_or_none,
+        _jload=_jload,
+        _latest_team_selection_event=_latest_team_selection_event,
+        _node_payload=_node_payload,
+        _push_timeline_event=_push_timeline_event,
+        _resolve_context_set=_resolve_context_set,
+        _scope_graph_for_run=_scope_graph_for_run,
+        _short_text=_short_text,
+        _team_selection_event_payload=_team_selection_event_payload,
+        _timeline_event_sort_key=_timeline_event_sort_key,
+        build_run_studio_evidence=build_run_studio_evidence,
+        build_run_studio_memory_graph=build_run_studio_memory_graph,
+        build_run_studio_projection_retrieval=build_run_studio_projection_retrieval,
+        build_run_studio_trace_scope=build_run_studio_trace_scope,
+    )
+
 
 def build_run_studio_memory_graph(
     session: Session,
@@ -1127,6 +1142,35 @@ def build_run_studio_memory_graph(
         statement = statement.where(MemoryProjection.run_id == clean_run_id)
     rows = session.exec(statement.order_by(MemoryProjection.created_at.desc()).limit(clean_projection_limit)).all()
     node_map = {row.id: row for row in session.exec(select(MemoryNode).where(MemoryNode.thread_id == thread.id)).all()}
+    lifecycle_statement = select(MemoryLifecycleEvent).where(MemoryLifecycleEvent.thread_id == thread.id)
+    if clean_run_id:
+        lifecycle_statement = lifecycle_statement.where(MemoryLifecycleEvent.created_run_id == clean_run_id)
+    lifecycle_rows = session.exec(lifecycle_statement.order_by(MemoryLifecycleEvent.created_at.desc()).limit(max(clean_conflict_limit * 4, 80))).all()
+    if clean_run_id:
+        allowed_node_ids = {row.id for row in node_map.values() if str(getattr(row, 'created_run_id', '') or '').strip() == clean_run_id}
+        lifecycle_rows = [row for row in lifecycle_rows if row.node_id in allowed_node_ids or str(getattr(row, 'created_run_id', '') or '').strip() == clean_run_id]
+    lifecycle_by_node: dict[str, list[dict[str, Any]]] = {}
+    lifecycle_items: list[dict[str, Any]] = []
+    for row in lifecycle_rows:
+        summary = summarize_memory_lifecycle_event({
+            'id': row.id,
+            'thread_id': row.thread_id,
+            'node_id': row.node_id,
+            'surface_id': row.surface_id,
+            'event_type': row.event_type,
+            'from_status': row.from_status,
+            'to_status': row.to_status,
+            'actor': row.actor,
+            'source': row.source,
+            'summary': row.summary,
+            'metadata_json': _jload(row.metadata_json, {}),
+            'created_run_id': row.created_run_id,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+        })
+        lifecycle_items.append(summary)
+        node_id = str(summary.get('node_id') or '').strip()
+        if node_id:
+            lifecycle_by_node.setdefault(node_id, []).append(summary)
 
     items: list[dict[str, Any]] = []
     for row in rows:
@@ -1153,6 +1197,7 @@ def build_run_studio_memory_graph(
                     preview = json.dumps(content, ensure_ascii=False, sort_keys=True)[:160]
             else:
                 preview = str(content or '')[:160]
+            node_lifecycle = lifecycle_by_node.get(node.id) or []
             detail = {
                 'node_id': node.id,
                 'surface_id': node.surface_id,
@@ -1165,6 +1210,9 @@ def build_run_studio_memory_graph(
                 'created_run_id': node.created_run_id,
                 'content_preview': preview,
                 'provenance_fingerprint': (provenance.get('source_id') or provenance.get('document_id') or provenance.get('url') or provenance.get('entity') or provenance.get('topic')),
+                'lifecycle_event_count': len(node_lifecycle),
+                'latest_lifecycle_event': node_lifecycle[0] if node_lifecycle else None,
+                'lifecycle_status_path': [str(item.get('to_status') or item.get('event_type') or '') for item in reversed(node_lifecycle[:5]) if str(item.get('to_status') or item.get('event_type') or '').strip()],
             }
             if blocked:
                 detail['blocked_reason'] = node_reason_map.get(node.id) or surface_reason_map.get(node.surface_id) or 'surface_not_visible'
@@ -1203,10 +1251,54 @@ def build_run_studio_memory_graph(
             'right_node_id': row.right_node_id,
             'status': row.status,
             'reason': row.reason,
+            'created_at': row.created_at.isoformat() if row.created_at else None,
+            'updated_at': row.updated_at.isoformat() if row.updated_at else None,
             'resolution_json': _jload(row.resolution_json, {}),
         }
         for row in conflict_rows
     ])
+    edge_statement = select(MemoryEdge).where(MemoryEdge.thread_id == thread.id)
+    if clean_run_id:
+        edge_statement = edge_statement.where(MemoryEdge.created_run_id == clean_run_id)
+    edge_rows = session.exec(edge_statement.order_by(MemoryEdge.updated_at.desc()).limit(max(clean_conflict_limit, 40))).all()
+    if clean_run_id:
+        allowed_node_ids = {row.id for row in node_map.values() if str(getattr(row, 'created_run_id', '') or '').strip() == clean_run_id}
+        edge_rows = [
+            row for row in edge_rows
+            if row.from_node_id in allowed_node_ids or row.to_node_id in allowed_node_ids or str(getattr(row, 'created_run_id', '') or '').strip() == clean_run_id
+        ]
+    edge_lookup = {
+        node_id: {
+            'id': node.id,
+            'node_type': node.node_type,
+            'owner_role_id': node.owner_role_id,
+            'content_json': _jload(node.content_json, {}),
+            'provenance_json': _jload(node.provenance_json, {}),
+        }
+        for node_id, node in node_map.items()
+    }
+    edge_items = [summarize_memory_edge({
+        'id': row.id,
+        'edge_type': row.edge_type,
+        'from_node_id': row.from_node_id,
+        'to_node_id': row.to_node_id,
+        'from_surface_id': row.from_surface_id,
+        'to_surface_id': row.to_surface_id,
+        'status': row.status,
+        'rationale': row.rationale,
+        'provenance_json': _jload(row.provenance_json, {}),
+        'created_run_id': row.created_run_id,
+        'created_at': row.created_at,
+        'updated_at': row.updated_at,
+    }, node_lookup=edge_lookup) for row in edge_rows]
+    edge_type_counts: dict[str, int] = {}
+    for item in edge_items:
+        key = str(item.get('edge_type') or 'related_to')
+        edge_type_counts[key] = edge_type_counts.get(key, 0) + 1
+    lifecycle_event_type_counts: dict[str, int] = {}
+    for item in lifecycle_items:
+        key = str(item.get('event_type') or 'node_updated')
+        lifecycle_event_type_counts[key] = lifecycle_event_type_counts.get(key, 0) + 1
     return {
         'run_id': clean_run_id,
         'scope': 'run' if clean_run_id else 'thread',
@@ -1216,7 +1308,242 @@ def build_run_studio_memory_graph(
         'conflict_count': conflict_summary.get('count') or 0,
         'conflict_status_counts': conflict_summary.get('status_counts') or {},
         'conflict_reason_counts': conflict_summary.get('reason_counts') or {},
+        'edges': edge_items,
+        'edge_count': len(edge_items),
+        'edge_type_counts': edge_type_counts,
+        'lifecycle_events': lifecycle_items,
+        'lifecycle_event_count': len(lifecycle_items),
+        'lifecycle_event_type_counts': lifecycle_event_type_counts,
     }
+
+
+def build_run_studio_projection_retrieval(
+    session: Session,
+    *,
+    thread: Thread,
+    run_id: str | None = None,
+    memory_graph: dict[str, Any] | None = None,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
+) -> dict[str, Any]:
+    clean_run_id = str(run_id or '').strip() or None
+    nodes, edges = _graph_or_load(session, thread_id=thread.id, nodes=nodes, edges=edges)
+    runtime_projection = resolve_runtime_projection(
+        nodes=nodes,
+        edges=edges,
+        run_id=clean_run_id,
+        session=session,
+        thread_id=thread.id,
+        team_nodes=nodes,
+        include_conversation_team=True,
+        context_source_default='goc',
+        plan_source_default='local',
+        mode_default='goc',
+    )
+    capability = runtime_projection.capability_payload()
+    runtime_authority = dict(capability.get('runtime_authority') or {})
+    team_view = dict(capability.get('team_view') or {})
+    scope_projection = dict(capability.get('scope_projection') or {})
+    visibility_projection = dict(capability.get('visibility_projection') or {})
+    memory_obj = memory_graph if isinstance(memory_graph, dict) else build_run_studio_memory_graph(session, thread=thread, run_id=clean_run_id)
+
+    projection_by_role: dict[str, dict[str, Any]] = {}
+    projection_by_agent: dict[str, dict[str, Any]] = {}
+    for projection in list(memory_obj.get('projections') or []):
+        role_id = _clean_text(projection.get('role_id'))
+        agent_id = _clean_text(projection.get('agent_id'))
+        current_key = (
+            _count_entries(projection.get('visible_node_ids')),
+            -_count_entries(projection.get('blocked_node_ids')),
+            _parse_datetime(projection.get('created_at')).timestamp() if _parse_datetime(projection.get('created_at')) else 0.0,
+        )
+        if role_id:
+            existing = projection_by_role.get(role_id)
+            existing_key = (
+                _count_entries((existing or {}).get('visible_node_ids')),
+                -_count_entries((existing or {}).get('blocked_node_ids')),
+                _parse_datetime((existing or {}).get('created_at')).timestamp() if _parse_datetime((existing or {}).get('created_at')) else 0.0,
+            )
+            if existing is None or current_key >= existing_key:
+                projection_by_role[role_id] = projection
+        if agent_id:
+            existing = projection_by_agent.get(agent_id)
+            existing_key = (
+                _count_entries((existing or {}).get('visible_node_ids')),
+                -_count_entries((existing or {}).get('blocked_node_ids')),
+                _parse_datetime((existing or {}).get('created_at')).timestamp() if _parse_datetime((existing or {}).get('created_at')) else 0.0,
+            )
+            if existing is None or current_key >= existing_key:
+                projection_by_agent[agent_id] = projection
+
+    coverage_items: list[dict[str, Any]] = []
+    for item in list(team_view.get('items') or []):
+        runtime_instance_id = _clean_text(item.get('runtime_instance_id'))
+        role_id = _clean_text(item.get('role_id'))
+        scope_id = _clean_text(item.get('scope_id'))
+        display_label = _clean_text(item.get('display_label') or item.get('role_label') or role_id or runtime_instance_id) or 'runtime agent'
+        scope_item = None
+        for candidate in list(scope_projection.get('items') or []):
+            if runtime_instance_id and _clean_text(candidate.get('runtime_instance_id')) == runtime_instance_id:
+                scope_item = candidate
+                break
+            if scope_item is None and scope_id and _clean_text(candidate.get('scope_id')) == scope_id:
+                scope_item = candidate
+            if scope_item is None and _clean_text(candidate.get('display_label')) == display_label:
+                scope_item = candidate
+        projection = None
+        if role_id:
+            projection = projection_by_role.get(role_id)
+        if projection is None and runtime_instance_id:
+            projection = projection_by_agent.get(runtime_instance_id)
+        visible_count = _count_entries((projection or {}).get('visible_node_ids'))
+        blocked_count = _count_entries((projection or {}).get('blocked_node_ids'))
+        active_node_count = int((scope_item or {}).get('active_node_count') or 0)
+        authoritative_scope = _boolish((scope_item or {}).get('authoritative_scope'))
+        empty_scope = _boolish((scope_item or {}).get('empty_scope')) or active_node_count == 0
+        degraded_mode = _boolish(runtime_authority.get('degraded_mode'))
+        context_source = str(runtime_authority.get('context_source') or capability.get('context_source') or '').strip().lower()
+        missing_projection = projection is None
+        blocked_only = blocked_count > 0 and visible_count == 0
+        partial = visible_count > 0 and blocked_count > 0
+        authoritative = bool(not degraded_mode and context_source == 'goc' and authoritative_scope and visible_count > 0)
+        status = 'planned_only'
+        if degraded_mode:
+            status = 'degraded'
+        elif authoritative:
+            status = 'authoritative'
+        elif blocked_only:
+            status = 'blocked_only'
+        elif empty_scope:
+            status = 'empty_scope'
+        elif missing_projection and authoritative_scope:
+            status = 'missing_projection'
+        elif missing_projection:
+            status = 'planned_only'
+        elif partial:
+            status = 'partial'
+        elif visible_count > 0:
+            status = 'visible_non_authoritative'
+        elif blocked_count > 0:
+            status = 'blocked_only'
+        elif projection is not None:
+            status = 'empty_projection'
+
+        coverage_items.append({
+            'runtime_instance_id': runtime_instance_id,
+            'role_id': role_id,
+            'display_label': display_label,
+            'scope_id': scope_id,
+            'visibility_mode': _clean_text((scope_item or {}).get('visibility_mode')),
+            'grant_labels': list((scope_item or {}).get('grant_labels') or []),
+            'active_node_count': active_node_count,
+            'authoritative_scope': authoritative_scope,
+            'empty_scope': empty_scope,
+            'scope_context_set_id': _clean_text((scope_item or {}).get('context_set_id')),
+            'selection_summary': _clean_text((scope_item or {}).get('selection_summary') or (scope_item or {}).get('selection_reason')),
+            'selection_confidence': _clean_text((scope_item or {}).get('selection_confidence')),
+            'projection_id': _clean_text((projection or {}).get('projection_id')),
+            'projection_created_at': _clean_text((projection or {}).get('created_at')),
+            'visible_node_count': visible_count,
+            'blocked_node_count': blocked_count,
+            'visible_surface_ids': list((projection or {}).get('visible_surface_ids') or []),
+            'blocked_surface_ids': list((projection or {}).get('blocked_surface_ids') or []),
+            'status': status,
+            'projection_authoritative': authoritative,
+            'traceable_in_memory_graph': projection is not None,
+            'context_source': context_source or None,
+            'degraded_mode': degraded_mode,
+            'fallback_reason': _clean_text(runtime_authority.get('fallback_reason') or capability.get('fallback_reason')),
+        })
+
+    def _planner_or_system(item: dict[str, Any]) -> bool:
+        role_text = ' '.join([
+            str(item.get('role_id') or ''),
+            str(item.get('display_label') or ''),
+        ]).strip().lower()
+        return any(token in role_text for token in ('planner', 'operator', 'system', 'supervisor', 'router'))
+
+    coverage_items.sort(
+        key=lambda item: (
+            1 if item.get('projection_authoritative') else 0,
+            int(item.get('visible_node_count') or 0),
+            -int(item.get('blocked_node_count') or 0),
+            str(item.get('display_label') or ''),
+        ),
+        reverse=True,
+    )
+    planner_system_paths = [item for item in coverage_items if _planner_or_system(item)]
+    counts = {
+        'roles': len(coverage_items),
+        'authoritative_roles': sum(1 for item in coverage_items if item.get('projection_authoritative')),
+        'degraded_roles': sum(1 for item in coverage_items if item.get('status') == 'degraded'),
+        'partial_roles': sum(1 for item in coverage_items if item.get('status') == 'partial'),
+        'visible_non_authoritative_roles': sum(1 for item in coverage_items if item.get('status') == 'visible_non_authoritative'),
+        'blocked_only_roles': sum(1 for item in coverage_items if item.get('status') == 'blocked_only'),
+        'empty_scope_roles': sum(1 for item in coverage_items if item.get('status') == 'empty_scope'),
+        'missing_projection_roles': sum(1 for item in coverage_items if item.get('status') == 'missing_projection'),
+        'planned_only_roles': sum(1 for item in coverage_items if item.get('status') == 'planned_only'),
+        'planner_system_roles': len(planner_system_paths),
+        'planner_system_authoritative_roles': sum(1 for item in planner_system_paths if item.get('projection_authoritative')),
+        'planner_system_missing_roles': sum(1 for item in planner_system_paths if item.get('status') in {'missing_projection', 'planned_only'}),
+    }
+    scope_first_ready = _boolish(scope_projection.get('scope_first_ready'))
+    degraded_mode = _boolish(runtime_authority.get('degraded_mode'))
+    context_source = str(runtime_authority.get('context_source') or capability.get('context_source') or '').strip().lower() or None
+    projection_authoritative = bool(
+        context_source == 'goc'
+        and scope_first_ready
+        and not degraded_mode
+        and counts['roles'] > 0
+        and counts['authoritative_roles'] >= max(1, counts['roles'] - counts['empty_scope_roles'])
+    )
+    overall_status = 'partial'
+    if degraded_mode:
+        overall_status = 'degraded'
+    elif projection_authoritative:
+        overall_status = 'authoritative'
+    elif counts['authoritative_roles'] > 0:
+        overall_status = 'partial'
+    elif counts['missing_projection_roles'] > 0 or counts['planned_only_roles'] > 0:
+        overall_status = 'planned_only'
+    elif counts['empty_scope_roles'] == counts['roles'] and counts['roles'] > 0:
+        overall_status = 'empty'
+    note_parts: list[str] = []
+    if scope_first_ready:
+        note_parts.append('scope-first runtime is active')
+    if projection_authoritative:
+        note_parts.append('projection retrieval is authoritative for the focused run')
+    elif counts['authoritative_roles'] > 0:
+        note_parts.append('projection retrieval covers part of the focused run')
+    elif counts['missing_projection_roles'] > 0 or counts['planned_only_roles'] > 0:
+        note_parts.append('some runtime paths still rely on pre-projection planning metadata')
+    if counts['planner_system_roles'] > 0 and counts['planner_system_authoritative_roles'] < counts['planner_system_roles']:
+        note_parts.append('planner/system coverage is not fully projection-authoritative yet')
+    fallback_reason = _clean_text(runtime_authority.get('fallback_reason') or capability.get('fallback_reason'))
+    if fallback_reason:
+        note_parts.append(f'fallback: {fallback_reason}')
+    return {
+        'run_id': clean_run_id,
+        'scope': 'run' if clean_run_id else 'thread',
+        'summary': {
+            'status': overall_status,
+            'projection_authoritative': projection_authoritative,
+            'scope_first_ready': scope_first_ready,
+            'context_runtime_mode': _clean_text(scope_projection.get('context_runtime_mode')),
+            'context_source': context_source,
+            'degraded_mode': degraded_mode,
+            'fallback_reason': fallback_reason,
+            'coverage_note': '; '.join(note_parts) or None,
+            'scope_projection_note': _clean_text(scope_projection.get('scope_projection_note')),
+            'visibility_relation_count': int(visibility_projection.get('count') or 0),
+        },
+        'counts': counts,
+        'items': coverage_items,
+        'planner_system_paths': planner_system_paths,
+        'visibility_relation_counts': dict(visibility_projection.get('relation_counts') or {}),
+        'runtime_authority': runtime_authority,
+    }
+
 
 
 def build_run_studio_run_bundle(
@@ -1226,37 +1553,170 @@ def build_run_studio_run_bundle(
     context_set_id: str | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
+    started = time.perf_counter()
     clean_run_id = str(run_id or '').strip() or None
     context_set = _resolve_context_set(session, thread_id=thread.id, context_set_id=context_set_id)
-    evidence = build_run_studio_evidence(session, thread=thread, context_set_id=getattr(context_set, 'id', None), run_id=clean_run_id)
-    context_packs = build_run_studio_context_packs(session, thread=thread, run_id=clean_run_id)
-    skill_usage = build_run_studio_skill_usage(session, thread=thread, run_id=clean_run_id)
-    memory_graph = build_run_studio_memory_graph(session, thread=thread, run_id=clean_run_id)
-    trace_scope = build_run_studio_trace_scope(session, thread=thread, run_id=clean_run_id)
-    cross_references = _build_run_bundle_cross_references(
-        evidence=evidence,
-        memory_graph=memory_graph,
-        trace_scope=trace_scope,
+    graph_version_payload = _build_graph_version_payload(session, thread=thread, context_set=context_set)
+    graph_version = str(graph_version_payload.get('graph_version') or '')
+    harness_spec = get_thread_harness_spec(thread)
+    harness_summary = build_harness_summary(harness_spec)
+    cache = get_global_context_cache()
+    cache_versions = _context_cache_versions()
+    bundle_cache_key = build_cache_key('run_bundle', {
+        'v': cache_versions['run_bundle'],
+        'thread_id': thread.id,
+        'context_set_id': getattr(context_set, 'id', None),
+        'run_id': clean_run_id,
+        'graph_version': graph_version,
+    })
+    cached_bundle = cache.get(bundle_cache_key)
+    if cached_bundle is not None:
+        cached_bundle = copy.deepcopy(cached_bundle)
+        cached_bundle['context_cache'] = {
+            **dict(cached_bundle.get('context_cache') or {}),
+            'graph_version': graph_version,
+            'graph_version_payload': graph_version_payload,
+            'bundle_cache_hit': True,
+        }
+        cached_bundle['performance'] = {
+            **dict(cached_bundle.get('performance') or {}),
+            'bundle_elapsed_ms': round((time.perf_counter() - started) * 1000.0, 3),
+            'bundle_cache_hit': True,
+        }
+        return cached_bundle
+
+    nodes, edges = load_thread_graph(session, thread.id)
+    evidence = build_run_studio_evidence(
+        session,
+        thread=thread,
+        context_set_id=getattr(context_set, 'id', None),
+        run_id=clean_run_id,
+        nodes=nodes,
+        edges=edges,
     )
-    return {
+    context_packs = build_run_studio_context_packs(session, thread=thread, run_id=clean_run_id, nodes=nodes, edges=edges)
+    skill_usage = build_run_studio_skill_usage(session, thread=thread, run_id=clean_run_id, nodes=nodes, edges=edges)
+    memory_graph = build_run_studio_memory_graph(session, thread=thread, run_id=clean_run_id)
+    trace_scope = build_run_studio_trace_scope(session, thread=thread, run_id=clean_run_id, nodes=nodes, edges=edges)
+
+    cache_hits: dict[str, bool] = {}
+    cross_references, cache_hits['cross_references'], _ = _cached_artifact(
+        cache,
+        namespace='run_bundle_cross_references',
+        payload={
+            'v': cache_versions['cross_references'],
+            'thread_id': thread.id,
+            'context_set_id': getattr(context_set, 'id', None),
+            'run_id': clean_run_id,
+            'graph_version': graph_version,
+        },
+        build_fn=lambda: _build_run_bundle_cross_references(
+            evidence=evidence,
+            memory_graph=memory_graph,
+            trace_scope=trace_scope,
+        ),
+    )
+    projection_retrieval, cache_hits['projection_retrieval'], _ = _cached_artifact(
+        cache,
+        namespace='run_bundle_projection_retrieval',
+        payload={
+            'v': cache_versions['projection_retrieval'],
+            'thread_id': thread.id,
+            'run_id': clean_run_id,
+            'graph_version': graph_version,
+        },
+        build_fn=lambda: build_run_studio_projection_retrieval(
+            session,
+            thread=thread,
+            run_id=clean_run_id,
+            memory_graph=memory_graph,
+            nodes=nodes,
+            edges=edges,
+        ),
+    )
+    audit_timeline, cache_hits['audit_timeline'], _ = _cached_artifact(
+        cache,
+        namespace='run_bundle_audit_timeline',
+        payload={
+            'v': cache_versions['audit_timeline'],
+            'thread_id': thread.id,
+            'context_set_id': getattr(context_set, 'id', None),
+            'run_id': clean_run_id,
+            'graph_version': graph_version,
+        },
+        build_fn=lambda: build_run_studio_audit_timeline(
+            session,
+            thread=thread,
+            context_set_id=getattr(context_set, 'id', None),
+            run_id=clean_run_id,
+            evidence=evidence,
+            memory_graph=memory_graph,
+            trace_scope=trace_scope,
+            cross_references=cross_references,
+            projection_retrieval=projection_retrieval,
+            nodes=nodes,
+            edges=edges,
+        ),
+    )
+    graph_compression, cache_hits['graph_native_compression'], _ = _cached_artifact(
+        cache,
+        namespace='run_bundle_graph_compression',
+        payload={
+            'v': cache_versions['graph_compression'],
+            'thread_id': thread.id,
+            'context_set_id': getattr(context_set, 'id', None),
+            'run_id': clean_run_id,
+            'graph_version': graph_version,
+        },
+        build_fn=lambda: build_run_studio_graph_compression(
+            evidence=evidence,
+            memory_graph=memory_graph,
+            trace_scope=trace_scope,
+            cross_references=cross_references,
+            projection_retrieval=projection_retrieval,
+        ),
+    )
+    bundle = {
         'run_id': clean_run_id,
         'scope': 'run' if clean_run_id else 'thread',
         'context_set_id': getattr(context_set, 'id', None),
+        'graph_version': graph_version,
         'evidence': evidence,
         'context_packs': context_packs,
         'skill_usage': skill_usage,
         'memory_graph': memory_graph,
         'trace_scope': trace_scope,
         'cross_references': cross_references,
+        'projection_retrieval': projection_retrieval,
+        'audit_timeline': audit_timeline,
+        'graph_native_compression': graph_compression,
+        'harness_spec': harness_spec,
+        'harness_summary': harness_summary,
+        'context_cache': {
+            'graph_version': graph_version,
+            'graph_version_payload': graph_version_payload,
+            'harness_spec_hash': harness_summary.get('spec_hash'),
+            'bundle_cache_hit': False,
+            'artifact_cache_hits': cache_hits,
+            'cache_versions': cache_versions,
+        },
+        'performance': {
+            'bundle_elapsed_ms': round((time.perf_counter() - started) * 1000.0, 3),
+            'bundle_cache_hit': False,
+        },
     }
+    cache.set(bundle_cache_key, bundle)
+    return bundle
 
 def build_run_studio_context_packs(
     session: Session,
     *,
     thread: Thread,
     run_id: str | None = None,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
 ) -> dict[str, Any]:
-    nodes, edges = load_thread_graph(session, thread.id)
+    nodes, edges = _graph_or_load(session, thread_id=thread.id, nodes=nodes, edges=edges)
     return build_thread_context_pack_summary(
         nodes=nodes,
         edges=edges,
@@ -1269,8 +1729,10 @@ def build_run_studio_skill_usage(
     *,
     thread: Thread,
     run_id: str | None = None,
+    nodes: list[Node] | None = None,
+    edges: list[Edge] | None = None,
 ) -> dict[str, Any]:
-    nodes, edges = load_thread_graph(session, thread.id)
+    nodes, edges = _graph_or_load(session, thread_id=thread.id, nodes=nodes, edges=edges)
     return build_thread_skill_usage_summary(
         nodes=nodes,
         edges=edges,

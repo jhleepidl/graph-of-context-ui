@@ -23,6 +23,10 @@ import MemoryProjectionPanel from './MemoryProjectionPanel'
 import TeamRecommendationPanel from './TeamRecommendationPanel'
 import SelectionOutcomePanel from './SelectionOutcomePanel'
 import CrossReferencePanel from './CrossReferencePanel'
+import FocusedAuditTimelinePanel from './FocusedAuditTimelinePanel'
+import ProjectionRetrievalPanel from './ProjectionRetrievalPanel'
+import GraphCompressionPanel from './GraphCompressionPanel'
+import HarnessSpecPanel from './HarnessSpecPanel'
 import {
   type RunStudioAgentTeam,
   type RunStudioContextPacks,
@@ -33,6 +37,11 @@ import {
   type RunStudioMemoryGraph,
   type RunStudioTraceScope,
   type RunStudioCrossReferences,
+  type RunStudioAuditTimeline,
+  type RunStudioProjectionRetrieval,
+  type RunStudioGraphCompression,
+  type RunStudioHarnessSpec,
+  type RunStudioHarnessSummary,
   type TeamSelectionDataset,
   type TeamSelectionDatasetRow,
 } from './types'
@@ -70,6 +79,11 @@ type Props = {
   memoryGraph: RunStudioMemoryGraph | null
   traceScope: RunStudioTraceScope | null
   crossReferences: RunStudioCrossReferences | null
+  auditTimeline: RunStudioAuditTimeline | null
+  projectionRetrieval: RunStudioProjectionRetrieval | null
+  graphCompression: RunStudioGraphCompression | null
+  harnessSpec: RunStudioHarnessSpec | null
+  harnessSummary: RunStudioHarnessSummary | null
   teamSelection: TeamSelectionDataset | null
   detailLoaded?: DetailState
   detailLoading?: DetailState
@@ -111,6 +125,11 @@ export default function RunStudioLayout({
   memoryGraph,
   traceScope,
   crossReferences,
+  auditTimeline,
+  projectionRetrieval,
+  graphCompression,
+  harnessSpec,
+  harnessSummary,
   teamSelection,
   detailLoaded,
   detailLoading,
@@ -195,6 +214,7 @@ export default function RunStudioLayout({
       </div>
 
       <ControlPlaneSummaryPanel summary={controlPlaneSummary} skillOverview={skillAttachmentOverview} />
+      <HarnessSpecPanel harnessSpec={harnessSpec} harnessSummary={harnessSummary} />
       <LegacyFallbackNoticePanel summary={controlPlaneSummary} />
 
       <ExecutionMapPanel
@@ -294,6 +314,22 @@ export default function RunStudioLayout({
             </div>
           )}
         </section>
+      )}
+
+      {focusedRunId && (
+        <ProjectionRetrievalPanel
+          projectionRetrieval={projectionRetrieval}
+        />
+      )}
+
+      {focusedRunId && (
+        <FocusedAuditTimelinePanel
+          auditTimeline={auditTimeline}
+          onFocusNode={onFocusNode}
+          onOpenNode={onOpenNode}
+          onFocusTrace={onFocusTrace}
+          onOpenTrace={onOpenTrace}
+        />
       )}
 
       {focusedRunId && (

@@ -603,13 +603,17 @@ export const api = {
     const cleanRunId = (runId || '').trim()
     if (cleanRunId) q.set('run_id', cleanRunId)
     const suffix = q.toString() ? `?${q.toString()}` : ''
-    const [projections, conflicts] = await Promise.all([
+    const [projections, edges, conflicts] = await Promise.all([
       j<any>(apiFetch(`/api/threads/${threadId}/memory/projections${suffix}`)),
+      j<any>(apiFetch(`/api/threads/${threadId}/memory/edges${suffix}`)),
       j<any>(apiFetch(`/api/threads/${threadId}/memory/conflicts`)),
     ])
     return {
       projections: Array.isArray(projections?.items) ? projections.items : [],
       projection_count: Number(projections?.count || 0),
+      edges: Array.isArray(edges?.items) ? edges.items : [],
+      edge_count: Number(edges?.count || 0),
+      edge_type_counts: edges?.type_counts || {},
       conflicts: Array.isArray(conflicts?.items) ? conflicts.items : [],
       conflict_count: Number(conflicts?.count || 0),
       conflict_status_counts: conflicts?.status_counts || {},
