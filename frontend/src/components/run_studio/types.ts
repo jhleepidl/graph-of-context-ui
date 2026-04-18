@@ -791,6 +791,33 @@ export type RunStudioAuditTimeline = {
   count?: number
   category_counts?: Record<string, number>
   status_counts?: Record<string, number>
+  linked_summary?: {
+    team_synthesis_mode?: string | null
+    execution_mode?: string | null
+    execution_mode_reasons?: string[]
+    execution_mode_signals?: Record<string, unknown> | null
+    execution_quality_signals?: Record<string, unknown> | null
+    execution_mode_history_tail?: Array<Record<string, unknown>>
+    task_type?: string | null
+    deliverable_type?: string | null
+    task_family_key?: string | null
+    task_family_mode_hint?: Record<string, unknown> | null
+    selected_motif_ids?: string[]
+    motif_feedback_run_count?: number | null
+    motif_channel?: string | null
+    participant_signal_count?: number | null
+    participant_digest_count?: number | null
+    participant_kind_counts?: Record<string, number>
+    participant_labels?: string[]
+    channel_verifier_count?: number | null
+    channel_promotion_count?: number | null
+    latest_overall_recommendation?: string | null
+    motif_compare?: Record<string, unknown> | null
+    participant_policy_compare?: Record<string, unknown> | null
+    promoted_motif_ids?: string[]
+    rolled_back_motif_ids?: string[]
+    participant_policy_snapshot?: Record<string, unknown> | null
+  } | null
   items?: RunStudioAuditTimelineEvent[]
 }
 

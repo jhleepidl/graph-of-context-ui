@@ -29,6 +29,8 @@ from app.schemas import (
     TeamManifestDiffRequest,
     HarnessSpecRead,
     HarnessSpecUpdateRequest,
+    HarnessPackageRead,
+    HarnessPackageInstallRequest,
 )
 from app.services.context_versions import snapshot_context_set
 from app.services.embedding import rebuild_thread_index, remove_thread_index
@@ -50,6 +52,7 @@ from app.services.conversation_team_config import get_team_config_payload, save_
 from app.services.team_manifest import export_thread_team_manifest, install_thread_team_manifest, validate_team_manifest_payload, diff_team_manifest_payload
 from app.services.team_blueprint import export_thread_team_blueprint, install_thread_team_blueprint, validate_team_blueprint_payload, diff_team_blueprint_payload
 from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
+from app.services.harness_package import build_harness_package_payload
 from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
@@ -641,6 +644,13 @@ def put_harness_spec(thread_id: str, body: HarnessSpecUpdateRequest):
         thread = require_thread_write_access(s, thread_id)
         spec = save_thread_harness_spec(s, thread, body.harness_spec)
         return HarnessSpecRead(thread_id=thread.id, harness_spec=spec, harness_summary=build_harness_summary(spec))
+
+
+@router.get("/{thread_id}/harness_package", response_model=HarnessPackageRead)
+def get_harness_package(thread_id: str):
+    with Session(engine) as s:
+        thread = require_thread_access(s, thread_id)
+        return HarnessPackageRead.model_validate(build_harness_package_payload(s, thread=thread))
 
 
 @router.get("/{thread_id}/run_studio/summary")

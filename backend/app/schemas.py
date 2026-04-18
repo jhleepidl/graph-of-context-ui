@@ -415,6 +415,30 @@ class HarnessSpecUpdateRequest(BaseModel):
     harness_spec: dict[str, Any] = Field(default_factory=dict)
 
 
+class HarnessPackageRead(BaseModel):
+    schema_version: str
+    kind: str
+    package_id: str
+    package_hash: str
+    version: int = 1
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    compatibility: dict[str, Any] = Field(default_factory=dict)
+    sharing: dict[str, Any] = Field(default_factory=dict)
+    execution_binding: dict[str, Any] = Field(default_factory=dict)
+    trace_contract: dict[str, Any] = Field(default_factory=dict)
+    sync_contract: dict[str, Any] = Field(default_factory=dict)
+    runtime_policy: dict[str, Any] = Field(default_factory=dict)
+    harness_spec: dict[str, Any] = Field(default_factory=dict)
+    harness_summary: dict[str, Any] = Field(default_factory=dict)
+    team_manifest: dict[str, Any] = Field(default_factory=dict)
+    skill_packages: List[dict[str, Any]] = Field(default_factory=list)
+
+
+class HarnessPackageInstallRequest(BaseModel):
+    package: dict[str, Any] = Field(default_factory=dict)
+    apply_state: Optional[Literal["active", "pending"]] = "active"
+
+
 class TeamManifestValidateRequest(BaseModel):
     manifest: dict[str, Any]
     apply_state: Optional[Literal["active", "pending"]] = "active"

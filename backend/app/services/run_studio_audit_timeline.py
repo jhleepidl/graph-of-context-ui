@@ -35,6 +35,7 @@ def build_run_studio_audit_timeline_impl(
     _short_text=None,
     _team_selection_event_payload=None,
     _timeline_event_sort_key=None,
+    _extract_runtime_team_snapshot=None,
     build_run_studio_evidence=None,
     build_run_studio_memory_graph=None,
     build_run_studio_projection_retrieval=None,
@@ -76,6 +77,29 @@ def build_run_studio_audit_timeline_impl(
     scoped_nodes, _ = _scope_graph_for_run(nodes=nodes, edges=edges, run_id=clean_run_id)
     node_by_id = {str(getattr(node, 'id', '') or ''): node for node in scoped_nodes if str(getattr(node, 'id', '') or '').strip()}
     memory_node_map = {row.id: row for row in session.exec(select(MemoryNode).where(MemoryNode.thread_id == thread.id)).all()}
+    runtime_snapshot = _extract_runtime_team_snapshot(scoped_nodes) if _extract_runtime_team_snapshot else {}
+    runtime_snapshot = runtime_snapshot if isinstance(runtime_snapshot, dict) else {}
+    team_plan = runtime_snapshot.get('team_plan') or {}
+    team_plan = team_plan if isinstance(team_plan, dict) else {}
+    planner_metadata = team_plan.get('planner_metadata') or team_plan.get('plannerMetadata') or {}
+    planner_metadata = planner_metadata if isinstance(planner_metadata, dict) else {}
+    selected_motif_ids = [str(item).strip() for item in (planner_metadata.get('selected_motif_ids') or planner_metadata.get('selectedMotifIds') or []) if str(item).strip()]
+    team_synthesis_mode = str(planner_metadata.get('team_synthesis_mode') or planner_metadata.get('teamSynthesisMode') or '').strip() or None
+    motif_feedback_run_count = planner_metadata.get('motif_feedback_run_count') or planner_metadata.get('motifFeedbackRunCount')
+    motif_channel = str(planner_metadata.get('motif_channel') or planner_metadata.get('motifChannel') or '').strip() or None
+    execution_mode = str(planner_metadata.get('execution_mode') or planner_metadata.get('executionMode') or '').strip() or None
+    execution_mode_reasons = [str(item).strip() for item in (planner_metadata.get('execution_mode_reasons') or planner_metadata.get('executionModeReasons') or []) if str(item).strip()]
+    execution_mode_signals = planner_metadata.get('execution_mode_signals') or planner_metadata.get('executionModeSignals') or {}
+    execution_mode_signals = execution_mode_signals if isinstance(execution_mode_signals, dict) else {}
+    execution_quality_signals = planner_metadata.get('execution_quality_signals') or planner_metadata.get('executionQualitySignals') or {}
+    execution_quality_signals = execution_quality_signals if isinstance(execution_quality_signals, dict) else {}
+    execution_mode_history_tail = planner_metadata.get('execution_mode_history_tail') or planner_metadata.get('executionModeHistoryTail') or []
+    execution_mode_history_tail = execution_mode_history_tail if isinstance(execution_mode_history_tail, list) else []
+    task_type = str(planner_metadata.get('task_type') or planner_metadata.get('taskType') or '').strip() or None
+    deliverable_type = str(planner_metadata.get('deliverable_type') or planner_metadata.get('deliverableType') or '').strip() or None
+    task_family_key = str(planner_metadata.get('task_family_key') or planner_metadata.get('taskFamilyKey') or '').strip() or None
+    task_family_mode_hint = planner_metadata.get('task_family_mode_hint') or planner_metadata.get('taskFamilyModeHint') or {}
+    task_family_mode_hint = task_family_mode_hint if isinstance(task_family_mode_hint, dict) else {}
 
     selection_event = _latest_team_selection_event(session, thread_id=thread.id, run_id=clean_run_id)
     selection_payload = _team_selection_event_payload(selection_event)
@@ -140,6 +164,50 @@ def build_run_studio_audit_timeline_impl(
                 'top_recommended_candidate': (selection_payload.get('top_recommended_candidate') or {}).get('template_id') if isinstance(selection_payload.get('top_recommended_candidate'), dict) else None,
                 'recommendation_gap': selection_payload.get('recommendation_gap'),
                 'artifact_quality': selection_payload.get('artifact_quality'),
+            },
+        })
+
+    if selected_motif_ids or team_synthesis_mode:
+        motif_summary = []
+        if team_synthesis_mode:
+            motif_summary.append(f"mode {team_synthesis_mode}")
+        if execution_mode:
+            motif_summary.append(f"execution {execution_mode}")
+        if selected_motif_ids:
+            motif_summary.append(f"motifs {', '.join(selected_motif_ids[:4])}")
+        if motif_feedback_run_count not in (None, ''):
+            motif_summary.append(f"feedback runs {motif_feedback_run_count}")
+        _push_timeline_event(items, seen, {
+            'event_id': f"planner-motif:{clean_run_id or thread.id}",
+            'timestamp': _iso_or_none(selection_event.created_at) if selection_event and selection_event.created_at else None,
+            'category': 'planning_motif',
+            'title': 'Planner motif selection',
+            'summary': '; '.join(motif_summary) or 'Planner motifs were selected for this run.',
+            'status': team_synthesis_mode or None,
+            'run_id': clean_run_id,
+            'badges': [
+                *([f"mode: {team_synthesis_mode}"] if team_synthesis_mode else []),
+                *([f"execution: {execution_mode}"] if execution_mode else []),
+                *([f"channel: {motif_channel}"] if motif_channel else []),
+                *([f"motifs: {len(selected_motif_ids)}"] if selected_motif_ids else []),
+                *([f"quality: {execution_quality_signals.get('quality_health_score')}"] if execution_quality_signals.get('quality_health_score') not in (None, '') else []),
+                *([f"task-family: {task_family_key}"] if task_family_key else []),
+            ],
+            'metadata': {
+                'selected_motif_ids': selected_motif_ids,
+                'team_synthesis_mode': team_synthesis_mode,
+                'motif_feedback_run_count': motif_feedback_run_count,
+                'motif_channel': motif_channel,
+                'execution_mode': execution_mode,
+                'execution_mode_reasons': execution_mode_reasons,
+                'execution_mode_signals': execution_mode_signals,
+                'execution_quality_signals': execution_quality_signals,
+                'execution_mode_history_tail': execution_mode_history_tail,
+                'task_type': task_type,
+                'deliverable_type': deliverable_type,
+                'task_family_key': task_family_key,
+                'task_family_mode_hint': task_family_mode_hint,
+                'selection_explanations': runtime_snapshot.get('selection_explanations') or [],
             },
         })
 
@@ -255,6 +323,165 @@ def build_run_studio_audit_timeline_impl(
                 'role_id': payload.get('role_id'),
                 'blocked_reason': payload.get('blocked_reason'),
                 'error': payload.get('error') or payload.get('error_message'),
+            },
+        })
+
+
+    participant_nodes = [
+        node for node in node_by_id.values()
+        if str(getattr(node, 'type', '') or '').strip() in {'ParticipantSignal', 'ParticipantDigest', 'ChannelVerifierDecision', 'ChannelPromotionApplied'}
+    ]
+    participant_nodes.sort(key=_created_sort_key)
+    for node in participant_nodes:
+        payload = _node_payload(node)
+        payload_run_id = str(payload.get('run_id') or '').strip()
+        if clean_run_id and payload_run_id and payload_run_id != clean_run_id:
+            continue
+        node_type = str(getattr(node, 'type', '') or '').strip()
+        if node_type == 'ParticipantSignal':
+            participant = payload.get('participant') or {}
+            contribution = payload.get('contribution') or {}
+            decision = payload.get('decision') or {}
+            participant_label = _clean_text(participant.get('label') or participant.get('participant_id')) or 'participant'
+            contribution_kind = _clean_text(contribution.get('kind'), max_len=64) or 'signal'
+            confidence = contribution.get('confidence')
+            try:
+                confidence_label = f"{round(float(confidence) * 100):.0f}%"
+            except Exception:
+                confidence_label = None
+            title = f"Participant signal from {participant_label}"
+            summary = _short_text(str(contribution.get('summary') or contribution.get('content') or decision.get('digest') or decision.get('action') or 'Participant contributed an internal signal.'), 240)
+            _push_timeline_event(items, seen, {
+                'event_id': f"participant-signal:{node.id}",
+                'timestamp': _iso_or_none(getattr(node, 'created_at', None)),
+                'category': 'participant_signal',
+                'title': title,
+                'summary': summary,
+                'status': str(decision.get('action') or contribution.get('visibility_default') or '').strip() or None,
+                'run_id': clean_run_id or payload_run_id or None,
+                'primary_node_id': node.id,
+                'related_node_ids': [node.id],
+                'trace_node_ids': [node.id],
+                'badges': [
+                    *([f"participant: {participant_label}"] if participant_label else []),
+                    *([f"kind: {contribution_kind}"] if contribution_kind else []),
+                    *([f"confidence: {confidence_label}"] if confidence_label else []),
+                    *([f"surface: {decision.get('action')}"] if decision.get('action') else []),
+                ],
+                'metadata': {
+                    'participant_id': participant.get('participant_id'),
+                    'participant_type': participant.get('participant_type'),
+                    'channel_mode': participant.get('channel_mode'),
+                    'kind': contribution.get('kind'),
+                    'confidence': contribution.get('confidence'),
+                    'surface_mode': decision.get('surface_mode'),
+                    'should_fold': decision.get('should_fold'),
+                    'should_surface': decision.get('should_surface'),
+                    'digest': decision.get('digest'),
+                    'references': contribution.get('references') or [],
+                },
+            })
+            continue
+        if node_type == 'ChannelVerifierDecision':
+            motif = payload.get('motif') or {}
+            participant_policy = payload.get('participant_policy') or {}
+            overall = str(payload.get('overall_recommendation') or '').strip() or None
+            title = 'Experiment channel verifier'
+            summary = _short_text(str(
+                motif.get('rationale')
+                or participant_policy.get('rationale')
+                or payload.get('goal_excerpt')
+                or 'Verified active motif and participant policy channels for this run.'
+            ), 240)
+            _push_timeline_event(items, seen, {
+                'event_id': f"channel-verifier:{node.id}",
+                'timestamp': _iso_or_none(getattr(node, 'created_at', None)),
+                'category': 'channel_verifier',
+                'title': title,
+                'summary': summary,
+                'status': overall,
+                'run_id': clean_run_id or payload_run_id or None,
+                'primary_node_id': node.id,
+                'related_node_ids': [node.id],
+                'trace_node_ids': [node.id],
+                'badges': [
+                    *([f"overall: {overall}"] if overall else []),
+                    *([f"motif: {motif.get('channel')} → {motif.get('next_channel')}"] if motif.get('channel') else []),
+                    *([f"participant: {participant_policy.get('channel')} → {participant_policy.get('next_channel')}"] if participant_policy.get('channel') else []),
+                ],
+                'metadata': {
+                    'motif': motif,
+                    'participant_policy': participant_policy,
+                    'participation_pct': payload.get('participation_pct'),
+                    'score': payload.get('score'),
+                    'execution_pattern': payload.get('execution_pattern'),
+                    'goal_excerpt': payload.get('goal_excerpt'),
+                },
+            })
+            continue
+
+        if node_type == 'ChannelPromotionApplied':
+            motif = payload.get('motif') or {}
+            participant_policy = payload.get('participant_policy') or {}
+            overall = str(payload.get('overall_recommendation') or '').strip() or None
+            title = 'Channel promotion applied'
+            summary = _short_text(str(
+                motif.get('rationale')
+                or participant_policy.get('rationale')
+                or payload.get('goal_excerpt')
+                or 'Applied stable/candidate promotion summary for this run.'
+            ), 240)
+            _push_timeline_event(items, seen, {
+                'event_id': f"channel-promotion:{node.id}",
+                'timestamp': _iso_or_none(getattr(node, 'created_at', None)),
+                'category': 'channel_promotion',
+                'title': title,
+                'summary': summary,
+                'status': overall,
+                'run_id': clean_run_id or payload_run_id or None,
+                'primary_node_id': node.id,
+                'related_node_ids': [node.id],
+                'trace_node_ids': [node.id],
+                'badges': [
+                    *([f"overall: {overall}"] if overall else []),
+                    *([f"promoted motifs: {len(list((motif.get('promoted_motif_ids') or [])))}"] if motif.get('promoted_motif_ids') else []),
+                    *([f"rolled back motifs: {len(list((motif.get('rolled_back_motif_ids') or [])))}"] if motif.get('rolled_back_motif_ids') else []),
+                    *(['participant snapshot: applied'] if (participant_policy.get('snapshot') or {}) else []),
+                ],
+                'metadata': {
+                    'motif': motif,
+                    'participant_policy': participant_policy,
+                    'goal_excerpt': payload.get('goal_excerpt'),
+                },
+            })
+            continue
+        participant_labels = [str(item).strip() for item in (payload.get('participant_labels') or []) if str(item).strip()]
+        kind_counts = payload.get('kind_counts') or {}
+        _push_timeline_event(items, seen, {
+            'event_id': f"participant-digest:{node.id}",
+            'timestamp': _iso_or_none(getattr(node, 'created_at', None)),
+            'category': 'participant_digest',
+            'title': 'Folded participant digest applied',
+            'summary': _short_text(str(payload.get('digest_block') or payload.get('prompt_block') or f"Folded {payload.get('item_count') or 0} participant signals into the final reply flow."), 240),
+            'status': str(payload.get('mode') or '').strip() or None,
+            'run_id': clean_run_id or payload_run_id or None,
+            'primary_node_id': node.id,
+            'related_node_ids': [node.id],
+            'trace_node_ids': [node.id],
+            'badges': [
+                f"items: {int(payload.get('item_count') or 0)}",
+                *([f"mode: {payload.get('mode')}"] if payload.get('mode') else []),
+                *([f"participants: {', '.join(participant_labels[:3])}"] if participant_labels else []),
+            ],
+            'metadata': {
+                'turn_id': payload.get('turn_id'),
+                'participant_labels': participant_labels,
+                'participant_ids': payload.get('participant_ids') or [],
+                'contribution_ids': payload.get('contribution_ids') or [],
+                'kinds': payload.get('kinds') or [],
+                'kind_counts': kind_counts,
+                'digest_block': payload.get('digest_block'),
+                'signature': payload.get('signature'),
             },
         })
 
@@ -585,6 +812,44 @@ def build_run_studio_audit_timeline_impl(
         if status:
             status_counts[status] = status_counts.get(status, 0) + 1
 
+    participant_signal_events = [item for item in items if str(item.get('category') or '') == 'participant_signal']
+    participant_digest_events = [item for item in items if str(item.get('category') or '') == 'participant_digest']
+    channel_verifier_events = [item for item in items if str(item.get('category') or '') == 'channel_verifier']
+    channel_promotion_events = [item for item in items if str(item.get('category') or '') == 'channel_promotion']
+    participant_kind_counts: dict[str, int] = {}
+    participant_labels: list[str] = []
+    seen_participant_labels: set[str] = set()
+    for event in participant_signal_events:
+        metadata = event.get('metadata') or {}
+        kind = str(metadata.get('kind') or '').strip()
+        if kind:
+            participant_kind_counts[kind] = participant_kind_counts.get(kind, 0) + 1
+        label = str(metadata.get('participant_id') or '').strip()
+        if label and label not in seen_participant_labels:
+            seen_participant_labels.add(label)
+            participant_labels.append(label)
+    for event in participant_digest_events:
+        metadata = event.get('metadata') or {}
+        for kind, count in dict(metadata.get('kind_counts') or {}).items():
+            clean_kind = str(kind or '').strip()
+            if not clean_kind:
+                continue
+            participant_kind_counts[clean_kind] = participant_kind_counts.get(clean_kind, 0) + int(count or 0)
+        for label in list(metadata.get('participant_labels') or []):
+            clean_label = str(label or '').strip()
+            if clean_label and clean_label not in seen_participant_labels:
+                seen_participant_labels.add(clean_label)
+                participant_labels.append(clean_label)
+
+    latest_channel_verifier = channel_verifier_events[-1] if channel_verifier_events else None
+    latest_channel_verifier_metadata = latest_channel_verifier.get('metadata') if isinstance(latest_channel_verifier, dict) else {}
+    motif_compare = (latest_channel_verifier_metadata or {}).get('motif') or {}
+    participant_compare = (latest_channel_verifier_metadata or {}).get('participant_policy') or {}
+    latest_channel_promotion = channel_promotion_events[-1] if channel_promotion_events else None
+    latest_channel_promotion_metadata = latest_channel_promotion.get('metadata') if isinstance(latest_channel_promotion, dict) else {}
+    promotion_motif = (latest_channel_promotion_metadata or {}).get('motif') or {}
+    promotion_participant = (latest_channel_promotion_metadata or {}).get('participant_policy') or {}
+
     return {
         'run_id': clean_run_id,
         'scope': 'run' if clean_run_id else 'thread',
@@ -595,6 +860,29 @@ def build_run_studio_audit_timeline_impl(
         'count': len(items),
         'category_counts': counts,
         'status_counts': status_counts,
+        'linked_summary': {
+            'team_synthesis_mode': team_synthesis_mode,
+            'execution_mode': execution_mode,
+            'execution_mode_reasons': execution_mode_reasons,
+            'execution_mode_signals': execution_mode_signals,
+            'execution_quality_signals': execution_quality_signals,
+            'execution_mode_history_tail': execution_mode_history_tail[-5:],
+            'selected_motif_ids': selected_motif_ids,
+            'motif_feedback_run_count': motif_feedback_run_count,
+            'motif_channel': motif_channel,
+            'participant_signal_count': len(participant_signal_events),
+            'participant_digest_count': len(participant_digest_events),
+            'participant_kind_counts': participant_kind_counts,
+            'participant_labels': participant_labels[:8],
+            'channel_verifier_count': len(channel_verifier_events),
+            'channel_promotion_count': len(channel_promotion_events),
+            'latest_overall_recommendation': str((latest_channel_verifier_metadata or {}).get('overall_recommendation') or '').strip() or None,
+            'motif_compare': motif_compare,
+            'participant_policy_compare': participant_compare,
+            'promoted_motif_ids': list((promotion_motif.get('promoted_motif_ids') or []))[:8],
+            'rolled_back_motif_ids': list((promotion_motif.get('rolled_back_motif_ids') or []))[:8],
+            'participant_policy_snapshot': (promotion_participant.get('snapshot') or {}),
+        },
         'items': items,
     }
 

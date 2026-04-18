@@ -33,6 +33,7 @@ from app.services.run_studio_audit_timeline import build_run_studio_audit_timeli
 from app.services.run_studio_graph_compression import build_run_studio_graph_compression
 from app.services.context_cache import build_cache_key, get_global_context_cache
 from app.services.harness_spec import get_thread_harness_spec, build_harness_summary
+from app.services.harness_package import RUN_SYNC_SCHEMA_VERSION, RUN_TRACE_SCHEMA_VERSION, build_harness_package_payload
 from app.services.runtime_scope import build_step_run_id_index
 from app.services.team_recommender import build_team_selection_dataset
 
@@ -43,7 +44,7 @@ CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSum
 RUN_BUNDLE_CACHE_VERSION = "v1"
 PROJECTION_RETRIEVAL_CACHE_VERSION = "v1"
 CROSS_REFERENCE_CACHE_VERSION = "v1"
-AUDIT_TIMELINE_CACHE_VERSION = "v1"
+AUDIT_TIMELINE_CACHE_VERSION = "v2"
 GRAPH_COMPRESSION_CACHE_VERSION = "v1"
 
 
@@ -1118,6 +1119,7 @@ def build_run_studio_audit_timeline(
         _short_text=_short_text,
         _team_selection_event_payload=_team_selection_event_payload,
         _timeline_event_sort_key=_timeline_event_sort_key,
+        _extract_runtime_team_snapshot=_extract_runtime_team_snapshot,
         build_run_studio_evidence=build_run_studio_evidence,
         build_run_studio_memory_graph=build_run_studio_memory_graph,
         build_run_studio_projection_retrieval=build_run_studio_projection_retrieval,
@@ -1676,7 +1678,18 @@ def build_run_studio_run_bundle(
             projection_retrieval=projection_retrieval,
         ),
     )
+    harness_package = build_harness_package_payload(session, thread=thread, harness_spec=harness_spec, harness_summary=harness_summary)
     bundle = {
+        'schema_version': 'openharness.run_bundle/v1',
+        'run_trace_schema_version': RUN_TRACE_SCHEMA_VERSION,
+        'run_sync_schema_version': RUN_SYNC_SCHEMA_VERSION,
+        'harness_package_ref': {
+            'schema_version': str(harness_package.get('schema_version') or ''),
+            'package_id': str(harness_package.get('package_id') or ''),
+            'package_hash': str(harness_package.get('package_hash') or ''),
+            'version': int(harness_package.get('version') or 1),
+            'name': str(((harness_package.get('metadata') or {}).get('name')) or ''),
+        },
         'run_id': clean_run_id,
         'scope': 'run' if clean_run_id else 'thread',
         'context_set_id': getattr(context_set, 'id', None),
@@ -1692,6 +1705,18 @@ def build_run_studio_run_bundle(
         'graph_native_compression': graph_compression,
         'harness_spec': harness_spec,
         'harness_summary': harness_summary,
+        'trace_contract': {
+            'schema_version': RUN_TRACE_SCHEMA_VERSION,
+            'transport': 'goc_execution_graph',
+            'storage': 'run_step_toolcall_nodes',
+        },
+        'sync_contract': {
+            'schema_version': RUN_SYNC_SCHEMA_VERSION,
+            'mode': 'ddalggak_push_goc_observe',
+            'direction': 'ddalggak_to_goc',
+            'semantics': 'append_only',
+        },
+        'runtime_policy': dict(harness_package.get('runtime_policy') or {}),
         'context_cache': {
             'graph_version': graph_version,
             'graph_version_payload': graph_version_payload,

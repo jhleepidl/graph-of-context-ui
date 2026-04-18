@@ -41,10 +41,12 @@ else:
 if not _cors_allow_origins:
     _cors_allow_origins = ["*"]
 
+_cors_allow_credentials = _cors_allow_origins != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allow_origins,
-    allow_credentials=True,
+    allow_credentials=_cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
