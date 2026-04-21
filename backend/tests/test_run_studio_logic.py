@@ -12,6 +12,7 @@ from tests.db_test_utils import create_test_engine as create_engine
 from app.models import Agent, ContextSet, Conversation, ConversationAgent, Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, MemorySurface, Node, TeamSelectionEvent, Thread
 from app.services.graph_projections import memory_context_projection
 from app.services.context_cache import clear_global_context_cache
+from app.services.conversation_team_config import save_team_config_payload
 from app.services.run_studio import (
     _agent_team_summary,
     _build_run_bundle_cross_references,
@@ -1158,6 +1159,87 @@ class RunStudioLogicTests(unittest.TestCase):
         self.assertEqual(((bundle.get("cross_references") or {}).get("lifecycle_links") or [])[0].get("related_evidence_node_ids"), [artifact.id])
         timestamps = [item.get("timestamp") for item in timeline.get("items", [])]
         self.assertEqual(timestamps, sorted(timestamps))
+
+    def test_build_run_studio_audit_timeline_surfaces_adaptive_team_strategy(self) -> None:
+        engine = create_engine("sqlite://")
+        SQLModel.metadata.create_all(engine)
+        base = datetime(2026, 3, 11, 12, 0, tzinfo=timezone.utc)
+
+        with Session(engine) as session:
+            thread = Thread(title="Strategy Timeline", owner_user_id="u1", service_id="svc")
+            conversation = Conversation(thread_id=thread.id, title="Strategy Conversation")
+            session.add(thread)
+            session.add(conversation)
+            session.commit()
+            session.refresh(thread)
+            session.refresh(conversation)
+
+            context_set = ContextSet(thread_id=thread.id, name="default", active_node_ids_json=json.dumps([]))
+            session.add(context_set)
+            session.commit()
+            session.refresh(context_set)
+
+            run = Node(thread_id=thread.id, type="Run", text="Run", payload_json=json.dumps({"status": "done", "task": "Patch the repo"}), created_at=base)
+            session.add(run)
+            session.commit()
+            session.refresh(run)
+
+            save_team_config_payload(session, thread_id=thread.id, payload={
+                "status": "suggested",
+                "composition_mode": "structured",
+                "proposal_mode": "suggest",
+                "active_team": {
+                    "team_name": "starter_single",
+                    "agents": [
+                        {"agent_id": "builder_1", "name": "Builder 1", "role": "builder", "model": "gpt-5-codex"},
+                    ],
+                    "interaction_spec": {"execution_pattern": "single", "final_answer_owner": "Builder 1"},
+                    "planner_metadata": {
+                        "adaptive_expansion": {
+                            "recommendation": "augment_context",
+                            "augmentation": {"score": 2.4, "reasons": ["missing_memory"]},
+                            "role_separation": {"score": 0.6, "reasons": ["weak_split_signal"]},
+                            "quality": {"quality_gap": 1, "contradiction_pressure": 0, "followup_burden": 1},
+                            "capability_gap_summary": "missing_skill:repo.context",
+                            "source": "latest_run",
+                            "ts": (base + timedelta(minutes=2)).isoformat(),
+                        },
+                    },
+                },
+                "pending_team": {
+                    "team_name": "starter_plus_reviewer",
+                    "agents": [
+                        {"agent_id": "builder_1", "name": "Builder 1", "role": "builder", "model": "gpt-5-codex"},
+                        {"agent_id": "reviewer_1", "name": "Reviewer 1", "role": "reviewer", "model": "gpt-5.4"},
+                    ],
+                    "interaction_spec": {"execution_pattern": "sequential_pipeline", "final_answer_owner": "Reviewer 1"},
+                    "planner_metadata": {
+                        "adaptive_expansion": {
+                            "recommendation": "expand_team",
+                            "rationale": ["independent_review_needed"],
+                            "augmentation": {"score": 1.6, "reasons": ["memory_refresh_already_tried"]},
+                            "role_separation": {"score": 3.2, "reasons": ["independent_review_needed"], "independent_review_needed": True, "persistent_split_needed": True},
+                            "quality": {"quality_gap": 2, "contradiction_pressure": 1, "followup_burden": 1},
+                            "capability_gap_summary": "missing_capability:review.code",
+                            "auto_prepared_draft": True,
+                            "source": "pending_team_draft",
+                            "ts": (base + timedelta(minutes=4)).isoformat(),
+                        },
+                    },
+                },
+            })
+            session.commit()
+
+            timeline = build_run_studio_audit_timeline(session, thread=thread, context_set_id=context_set.id, run_id=run.id)
+
+        self.assertGreaterEqual(timeline["category_counts"].get("team_strategy", 0), 1)
+        linked = timeline.get("linked_summary") or {}
+        adaptive = linked.get("adaptive_expansion") or {}
+        self.assertEqual(adaptive.get("recommendation"), "expand_team")
+        self.assertEqual((adaptive.get("role_separation") or {}).get("independent_review_needed"), True)
+        strategy_events = [item for item in timeline.get("items", []) if item.get("category") == "team_strategy"]
+        self.assertTrue(any(item.get("status") == "expand_team" for item in strategy_events))
+        self.assertTrue(any((item.get("metadata") or {}).get("source") == "pending_team_draft" for item in strategy_events if isinstance(item.get("metadata"), dict)))
 
     def test_graph_native_compression_preserves_claim_neighborhoods_and_role_views(self) -> None:
         engine = create_engine("sqlite://")

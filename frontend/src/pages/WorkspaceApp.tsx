@@ -156,6 +156,7 @@ export default function WorkspaceApp() {
     harnessSpec: runStudioHarnessSpec,
     harnessSummary: runStudioHarnessSummary,
     teamSelection: runStudioTeamSelection,
+    strategyMetrics: runStudioStrategyMetrics,
     detailLoaded: runStudioDetailLoaded,
     detailLoading: runStudioDetailLoading,
     focusedRunId: runStudioFocusedRunId,
@@ -173,6 +174,7 @@ export default function WorkspaceApp() {
     loadMemoryGraph: loadRunStudioMemoryGraph,
     loadTraceScope: loadRunStudioTraceScope,
     loadTeamSelection: loadRunStudioTeamSelection,
+    loadStrategyMetrics: loadRunStudioStrategyMetrics,
     focusRunDrilldown: focusRunStudioDrilldown,
     clearRunDrilldown: clearRunStudioDrilldown,
   } = useRunStudioData()
@@ -987,6 +989,7 @@ export default function WorkspaceApp() {
           harnessSpec={runStudioHarnessSpec}
           harnessSummary={runStudioHarnessSummary}
           teamSelection={runStudioTeamSelection}
+          strategyMetrics={runStudioStrategyMetrics}
           detailLoaded={runStudioDetailLoaded}
           detailLoading={runStudioDetailLoading}
           loading={runStudioLoading}
@@ -1022,6 +1025,9 @@ export default function WorkspaceApp() {
           onLoadTeamSelection={() => {
             void loadRunStudioTeamSelection(threadId || undefined)
           }}
+          onLoadStrategyMetrics={() => {
+            void loadRunStudioStrategyMetrics(threadId || undefined)
+          }}
           onInspectTeamSelectionEvent={(row) => {
             void focusRunStudioDrilldown(
               threadId || undefined,
@@ -1046,6 +1052,7 @@ export default function WorkspaceApp() {
           onOpenTrace={openNodesInGraph}
           onAddToActive={addNodeToActiveFromStudio}
           onPinNode={pinNodeFromStudio}
+          threadId={threadId || undefined}
           />
         </Suspense>
       )}
@@ -1104,7 +1111,7 @@ export default function WorkspaceApp() {
               <div className="muted">
                 {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budgeting, resource notes'}
                 {rightPanelTab === 'run' && 'Run query with current active context'}
-                {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current thread'}
+                {rightPanelTab === 'job_settings' && 'Edit agent_set/skill_set for current thread'}
                 {rightPanelTab === 'conversation_agents' && 'Configure thread team defaults (setup only; actual runtime team appears in Run Studio)'}
                 {rightPanelTab === 'inspector' && 'Compiled context and version/planner diagnostics'}
               </div>

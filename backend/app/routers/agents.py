@@ -74,6 +74,15 @@ def _normalize_tools(raw: list[str] | None) -> list[str]:
         out.append(clean)
     return out
 
+def _requested_agent_skills(body: Any) -> list[str] | None:
+    skills = getattr(body, 'skills', None)
+    if skills is not None:
+        return list(skills)
+    tools = getattr(body, 'tools', None)
+    if tools is not None:
+        return list(tools)
+    return None
+
 
 def _normalize_string_list(raw: list[str] | None, *, limit: int = 24) -> list[str]:
     out: list[str] = []
@@ -244,6 +253,7 @@ def _agent_payload(
         "description": agent.description,
         "system_prompt": agent.system_prompt,
         "instruction": agent.instruction,
+        "skills": [str(item) for item in tools if str(item or "").strip()],
         "tools": [str(item) for item in tools if str(item or "").strip()],
         "model": agent.model,
         "visibility": _clean_visibility(agent.visibility, "private"),
@@ -641,7 +651,7 @@ def create_agent(body: AgentCreateRequest):
             description=(body.description or "").strip(),
             system_prompt=(body.system_prompt or "").strip(),
             instruction=(body.instruction or "").strip(),
-            tools_json=_jdump(_normalize_tools(body.tools)),
+            tools_json=_jdump(_normalize_tools(_requested_agent_skills(body))),
             model=(body.model or "").strip(),
             visibility=_clean_visibility(body.visibility),
             source_agent_id=None,
@@ -726,8 +736,9 @@ def patch_agent(agent_id: str, body: AgentPatchRequest):
             if row.instruction != clean:
                 row.instruction = clean
                 changed = True
-        if body.tools is not None:
-            clean = _jdump(_normalize_tools(body.tools))
+        requested_skills = _requested_agent_skills(body)
+        if requested_skills is not None:
+            clean = _jdump(_normalize_tools(requested_skills))
             if row.tools_json != clean:
                 row.tools_json = clean
                 changed = True
@@ -784,7 +795,7 @@ def fork_agent(agent_id: str, body: AgentForkRequest):
             description=(body.description if body.description is not None else source.description).strip(),
             system_prompt=(body.system_prompt if body.system_prompt is not None else source.system_prompt).strip(),
             instruction=(body.instruction if body.instruction is not None else source.instruction).strip(),
-            tools_json=_jdump(_normalize_tools(body.tools if body.tools is not None else _jload(source.tools_json, []))),
+            tools_json=_jdump(_normalize_tools(_requested_agent_skills(body) if _requested_agent_skills(body) is not None else _jload(source.tools_json, []))),
             model=(body.model if body.model is not None else source.model).strip(),
             visibility=_clean_visibility(body.visibility, default="private"),
             source_agent_id=source.id,

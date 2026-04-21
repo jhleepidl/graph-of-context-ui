@@ -232,6 +232,7 @@ class AgentCreateRequest(BaseModel):
     description: str = ""
     system_prompt: str = ""
     instruction: str = ""
+    skills: Optional[List[str]] = None
     tools: List[str] = Field(default_factory=list)
     model: str = ""
     visibility: AgentVisibility = "private"
@@ -242,6 +243,7 @@ class AgentPatchRequest(BaseModel):
     description: Optional[str] = None
     system_prompt: Optional[str] = None
     instruction: Optional[str] = None
+    skills: Optional[List[str]] = None
     tools: Optional[List[str]] = None
     model: Optional[str] = None
     visibility: Optional[AgentVisibility] = None
@@ -252,6 +254,7 @@ class AgentForkRequest(BaseModel):
     description: Optional[str] = None
     system_prompt: Optional[str] = None
     instruction: Optional[str] = None
+    skills: Optional[List[str]] = None
     tools: Optional[List[str]] = None
     model: Optional[str] = None
     visibility: AgentVisibility = "private"

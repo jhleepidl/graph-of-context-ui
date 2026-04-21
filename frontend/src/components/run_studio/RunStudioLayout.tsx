@@ -27,6 +27,9 @@ import FocusedAuditTimelinePanel from './FocusedAuditTimelinePanel'
 import ProjectionRetrievalPanel from './ProjectionRetrievalPanel'
 import GraphCompressionPanel from './GraphCompressionPanel'
 import HarnessSpecPanel from './HarnessSpecPanel'
+import RunProgressPanel from './RunProgressPanel'
+import TeamStatePanel from './TeamStatePanel'
+import StrategyMetricsPanel from './StrategyMetricsPanel'
 import {
   type RunStudioAgentTeam,
   type RunStudioContextPacks,
@@ -44,6 +47,7 @@ import {
   type RunStudioHarnessSummary,
   type TeamSelectionDataset,
   type TeamSelectionDatasetRow,
+  type TeamStrategyDataset,
 } from './types'
 import {
   selectEffectiveAgentTeam,
@@ -67,6 +71,7 @@ type DetailState = {
   memoryGraph?: boolean
   traceScope?: boolean
   teamSelection?: boolean
+  strategyMetrics?: boolean
 }
 
 type Props = {
@@ -85,6 +90,7 @@ type Props = {
   harnessSpec: RunStudioHarnessSpec | null
   harnessSummary: RunStudioHarnessSummary | null
   teamSelection: TeamSelectionDataset | null
+  strategyMetrics: TeamStrategyDataset | null
   detailLoaded?: DetailState
   detailLoading?: DetailState
   loading: boolean
@@ -98,6 +104,7 @@ type Props = {
   onLoadMemoryGraph?: () => void
   onLoadTraceScope?: () => void
   onLoadTeamSelection?: () => void
+  onLoadStrategyMetrics?: () => void
   onInspectTeamSelectionEvent?: (row: TeamSelectionDatasetRow) => void
   onClearRunDrilldown?: () => void
   focusedRunId?: string | null
@@ -113,6 +120,7 @@ type Props = {
   onOpenTrace?: (nodeIds: string[]) => void
   onAddToActive?: (nodeId: string) => void
   onPinNode?: (nodeId: string, level: 'required' | 'preferred') => void
+  threadId?: string | null
 }
 
 export default function RunStudioLayout({
@@ -131,6 +139,7 @@ export default function RunStudioLayout({
   harnessSpec,
   harnessSummary,
   teamSelection,
+  strategyMetrics,
   detailLoaded,
   detailLoading,
   loading,
@@ -144,6 +153,7 @@ export default function RunStudioLayout({
   onLoadMemoryGraph,
   onLoadTraceScope,
   onLoadTeamSelection,
+  onLoadStrategyMetrics,
   onInspectTeamSelectionEvent,
   onClearRunDrilldown,
   focusedRunId,
@@ -159,6 +169,7 @@ export default function RunStudioLayout({
   onOpenTrace,
   onAddToActive,
   onPinNode,
+  threadId,
 }: Props) {
   const memoryProjection = summary?.projections?.memory_context
   const runtimeAuthority = summary?.runtime_authority
@@ -213,6 +224,15 @@ export default function RunStudioLayout({
         {error && <div className="runStudioWarning"><b>Load error:</b> {error}</div>}
       </div>
 
+      <RunProgressPanel summary={summary} auditTimeline={auditTimeline} />
+      <TeamStatePanel summary={summary} team={effectiveTeam} auditTimeline={auditTimeline} />
+      <StrategyMetricsPanel
+        threadId={threadId}
+        strategyMetrics={strategyMetrics}
+        detailLoaded={Boolean(detailLoaded?.strategyMetrics)}
+        detailLoading={Boolean(detailLoading?.strategyMetrics)}
+        onLoad={onLoadStrategyMetrics}
+      />
       <ControlPlaneSummaryPanel summary={controlPlaneSummary} skillOverview={skillAttachmentOverview} />
       <HarnessSpecPanel harnessSpec={harnessSpec} harnessSummary={harnessSummary} />
       <LegacyFallbackNoticePanel summary={controlPlaneSummary} />

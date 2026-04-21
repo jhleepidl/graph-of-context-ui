@@ -51,6 +51,7 @@ from app.services.scope_registry import get_scope_spec
 from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy
 from app.services.team_manifest import export_thread_team_manifest, install_thread_team_manifest, validate_team_manifest_payload, diff_team_manifest_payload
 from app.services.team_blueprint import export_thread_team_blueprint, install_thread_team_blueprint, validate_team_blueprint_payload, diff_team_blueprint_payload
+from app.services.team_strategy_export import build_team_strategy_dataset, serialize_team_strategy_dataset_jsonl
 from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
 from app.services.harness_package import build_harness_package_payload
 from app.auth import get_current_principal
@@ -826,6 +827,17 @@ def get_thread_skill_usage(
             run_id=_clean_optional_text(run_id),
         )
         return {"ok": True, **summary}
+
+
+@router.get("/{thread_id}/run_studio/strategy_export")
+def export_run_studio_strategy_dataset(thread_id: str, limit: int = 200, format: str | None = None):
+    clean_limit = max(1, min(int(limit or 200), 1000))
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        dataset = build_team_strategy_dataset(session, thread=thread, limit=clean_limit)
+        if str(format or '').strip().lower() == 'jsonl':
+            return Response(serialize_team_strategy_dataset_jsonl(dataset), media_type='application/x-ndjson')
+        return dataset
 
 
 @router.get("/{thread_id}/trace_export")

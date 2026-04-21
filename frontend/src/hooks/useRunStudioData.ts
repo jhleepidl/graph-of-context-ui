@@ -17,6 +17,7 @@ import {
   type RunStudioHarnessSpec,
   type RunStudioHarnessSummary,
   type TeamSelectionDataset,
+  type TeamStrategyDataset,
 } from '../components/run_studio/types'
 
 type RefreshOptions = {
@@ -24,7 +25,7 @@ type RefreshOptions = {
   includeLoadedDetails?: boolean
 }
 
-type DetailKey = 'agentTeam' | 'contextDecisions' | 'evidence' | 'contextPacks' | 'skillUsage' | 'memoryGraph' | 'traceScope' | 'teamSelection'
+type DetailKey = 'agentTeam' | 'contextDecisions' | 'evidence' | 'contextPacks' | 'skillUsage' | 'memoryGraph' | 'traceScope' | 'teamSelection' | 'strategyMetrics'
 
 type DetailState = Record<DetailKey, boolean>
 
@@ -41,6 +42,7 @@ const EMPTY_DETAIL_STATE: DetailState = {
   memoryGraph: false,
   traceScope: false,
   teamSelection: false,
+  strategyMetrics: false,
 }
 
 function cleanText(value?: string | null): string {
@@ -80,6 +82,7 @@ export function useRunStudioData() {
   const [harnessSpec, setHarnessSpec] = useState<RunStudioHarnessSpec | null>(null)
   const [harnessSummary, setHarnessSummary] = useState<RunStudioHarnessSummary | null>(null)
   const [teamSelection, setTeamSelection] = useState<TeamSelectionDataset | null>(null)
+  const [strategyMetrics, setStrategyMetrics] = useState<TeamStrategyDataset | null>(null)
   const [detailLoaded, setDetailLoaded] = useState<DetailState>(EMPTY_DETAIL_STATE)
   const [detailLoading, setDetailLoading] = useState<DetailState>(EMPTY_DETAIL_STATE)
   const [loading, setLoading] = useState(false)
@@ -121,6 +124,7 @@ export function useRunStudioData() {
     setHarnessSpec(null)
     setHarnessSummary(null)
     setTeamSelection(null)
+    setStrategyMetrics(null)
     setDetailLoaded(EMPTY_DETAIL_STATE)
     setDetailLoading(EMPTY_DETAIL_STATE)
     setError('')
@@ -197,6 +201,12 @@ export function useRunStudioData() {
     const tId = cleanText(threadId)
     if (!tId) return null
     return runDetailRequest('teamSelection', () => api.exportTeamSelectionDataset(tId, 20, 'json'), setTeamSelection, options)
+  }, [runDetailRequest])
+
+  const loadStrategyMetrics = useCallback(async (threadId?: string | null, options?: LoadDetailOptions) => {
+    const tId = cleanText(threadId)
+    if (!tId) return null
+    return runDetailRequest('strategyMetrics', () => api.exportRunStudioStrategyDataset(tId, 100, 'json'), setStrategyMetrics, options)
   }, [runDetailRequest])
 
   const loadSkillUsage = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
@@ -348,6 +358,7 @@ export function useRunStudioData() {
           tasks.push(loadRunBundle(tId, cId, effectiveRunId, { silent: true }))
         }
         if (loadedSnapshot.teamSelection) tasks.push(loadTeamSelection(tId, { silent: true }))
+        if (loadedSnapshot.strategyMetrics) tasks.push(loadStrategyMetrics(tId, { silent: true }))
         if (loadedSnapshot.agentTeam && !nextSummary?.agent_team) tasks.push(loadAgentTeam(tId, { silent: true }))
         if (tasks.length > 0) await Promise.all(tasks)
       }
@@ -356,7 +367,7 @@ export function useRunStudioData() {
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [applySummary, clear, detailLoaded, focusedRunId, loadAgentTeam, loadContextDecisions, loadRunBundle, loadTeamSelection])
+  }, [applySummary, clear, detailLoaded, focusedRunId, loadAgentTeam, loadContextDecisions, loadRunBundle, loadTeamSelection, loadStrategyMetrics])
 
   const derivedRunId = useMemo(() => cleanText(summary?.current_run_skills?.run_id) || null, [summary])
 
@@ -376,6 +387,7 @@ export function useRunStudioData() {
     harnessSummary,
     auditTimeline,
     teamSelection,
+    strategyMetrics,
     detailLoaded,
     detailLoading,
     derivedRunId,
@@ -395,6 +407,7 @@ export function useRunStudioData() {
     loadMemoryGraph,
     loadTraceScope,
     loadTeamSelection,
+    loadStrategyMetrics,
     focusRunDrilldown,
     clearRunDrilldown,
   }

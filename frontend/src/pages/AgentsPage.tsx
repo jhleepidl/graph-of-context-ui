@@ -48,7 +48,7 @@ type AgentRecord = {
   description: string
   system_prompt: string
   instruction: string
-  tools: string[]
+  skills: string[]
   model: string
   visibility: AgentVisibility
   source_agent_id: string | null
@@ -65,7 +65,7 @@ type AgentForm = {
   description: string
   system_prompt: string
   instruction: string
-  tools_text: string
+  skills_text: string
   model: string
   visibility: AgentVisibility
 }
@@ -142,7 +142,7 @@ function normalizeAgent(raw: any): AgentRecord | null {
     description: asString(raw.description),
     system_prompt: asString(raw.system_prompt),
     instruction: asString(raw.instruction),
-    tools: asStringArray(raw.tools),
+    skills: asStringArray(raw.skills ?? raw.tools),
     model: asString(raw.model),
     visibility: normalizeVisibility(raw.visibility),
     source_agent_id: asString(raw.source_agent_id) || null,
@@ -196,7 +196,7 @@ function emptyForm(defaultVisibility: AgentVisibility = 'private'): AgentForm {
     description: '',
     system_prompt: '',
     instruction: '',
-    tools_text: '',
+    skills_text: '',
     model: '',
     visibility: defaultVisibility,
   }
@@ -208,13 +208,13 @@ function toForm(agent: AgentRecord): AgentForm {
     description: agent.description,
     system_prompt: agent.system_prompt,
     instruction: agent.instruction,
-    tools_text: agent.tools.join('\n'),
+    skills_text: agent.skills.join('\n'),
     model: agent.model,
     visibility: agent.visibility,
   }
 }
 
-function parseTools(text: string): string[] {
+function parseSkills(text: string): string[] {
   return text
     .split(/\r?\n|,/g)
     .map((row) => row.trim())
@@ -463,7 +463,8 @@ export default function AgentsPage({ onNavigate }: Props) {
         description: createForm.description.trim(),
         system_prompt: createForm.system_prompt,
         instruction: createForm.instruction,
-        tools: parseTools(createForm.tools_text),
+        skills: parseSkills(createForm.skills_text),
+        tools: parseSkills(createForm.skills_text),
         model: createForm.model.trim(),
         visibility: createForm.visibility,
       })
@@ -501,7 +502,8 @@ export default function AgentsPage({ onNavigate }: Props) {
         description: editForm.description.trim(),
         system_prompt: editForm.system_prompt,
         instruction: editForm.instruction,
-        tools: parseTools(editForm.tools_text),
+        skills: parseSkills(editForm.skills_text),
+        tools: parseSkills(editForm.skills_text),
         model: editForm.model.trim(),
         visibility: editForm.visibility,
       })
@@ -736,7 +738,7 @@ export default function AgentsPage({ onNavigate }: Props) {
                   <th>name</th>
                   <th>visibility</th>
                   <th>model</th>
-                  <th>tools</th>
+                  <th>skills</th>
                   <th>description</th>
                   {isAdminViewer && <th>creator</th>}
                   <th>thread</th>
@@ -775,7 +777,7 @@ export default function AgentsPage({ onNavigate }: Props) {
                       </td>
                       <td>{agent.visibility}</td>
                       <td>{agent.model || '-'}</td>
-                      <td>{agent.tools.length ? agent.tools.join(', ') : '-'}</td>
+                      <td>{agent.skills.length ? agent.skills.join(', ') : '-'}</td>
                       <td style={{ maxWidth: 320 }}>
                         {(agent.description || agent.instruction || '').replace(/\s+/g, ' ').slice(0, 180) || '-'}
                       </td>
@@ -942,10 +944,10 @@ function AgentFormFields({
         <input value={form.model} onChange={(e) => onChange((prev) => ({ ...prev, model: e.target.value }))} />
       </label>
       <label className="routeLabel">
-        tools (newline or comma separated)
+        skills (newline or comma separated)
         <textarea
-          value={form.tools_text}
-          onChange={(e) => onChange((prev) => ({ ...prev, tools_text: e.target.value }))}
+          value={form.skills_text}
+          onChange={(e) => onChange((prev) => ({ ...prev, skills_text: e.target.value }))}
           style={{ minHeight: 70 }}
         />
       </label>

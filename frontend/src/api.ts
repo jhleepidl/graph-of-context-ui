@@ -300,6 +300,7 @@ export const api = {
       description?: string
       system_prompt?: string
       instruction?: string
+      skills?: string[]
       tools?: string[]
       model?: string
       visibility?: 'private' | 'unlisted' | 'public'
@@ -319,6 +320,7 @@ export const api = {
       description?: string
       system_prompt?: string
       instruction?: string
+      skills?: string[]
       tools?: string[]
       model?: string
       visibility?: 'private' | 'unlisted' | 'public'
@@ -337,6 +339,7 @@ export const api = {
       description?: string
       system_prompt?: string
       instruction?: string
+      skills?: string[]
       tools?: string[]
       model?: string
       visibility?: 'private' | 'unlisted' | 'public'
@@ -626,6 +629,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+  exportRunStudioStrategyDataset: (threadId: string, limit?: number | null, format?: 'json' | 'jsonl' | null) => {
+    const q = new URLSearchParams()
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    if (format && format !== 'json') q.set('format', format)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    if (format === 'jsonl') {
+      return apiFetch(`/api/threads/${threadId}/run_studio/strategy_export${suffix}`).then(async (res) => {
+        if (!res.ok) throw new Error(await readApiErrorResponse(res))
+        return res.text()
+      })
+    }
+    return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/strategy_export${suffix}`))
+  },
+
   exportTeamSelectionDataset: (threadId: string, limit?: number | null, format?: 'json' | 'jsonl' | null) => {
     const q = new URLSearchParams()
     if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
