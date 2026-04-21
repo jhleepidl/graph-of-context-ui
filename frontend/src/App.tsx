@@ -4,7 +4,7 @@ const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'))
 const GuestRequestServicePage = lazy(() => import('./pages/GuestRequestServicePage'))
 const AdminServiceRequestsPage = lazy(() => import('./pages/AdminServiceRequestsPage'))
 const AgentsPage = lazy(() => import('./pages/AgentsPage'))
-const SkillsPage = lazy(() => import('./pages/SkillsPage'))
+const ToolsPage = lazy(() => import('./pages/ToolsPage'))
 const LibraryPage = lazy(() => import('./pages/LibraryPage'))
 const AdminPublishRequestsPage = lazy(() => import('./pages/AdminPublishRequestsPage'))
 import {
@@ -95,7 +95,7 @@ export default function App() {
     if (pathname === '/admin/service-requests') return 'admin_service_requests'
     if (pathname === '/admin/publish-requests') return 'admin_publish_requests'
     if (pathname === '/agents') return 'agents'
-    if (pathname === '/skills' || pathname === '/tools') return 'skills'
+    if (pathname === '/tools') return 'tools'
     if (pathname === '/library') return 'library'
     return 'workspace'
   }, [pathname])
@@ -104,7 +104,7 @@ export default function App() {
     const next = parseRouteTarget(nextPath)
     let nextSearch = next.search
     if (pathname === '/' && search) setLastWorkspaceSearch(search)
-    if ((next.pathname === '/agents' || next.pathname === '/skills' || next.pathname === '/tools' || next.pathname === '/library') && !nextSearch) {
+    if ((next.pathname === '/agents' || next.pathname === '/tools' || next.pathname === '/library') && !nextSearch) {
       nextSearch = pickWorkspaceSearch(search, lastWorkspaceSearch)
     }
     if (next.pathname === '/' && !nextSearch) {
@@ -134,10 +134,7 @@ export default function App() {
     <div className="routeShell">
       <header className="topNav">
         <div className="topNavLeft">
-          <button className={route === 'workspace' ? 'primary' : ''} onClick={() => navigate('/')}>GoC</button>
-          <button className={route === 'agents' ? 'primary' : ''} onClick={() => navigate('/agents')}>Agents Catalog</button>
-          <button className={route === 'skills' ? 'primary' : ''} onClick={() => navigate('/skills')}>Skills Catalog</button>
-          <button className={route === 'library' ? 'primary' : ''} onClick={() => navigate('/library')}>Public Library</button>
+          <button className={route === 'workspace' ? 'primary' : ''} onClick={() => navigate('/')}>GoC Studio</button>
           <button className={route === 'guest_request_service' ? 'primary' : ''} onClick={() => navigate('/guest/request-service')}>Request Service Key</button>
           <button className={route === 'admin_login' ? 'primary' : ''} onClick={() => navigate('/admin/login')}>Admin Login</button>
           {hasAdminKey && (
@@ -157,7 +154,7 @@ export default function App() {
         <Suspense fallback={<RouteFallback label="Loading view…" />}>
           {route === 'workspace' && <WorkspaceApp />}
           {route === 'agents' && <AgentsPage onNavigate={navigate} />}
-          {route === 'skills' && <SkillsPage onNavigate={navigate} />}
+          {route === 'tools' && <ToolsPage onNavigate={navigate} />}
           {route === 'library' && <LibraryPage onNavigate={navigate} />}
           {route === 'admin_login' && (
             <AdminLoginPage onAdminAuthChanged={handleAdminAuthChanged} onNavigate={navigate} />

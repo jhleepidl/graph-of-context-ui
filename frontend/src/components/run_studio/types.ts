@@ -448,62 +448,6 @@ export type TeamSelectionDataset = {
   rows?: TeamSelectionDatasetRow[]
 }
 
-export type TeamStrategyDatasetRow = {
-  revision_id?: string | null
-  thread_id?: string | null
-  conversation_id?: string | null
-  revision_kind?: string | null
-  created_at?: string | null
-  status?: string | null
-  composition_mode?: string | null
-  proposal_mode?: string | null
-  team_state?: string | null
-  team_name?: string | null
-  recommendation?: string | null
-  source?: string | null
-  ts?: string | null
-  augmentation_score?: number | null
-  role_separation_score?: number | null
-  independent_review_needed?: boolean
-  persistent_split_needed?: boolean
-  auto_prepared_draft?: boolean
-  capability_gap_summary?: string | null
-  rationale?: string[]
-  augmentation_reasons?: string[]
-  role_separation_reasons?: string[]
-  quality?: {
-    quality_gap?: number | null
-    contradiction_pressure?: number | null
-    followup_burden?: number | null
-  } | null
-}
-
-export type TeamStrategyDataset = {
-  kind?: string | null
-  schema_version?: number | null
-  thread_id?: string | null
-  count?: number
-  recommendation_counts?: Record<string, number>
-  source_counts?: Record<string, number>
-  summary?: {
-    augment_only_count?: number
-    expand_team_count?: number
-    augment_only_rate?: number
-    expand_team_rate?: number
-    auto_prepared_draft_count?: number
-    independent_review_count?: number
-    persistent_split_count?: number
-    average_augmentation_score?: number | null
-    average_role_separation_score?: number | null
-    top_capability_gaps?: Array<{ value?: string | null; count?: number }>
-    top_rationales?: Array<{ value?: string | null; count?: number }>
-    latest_recommendation?: string | null
-    latest_source?: string | null
-    latest_ts?: string | null
-  } | null
-  rows?: TeamStrategyDatasetRow[]
-}
-
 export type MemoryLifecycleEvent = {
   id?: string | null
   thread_id?: string | null
@@ -850,12 +794,10 @@ export type RunStudioAuditTimeline = {
   linked_summary?: {
     team_synthesis_mode?: string | null
     execution_mode?: string | null
-    execution_lane?: string | null
     execution_mode_reasons?: string[]
     execution_mode_signals?: Record<string, unknown> | null
     execution_quality_signals?: Record<string, unknown> | null
     execution_mode_history_tail?: Array<Record<string, unknown>>
-    adaptive_expansion?: Record<string, unknown> | null
     task_type?: string | null
     deliverable_type?: string | null
     task_family_key?: string | null

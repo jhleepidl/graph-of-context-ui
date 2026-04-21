@@ -6,85 +6,6 @@ from sqlmodel import Session, select
 
 from app.models import Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, Node, Thread
 from app.services.memory_graph import summarize_memory_edge, summarize_memory_lifecycle_event
-from app.services.conversation_team_config import get_team_config_payload
-
-
-def _clean_adaptive_expansion(value: Any) -> dict[str, Any]:
-    row = value if isinstance(value, dict) else {}
-    augmentation = row.get('augmentation') if isinstance(row.get('augmentation'), dict) else {}
-    role_separation = row.get('role_separation') if isinstance(row.get('role_separation'), dict) else {}
-    quality = row.get('quality') if isinstance(row.get('quality'), dict) else {}
-    rationale = [str(item).strip() for item in list(row.get('rationale') or []) if str(item).strip()][:6]
-    return {
-        'recommendation': str(row.get('recommendation') or '').strip().lower() or None,
-        'rationale': rationale,
-        'augmentation': {
-            'score': augmentation.get('score'),
-            'reasons': [str(item).strip() for item in list(augmentation.get('reasons') or []) if str(item).strip()][:6],
-        },
-        'role_separation': {
-            'score': role_separation.get('score'),
-            'reasons': [str(item).strip() for item in list(role_separation.get('reasons') or []) if str(item).strip()][:6],
-            'independent_review_needed': role_separation.get('independent_review_needed') is True,
-            'persistent_split_needed': role_separation.get('persistent_split_needed') is True,
-        },
-        'quality': quality if isinstance(quality, dict) else {},
-        'capability_gap_summary': str(row.get('capability_gap_summary') or '').strip() or None,
-        'auto_prepared_draft': row.get('auto_prepared_draft') is True,
-        'source': str(row.get('source') or '').strip() or None,
-        'ts': str(row.get('ts') or '').strip() or None,
-    }
-
-
-def _select_latest_team_strategy(*strategies: dict[str, Any]) -> dict[str, Any] | None:
-    latest: dict[str, Any] | None = None
-    latest_ts = ''
-    for strategy in strategies:
-        if not isinstance(strategy, dict):
-            continue
-        clean = _clean_adaptive_expansion(strategy)
-        if not clean.get('recommendation'):
-            continue
-        ts = str(clean.get('ts') or '')
-        if latest is None or ts >= latest_ts:
-            latest = clean
-            latest_ts = ts
-    return latest
-
-
-def _clean_execution_lane(value: Any) -> str | None:
-    lane = str(value or '').strip().lower()
-    return lane if lane in {'fast', 'work', 'deep'} else None
-
-
-def _extract_execution_lane(*sources: Any) -> str | None:
-    for source in sources:
-        if isinstance(source, dict):
-            direct = _clean_execution_lane(
-                source.get('execution_lane')
-                or source.get('executionLane')
-                or source.get('chat_lane')
-                or source.get('chatLane')
-                or source.get('route_lane')
-                or source.get('routeLane')
-                or source.get('response_lane')
-                or source.get('responseLane')
-                or source.get('lane')
-            )
-            if direct:
-                return direct
-            nested = _extract_execution_lane(
-                source.get('route_plan'),
-                source.get('routePlan'),
-                source.get('supervisor_route'),
-                source.get('supervisorRoute'),
-                source.get('routing'),
-                source.get('routing_metadata'),
-                source.get('routingMetadata'),
-            )
-            if nested:
-                return nested
-    return None
 
 
 def build_run_studio_audit_timeline_impl(
@@ -172,7 +93,6 @@ def build_run_studio_audit_timeline_impl(
     execution_mode_signals = execution_mode_signals if isinstance(execution_mode_signals, dict) else {}
     execution_quality_signals = planner_metadata.get('execution_quality_signals') or planner_metadata.get('executionQualitySignals') or {}
     execution_quality_signals = execution_quality_signals if isinstance(execution_quality_signals, dict) else {}
-    execution_lane = _extract_execution_lane(planner_metadata, execution_mode_signals, execution_quality_signals)
     execution_mode_history_tail = planner_metadata.get('execution_mode_history_tail') or planner_metadata.get('executionModeHistoryTail') or []
     execution_mode_history_tail = execution_mode_history_tail if isinstance(execution_mode_history_tail, list) else []
     task_type = str(planner_metadata.get('task_type') or planner_metadata.get('taskType') or '').strip() or None
@@ -180,13 +100,6 @@ def build_run_studio_audit_timeline_impl(
     task_family_key = str(planner_metadata.get('task_family_key') or planner_metadata.get('taskFamilyKey') or '').strip() or None
     task_family_mode_hint = planner_metadata.get('task_family_mode_hint') or planner_metadata.get('taskFamilyModeHint') or {}
     task_family_mode_hint = task_family_mode_hint if isinstance(task_family_mode_hint, dict) else {}
-    runtime_strategy = _clean_adaptive_expansion(planner_metadata.get('adaptive_expansion') or planner_metadata.get('adaptiveExpansion') or {})
-    team_config_payload = get_team_config_payload(session, thread_id=thread.id)
-    active_team = team_config_payload.get('active_team') if isinstance(team_config_payload.get('active_team'), dict) else {}
-    pending_team = team_config_payload.get('pending_team') if isinstance(team_config_payload.get('pending_team'), dict) else {}
-    active_strategy = _clean_adaptive_expansion((active_team.get('planner_metadata') or active_team.get('plannerMetadata') or {}).get('adaptive_expansion') or ((active_team.get('planner_metadata') or active_team.get('plannerMetadata') or {}).get('adaptiveExpansion')) or {})
-    pending_strategy = _clean_adaptive_expansion((pending_team.get('planner_metadata') or pending_team.get('plannerMetadata') or {}).get('adaptive_expansion') or ((pending_team.get('planner_metadata') or pending_team.get('plannerMetadata') or {}).get('adaptiveExpansion')) or {})
-    latest_team_strategy = _select_latest_team_strategy(pending_strategy, runtime_strategy, active_strategy)
 
     selection_event = _latest_team_selection_event(session, thread_id=thread.id, run_id=clean_run_id)
     selection_payload = _team_selection_event_payload(selection_event)
@@ -275,7 +188,6 @@ def build_run_studio_audit_timeline_impl(
             'badges': [
                 *([f"mode: {team_synthesis_mode}"] if team_synthesis_mode else []),
                 *([f"execution: {execution_mode}"] if execution_mode else []),
-                *([f"lane: {execution_lane}"] if execution_lane else []),
                 *([f"channel: {motif_channel}"] if motif_channel else []),
                 *([f"motifs: {len(selected_motif_ids)}"] if selected_motif_ids else []),
                 *([f"quality: {execution_quality_signals.get('quality_health_score')}"] if execution_quality_signals.get('quality_health_score') not in (None, '') else []),
@@ -287,7 +199,6 @@ def build_run_studio_audit_timeline_impl(
                 'motif_feedback_run_count': motif_feedback_run_count,
                 'motif_channel': motif_channel,
                 'execution_mode': execution_mode,
-                'execution_lane': execution_lane,
                 'execution_mode_reasons': execution_mode_reasons,
                 'execution_mode_signals': execution_mode_signals,
                 'execution_quality_signals': execution_quality_signals,
@@ -297,62 +208,6 @@ def build_run_studio_audit_timeline_impl(
                 'task_family_key': task_family_key,
                 'task_family_mode_hint': task_family_mode_hint,
                 'selection_explanations': runtime_snapshot.get('selection_explanations') or [],
-            },
-        })
-
-    if latest_team_strategy:
-        recommendation = str(latest_team_strategy.get('recommendation') or '').strip().lower()
-        augmentation_meta = latest_team_strategy.get('augmentation') if isinstance(latest_team_strategy.get('augmentation'), dict) else {}
-        role_separation_meta = latest_team_strategy.get('role_separation') if isinstance(latest_team_strategy.get('role_separation'), dict) else {}
-        strategy_source = str(latest_team_strategy.get('source') or '').strip() or ('pending_team' if pending_strategy.get('recommendation') else ('runtime' if runtime_strategy.get('recommendation') else 'active_team'))
-        strategy_team_name = str((pending_team if strategy_source.startswith('pending') else active_team).get('team_name') or '').strip() or None
-        strategy_summary_parts = []
-        if recommendation == 'augment_context':
-            strategy_summary_parts.append('Preferred memory / skill / context augmentation before splitting roles.')
-        elif recommendation == 'expand_team':
-            strategy_summary_parts.append('Role separation value is high enough to justify a pending or active team expansion.')
-        elif recommendation:
-            strategy_summary_parts.append(f'Recommended {recommendation} for the latest run state.')
-        capability_gap_summary = str(latest_team_strategy.get('capability_gap_summary') or '').strip()
-        if capability_gap_summary:
-            strategy_summary_parts.append(f'gaps {capability_gap_summary}')
-        if latest_team_strategy.get('auto_prepared_draft') is True:
-            strategy_summary_parts.append('pending draft prepared')
-        strategy_timestamp = str(latest_team_strategy.get('ts') or '').strip()
-        if not strategy_timestamp and selection_event and selection_event.created_at:
-            strategy_timestamp = _iso_or_none(selection_event.created_at)
-        _push_timeline_event(items, seen, {
-            'event_id': f"team-strategy:{clean_run_id or thread.id}",
-            'timestamp': strategy_timestamp,
-            'category': 'team_strategy',
-            'title': 'Adaptive team strategy assessed',
-            'summary': ' · '.join(strategy_summary_parts) or 'Adaptive team strategy was assessed for this run.',
-            'status': recommendation or None,
-            'run_id': clean_run_id,
-            'badges': [
-                *([f"recommendation: {recommendation}"] if recommendation else []),
-                *([f"augmentation: {augmentation_meta.get('score')}"] if augmentation_meta.get('score') not in (None, '') else []),
-                *([f"role separation: {role_separation_meta.get('score')}"] if role_separation_meta.get('score') not in (None, '') else []),
-                *([f"source: {strategy_source}"] if strategy_source else []),
-                *([f"lane: {execution_lane}"] if execution_lane else []),
-                *(['independent review'] if role_separation_meta.get('independent_review_needed') is True else []),
-                *(['persistent split'] if role_separation_meta.get('persistent_split_needed') is True else []),
-                *(['pending draft'] if latest_team_strategy.get('auto_prepared_draft') is True else []),
-            ],
-            'metadata': {
-                'recommendation': recommendation,
-                'rationale': latest_team_strategy.get('rationale') or [],
-                'augmentation': augmentation_meta,
-                'role_separation': role_separation_meta,
-                'quality': latest_team_strategy.get('quality') or {},
-                'capability_gap_summary': capability_gap_summary or None,
-                'source': strategy_source,
-                'execution_lane': execution_lane,
-                'team_name': strategy_team_name,
-                'team_state_status': team_config_payload.get('status'),
-                'active_team_name': active_team.get('team_name'),
-                'pending_team_name': pending_team.get('team_name'),
-                'auto_prepared_draft': latest_team_strategy.get('auto_prepared_draft') is True,
             },
         })
 
@@ -1008,12 +863,10 @@ def build_run_studio_audit_timeline_impl(
         'linked_summary': {
             'team_synthesis_mode': team_synthesis_mode,
             'execution_mode': execution_mode,
-            'execution_lane': execution_lane,
             'execution_mode_reasons': execution_mode_reasons,
             'execution_mode_signals': execution_mode_signals,
             'execution_quality_signals': execution_quality_signals,
             'execution_mode_history_tail': execution_mode_history_tail[-5:],
-            'adaptive_expansion': latest_team_strategy,
             'selected_motif_ids': selected_motif_ids,
             'motif_feedback_run_count': motif_feedback_run_count,
             'motif_channel': motif_channel,

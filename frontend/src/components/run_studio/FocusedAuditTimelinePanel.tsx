@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React from 'react'
 import { type RunStudioAuditTimeline, type RunStudioAuditTimelineEvent } from './types'
 
 type Props = {
@@ -40,9 +40,9 @@ function eventTitle(event: RunStudioAuditTimelineEvent): string {
   if (category === 'planning_motif') return cleanText(event.title || 'Planner motif selection')
   if (category === 'channel_verifier') return cleanText(event.title || 'Experiment channel verifier')
   if (category === 'channel_promotion') return cleanText(event.title || 'Channel promotion applied')
-  if (category === 'team_strategy') return cleanText(event.title || 'Adaptive team strategy assessed')
   return cleanText(event.title || event.category || 'timeline event')
 }
+
 
 function renderLinkedSummary(auditTimeline: RunStudioAuditTimeline | null) {
   const linked = auditTimeline?.linked_summary
@@ -50,16 +50,10 @@ function renderLinkedSummary(auditTimeline: RunStudioAuditTimeline | null) {
   const motifs = (linked.selected_motif_ids || []).map((entry) => cleanText(entry)).filter(Boolean)
   const participantKinds = Object.entries(linked.participant_kind_counts || {}).filter(([, value]) => Number(value || 0) > 0)
   const participantLabels = (linked.participant_labels || []).map((entry) => cleanText(entry)).filter(Boolean)
-  const executionLane = cleanText(linked.execution_lane)
   const executionReasons = (linked.execution_mode_reasons || []).map((entry) => cleanText(entry)).filter(Boolean)
   const executionSignals = Object.entries(linked.execution_mode_signals || {}).filter(([, value]) => cleanText(value).length > 0)
   const executionQualitySignals = Object.entries(linked.execution_quality_signals || {}).filter(([, value]) => cleanText(value).length > 0)
   const executionModeHistory = (linked.execution_mode_history_tail || []).map((entry) => entry as Record<string, unknown>).filter((entry) => cleanText(entry.mode))
-  const adaptiveExpansion = (linked.adaptive_expansion || {}) as Record<string, unknown>
-  const adaptiveAugmentation = (adaptiveExpansion.augmentation || {}) as Record<string, unknown>
-  const adaptiveRoleSeparation = (adaptiveExpansion.role_separation || {}) as Record<string, unknown>
-  const adaptiveQuality = (adaptiveExpansion.quality || {}) as Record<string, unknown>
-  const adaptiveRationale = (adaptiveExpansion.rationale || []).map((entry) => cleanText(entry)).filter(Boolean)
   const taskFamilyHint = (linked.task_family_mode_hint || {}) as Record<string, unknown>
   const motifCompare = (linked.motif_compare || {}) as Record<string, unknown>
   const participantCompare = (linked.participant_policy_compare || {}) as Record<string, unknown>
@@ -68,8 +62,7 @@ function renderLinkedSummary(auditTimeline: RunStudioAuditTimeline | null) {
   const rolledBackMotifs = (linked.rolled_back_motif_ids || []).map((entry) => cleanText(entry)).filter(Boolean)
   const hasCompare = cleanText(motifCompare.channel) || cleanText(participantCompare.channel) || cleanText(linked.latest_overall_recommendation) || promotedMotifs.length > 0 || rolledBackMotifs.length > 0 || Object.keys(participantSnapshot).length > 0
   const hasTaskFamily = cleanText(linked.task_family_key) || cleanText(taskFamilyHint.mode || taskFamilyHint.recommended_mode || taskFamilyHint.stable_default_mode)
-  const hasAdaptiveExpansion = cleanText(adaptiveExpansion.recommendation) || adaptiveRationale.length > 0 || cleanText(adaptiveExpansion.capability_gap_summary)
-  const hasData = motifs.length > 0 || participantKinds.length > 0 || participantLabels.length > 0 || cleanText(linked.team_synthesis_mode) || cleanText(linked.execution_mode) || executionLane || executionReasons.length > 0 || executionSignals.length > 0 || executionQualitySignals.length > 0 || executionModeHistory.length > 0 || hasCompare || hasTaskFamily || hasAdaptiveExpansion
+  const hasData = motifs.length > 0 || participantKinds.length > 0 || participantLabels.length > 0 || cleanText(linked.team_synthesis_mode) || cleanText(linked.execution_mode) || executionReasons.length > 0 || executionSignals.length > 0 || executionQualitySignals.length > 0 || executionModeHistory.length > 0 || hasCompare || hasTaskFamily
   if (!hasData) return null
   return (
     <div className="runStudioAgentCard" style={{ marginBottom: 10 }}>
@@ -80,7 +73,6 @@ function renderLinkedSummary(auditTimeline: RunStudioAuditTimeline | null) {
         </div>
         <div className="runStudioMetaRow">
           {cleanText(linked.team_synthesis_mode) && <span className="pill">mode: {cleanText(linked.team_synthesis_mode)}</span>}
-          {executionLane && <span className="pill">lane: {executionLane}</span>}
           {cleanText(linked.execution_mode) && <span className="pill">execution: {cleanText(linked.execution_mode)}</span>}
           {cleanText(linked.task_family_key) && <span className="pill">task family: {cleanText(linked.task_family_key)}</span>}
           {cleanText(linked.motif_channel) && <span className="pill">motif channel: {cleanText(linked.motif_channel)}</span>}
@@ -107,26 +99,8 @@ function renderLinkedSummary(auditTimeline: RunStudioAuditTimeline | null) {
           )}
         </div>
       )}
-      {hasAdaptiveExpansion && (
+      {(executionReasons.length > 0 || executionSignals.length > 0 || executionQualitySignals.length > 0 || executionModeHistory.length > 0) && (
         <div className="muted" style={{ marginTop: 8 }}>
-          <div><b>Adaptive team strategy:</b> {cleanText(adaptiveExpansion.recommendation) || 'n/a'} · source {cleanText(adaptiveExpansion.source) || 'n/a'} · updated {cleanText(adaptiveExpansion.ts) || 'n/a'}{executionLane ? ` · lane ${executionLane}` : ''}</div>
-          <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
-            {cleanText(adaptiveAugmentation.score) && <span className="pill">augmentation: {cleanText(adaptiveAugmentation.score)}</span>}
-            {cleanText(adaptiveRoleSeparation.score) && <span className="pill">role separation: {cleanText(adaptiveRoleSeparation.score)}</span>}
-            {adaptiveRoleSeparation.independent_review_needed === true && <span className="pill">independent review</span>}
-            {adaptiveRoleSeparation.persistent_split_needed === true && <span className="pill">persistent split</span>}
-            {adaptiveExpansion.auto_prepared_draft === true && <span className="pill">pending draft</span>}
-          </div>
-          {adaptiveRationale.length > 0 && <div style={{ marginTop: 6 }}>Why: {adaptiveRationale.join(', ')}</div>}
-          {cleanText(adaptiveExpansion.capability_gap_summary) && <div>Capability gaps: {cleanText(adaptiveExpansion.capability_gap_summary)}</div>}
-          {(cleanText(adaptiveQuality.quality_gap) || cleanText(adaptiveQuality.contradiction_pressure) || cleanText(adaptiveQuality.followup_burden)) && (
-            <div>Quality signals: gap {cleanText(adaptiveQuality.quality_gap) || '0'} · contradiction {cleanText(adaptiveQuality.contradiction_pressure) || '0'} · follow-up {cleanText(adaptiveQuality.followup_burden) || '0'}</div>
-          )}
-        </div>
-      )}
-      {(executionLane || executionReasons.length > 0 || executionSignals.length > 0 || executionQualitySignals.length > 0 || executionModeHistory.length > 0) && (
-        <div className="muted" style={{ marginTop: 8 }}>
-          {executionLane && <div><b>Execution lane:</b> {executionLane}</div>}
           {executionReasons.length > 0 && <div><b>Execution mode rationale:</b> {executionReasons.join(', ')}</div>}
           {executionSignals.length > 0 && (
             <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
@@ -171,9 +145,7 @@ function renderMetadata(metadata: Record<string, unknown> | null | undefined) {
   return (
     <div className="muted" style={{ marginTop: 8 }}>
       {entries.map(([key, value], index) => {
-        const rendered = Array.isArray(value)
-          ? value.map((item) => cleanText(item)).filter(Boolean).join(', ')
-          : (value && typeof value === 'object' ? JSON.stringify(value) : cleanText(value))
+        const rendered = Array.isArray(value) ? value.map((item) => cleanText(item)).filter(Boolean).join(', ') : cleanText(value)
         if (!rendered) return null
         return <div key={`${key}-${index}`}>{key}: {rendered}</div>
       })}
@@ -181,66 +153,10 @@ function renderMetadata(metadata: Record<string, unknown> | null | undefined) {
   )
 }
 
-function gatherEventTags(items: RunStudioAuditTimelineEvent[]): Array<{ label: string; count: number }> {
-  const counts = new Map<string, number>()
-  items.forEach((event) => {
-    const values = [
-      ...(event.badges || []).map((item) => cleanText(item)).filter(Boolean),
-      ...(event.rationale_codes || []).map((item) => cleanText(item)).filter(Boolean),
-    ]
-    const unique = new Set(values)
-    unique.forEach((value) => counts.set(value, (counts.get(value) || 0) + 1))
-  })
-  return Array.from(counts.entries())
-    .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))
-    .slice(0, 14)
-    .map(([label, count]) => ({ label, count }))
-}
-
 export default function FocusedAuditTimelinePanel({ auditTimeline, onFocusNode, onOpenNode, onFocusTrace, onOpenTrace }: Props) {
   const items = auditTimeline?.items || []
   const categoryCounts = auditTimeline?.category_counts || {}
   const statusCounts = auditTimeline?.status_counts || {}
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([])
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
-  const [selectedTags, setSelectedTags] = useState<string[]>([])
-  const [search, setSearch] = useState('')
-
-  const tagCounts = useMemo(() => gatherEventTags(items), [items])
-
-  const filteredItems = useMemo(() => {
-    const searchText = cleanText(search).toLowerCase()
-    return items.filter((event) => {
-      const category = cleanText(event.category)
-      const status = cleanText(event.status)
-      const eventTags = new Set<string>([
-        ...(event.badges || []).map((item) => cleanText(item)).filter(Boolean),
-        ...(event.rationale_codes || []).map((item) => cleanText(item)).filter(Boolean),
-      ])
-      if (selectedCategories.length > 0 && !selectedCategories.includes(category)) return false
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(status)) return false
-      if (selectedTags.length > 0 && !selectedTags.every((tag) => eventTags.has(tag))) return false
-      if (!searchText) return true
-      const haystack = [
-        eventTitle(event),
-        cleanText(event.summary),
-        cleanText(event.category),
-        cleanText(event.status),
-        ...(event.badges || []).map((badge) => cleanText(badge)),
-        ...(event.rationale_codes || []).map((code) => cleanText(code)),
-        cleanText((event.metadata as Record<string, unknown> | null | undefined)?.digest_block),
-      ].join(' ').toLowerCase()
-      return haystack.includes(searchText)
-    })
-  }, [items, search, selectedCategories, selectedStatuses, selectedTags])
-
-  const toggleValue = (current: string[], value: string) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]
-  const clearFilters = () => {
-    setSelectedCategories([])
-    setSelectedStatuses([])
-    setSelectedTags([])
-    setSearch('')
-  }
 
   return (
     <section className="card runStudioPanel">
@@ -257,67 +173,24 @@ export default function FocusedAuditTimelinePanel({ auditTimeline, onFocusNode, 
         <>
           <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
             <span className="pill">events: {auditTimeline.count ?? items.length}</span>
-            <span className="pill">visible: {filteredItems.length}</span>
             {auditTimeline.selection_event_id && <span className="pill">selection event: {auditTimeline.selection_event_id}</span>}
             {auditTimeline.anchor_node_id && <span className="pill">anchor: {auditTimeline.anchor_node_id}</span>}
             {auditTimeline.started_at && <span className="pill">start: {formatTimestamp(auditTimeline.started_at)}</span>}
             {auditTimeline.ended_at && <span className="pill">end: {formatTimestamp(auditTimeline.ended_at)}</span>}
           </div>
 
-          <div className="runStudioTimelineFilterBox">
-            <div className="runStudioTimelineFilterHeader">
-              <div>
-                <b>Filter timeline</b>
-                <div className="muted">Categories, status, rationale tags, and free text all stack together.</div>
-              </div>
-              <div className="row" style={{ marginBottom: 0 }}>
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search summary, badges, rationale..."
-                  className="runStudioTimelineSearch"
-                />
-                <button className="tiny" onClick={clearFilters} disabled={!search && selectedCategories.length === 0 && selectedStatuses.length === 0 && selectedTags.length === 0}>Clear</button>
-              </div>
-            </div>
-
-            <div className="runStudioTimelineFilterGroup">
-              <div className="muted">Categories</div>
-              <div className="runStudioMetaRow">
-                {Object.entries(categoryCounts).map(([key, count]) => (
-                  <button key={key} className={`tiny ${selectedCategories.includes(key) ? 'active' : ''}`} onClick={() => setSelectedCategories((prev) => toggleValue(prev, key))}>{key}: {count}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="runStudioTimelineFilterGroup">
-              <div className="muted">Status</div>
-              <div className="runStudioMetaRow">
-                {Object.entries(statusCounts).slice(0, 8).map(([key, count]) => (
-                  <button key={`status-${key}`} className={`tiny ${selectedStatuses.includes(key) ? 'active' : ''}`} onClick={() => setSelectedStatuses((prev) => toggleValue(prev, key))}>{key}: {count}</button>
-                ))}
-              </div>
-            </div>
-
-            {tagCounts.length > 0 && (
-              <div className="runStudioTimelineFilterGroup">
-                <div className="muted">Tags</div>
-                <div className="runStudioMetaRow">
-                  {tagCounts.map((entry) => (
-                    <button key={`tag-${entry.label}`} className={`tiny ${selectedTags.includes(entry.label) ? 'active' : ''}`} onClick={() => setSelectedTags((prev) => toggleValue(prev, entry.label))}>{entry.label}: {entry.count}</button>
-                  ))}
-                </div>
-              </div>
-            )}
+          <div className="runStudioMetaRow" style={{ marginBottom: 10 }}>
+            {Object.entries(categoryCounts).map(([key, count]) => <span key={key} className="pill">{key}: {count}</span>)}
+            {Object.entries(statusCounts).slice(0, 6).map(([key, count]) => <span key={`status-${key}`} className="pill">{key}: {count}</span>)}
           </div>
 
           {renderLinkedSummary(auditTimeline)}
 
-          {filteredItems.length === 0 ? (
-            <div className="muted">No timeline events match the current filters.</div>
+          {items.length === 0 ? (
+            <div className="muted">No timeline events were materialized for this run yet.</div>
           ) : (
             <div style={{ display: 'grid', gap: 10 }}>
-              {filteredItems.map((event, index) => {
+              {items.map((event, index) => {
                 const primaryNodeId = cleanText(event.primary_node_id)
                 const traceNodeIds = uniqueIds(event.trace_node_ids || event.related_node_ids || [])
                 const relatedNodeIds = uniqueIds(event.related_node_ids || [])

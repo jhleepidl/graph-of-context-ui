@@ -22,7 +22,6 @@ type CatalogEntry = {
   key: string
   title: string
   summary: string
-  meta?: string
 }
 
 type Props = {
@@ -83,9 +82,11 @@ function pickCatalogThreadId(threads: ThreadSummary[], preferredTitles: string[]
   return null
 }
 
-function toCatalogEntry(node: GraphNode, kind: 'agent'): CatalogEntry | null {
+function toCatalogEntry(node: GraphNode, kind: 'agent' | 'tool'): CatalogEntry | null {
   const payload = parsePayload(node.payload_json)
-  const key = asString(payload.agent_id) || asString(payload.name) || node.id.slice(0, 12)
+  const key = kind === 'agent'
+    ? (asString(payload.agent_id) || asString(payload.name) || node.id.slice(0, 12))
+    : (asString(payload.tool_id) || asString(payload.name) || node.id.slice(0, 12))
   if (!key) return null
   const title = (
     asString(payload.title)
@@ -128,23 +129,6 @@ function buildEnabledFromSet(
   return allUnique.filter((key) => selectedSet.has(key) && !disabledSet.has(key))
 }
 
-
-function toSkillCatalogEntry(raw: unknown): CatalogEntry | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const row = raw as Record<string, unknown>
-  const key = asString(row.id) || asString(row.slug) || asString(row.name)
-  if (!key) return null
-  const category = asString(row.category)
-  const roles = parseStringArray(row.compatible_roles).slice(0, 4)
-  return {
-    nodeId: key,
-    key,
-    title: asString(row.name) || key,
-    summary: asString(row.description) || '-',
-    meta: [category, roles.length > 0 ? `roles: ${roles.join(', ')}` : ''].filter(Boolean).join(' · '),
-  }
-}
-
 export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Props) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -158,19 +142,20 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
   const [isEditingActiveJobConfig, setIsEditingActiveJobConfig] = useState(false)
 
   const [agentsCatalog, setAgentsCatalog] = useState<CatalogEntry[]>([])
-  const [skillsCatalog, setSkillsCatalog] = useState<CatalogEntry[]>([])
+  const [toolsCatalog, setToolsCatalog] = useState<CatalogEntry[]>([])
 
   const [agentMode, setAgentMode] = useState<CatalogMode>('selected')
-  const [skillMode, setSkillMode] = useState<CatalogMode>('selected')
+  const [toolMode, setToolMode] = useState<CatalogMode>('selected')
   const [enabledAgents, setEnabledAgents] = useState<string[]>([])
-  const [enabledSkills, setEnabledSkills] = useState<string[]>([])
+  const [enabledTools, setEnabledTools] = useState<string[]>([])
 
   const [agentsCatalogThreadId, setAgentsCatalogThreadId] = useState<string | null>(null)
+  const [toolsCatalogThreadId, setToolsCatalogThreadId] = useState<string | null>(null)
 
   const agentKeys = useMemo(() => [...new Set(agentsCatalog.map((item) => item.key))], [agentsCatalog])
-  const skillKeys = useMemo(() => [...new Set(skillsCatalog.map((item) => item.key))], [skillsCatalog])
+  const toolKeys = useMemo(() => [...new Set(toolsCatalog.map((item) => item.key))], [toolsCatalog])
   const enabledAgentsSet = useMemo(() => new Set(enabledAgents), [enabledAgents])
-  const enabledSkillsSet = useMemo(() => new Set(enabledSkills), [enabledSkills])
+  const enabledToolsSet = useMemo(() => new Set(enabledTools), [enabledTools])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -184,20 +169,22 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
         setActiveCtxId(null)
         setIsEditingActiveJobConfig(false)
         setAgentsCatalog([])
-        setSkillsCatalog([])
+        setToolsCatalog([])
         setEnabledAgents([])
-        setEnabledSkills([])
+        setEnabledTools([])
         return
       }
 
       const agentsCatalogTid = pickCatalogThreadId(threads, ['agents', 'agents:profiles'])
+      const toolsCatalogTid = pickCatalogThreadId(threads, ['tools', 'tools:specs'])
       setAgentsCatalogThreadId(agentsCatalogTid)
+      setToolsCatalogThreadId(toolsCatalogTid)
 
-      const [ctxSetsOut, jobRes, agentRes, skillsRes] = await Promise.all([
+      const [ctxSetsOut, jobRes, agentRes, toolRes] = await Promise.all([
         api.ctxSets(threadId),
         api.listResources(threadId, 'job_config'),
         agentsCatalogTid ? api.listResources(agentsCatalogTid, 'agent_profile') : Promise.resolve({ items: [] }),
-        threadId ? api.skills(threadId) : Promise.resolve({ items: [] }),
+        toolsCatalogTid ? api.listResources(toolsCatalogTid, 'tool_spec') : Promise.resolve({ items: [] }),
       ])
       const ctxSets = Array.isArray(ctxSetsOut) ? ctxSetsOut : []
       const defaultCtxId = asString((ctxSets[0] as { id?: unknown } | undefined)?.id) || null
@@ -223,11 +210,11 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
         .filter((item): item is CatalogEntry => Boolean(item))
       setAgentsCatalog(mappedAgents)
 
-      const rawSkills = Array.isArray(skillsRes?.items) ? (skillsRes.items as unknown[]) : []
-      const mappedSkills = rawSkills
-        .map((row) => toSkillCatalogEntry(row))
+      const toolNodes = Array.isArray(toolRes?.items) ? (toolRes.items as GraphNode[]) : []
+      const mappedTools = toolNodes
+        .map((node) => toCatalogEntry(node, 'tool'))
         .filter((item): item is CatalogEntry => Boolean(item))
-      setSkillsCatalog(mappedSkills)
+      setToolsCatalog(mappedTools)
 
       const jobNodes = Array.isArray(jobRes?.items) ? (jobRes.items as GraphNode[]) : []
       const activeJobNodes = jobNodes.filter((node) => activeNodeIdSet.has(node.id))
@@ -238,7 +225,7 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
       if (!selectedJobNode) {
         setJobConfigData(null)
         setEnabledAgents([])
-        setEnabledSkills([])
+        setEnabledTools([])
         return
       }
 
@@ -266,22 +253,19 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
       setAgentMode(nextAgentMode)
       setEnabledAgents(buildEnabledFromSet(nextAgentMode, effectiveAgentSelected, nextAgentDisabled, allAgentKeys))
 
-      const rawSkillSet = (
-        (parsed.skill_set && typeof parsed.skill_set === 'object' && !Array.isArray(parsed.skill_set)
-          ? (parsed.skill_set as Record<string, unknown>)
-          : null)
-        || (parsed.tool_set && typeof parsed.tool_set === 'object' && !Array.isArray(parsed.tool_set)
+      const rawToolSet = (
+        parsed.tool_set && typeof parsed.tool_set === 'object' && !Array.isArray(parsed.tool_set)
           ? (parsed.tool_set as Record<string, unknown>)
-          : null)
+          : null
       )
-      const nextSkillMode: CatalogMode = (
-        asString(rawSkillSet?.mode) === 'all_enabled' ? 'all_enabled' : 'selected'
+      const nextToolMode: CatalogMode = (
+        asString(rawToolSet?.mode) === 'all_enabled' ? 'all_enabled' : 'selected'
       )
-      const nextSkillSelected = parseStringArray(rawSkillSet?.selected)
-      const nextSkillDisabled = parseStringArray(rawSkillSet?.disabled)
-      const allSkillKeys = [...new Set(mappedSkills.map((item) => item.key))]
-      setSkillMode(nextSkillMode)
-      setEnabledSkills(buildEnabledFromSet(nextSkillMode, nextSkillSelected, nextSkillDisabled, allSkillKeys))
+      const nextToolSelected = parseStringArray(rawToolSet?.selected)
+      const nextToolDisabled = parseStringArray(rawToolSet?.disabled)
+      const allToolKeys = [...new Set(mappedTools.map((item) => item.key))]
+      setToolMode(nextToolMode)
+      setEnabledTools(buildEnabledFromSet(nextToolMode, nextToolSelected, nextToolDisabled, allToolKeys))
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
       setError(message)
@@ -303,8 +287,8 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
     })
   }
 
-  function toggleSkill(key: string, checked: boolean) {
-    setEnabledSkills((prev) => {
+  function toggleTool(key: string, checked: boolean) {
+    setEnabledTools((prev) => {
       const set = new Set(prev)
       if (checked) set.add(key)
       else set.delete(key)
@@ -332,16 +316,14 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
         disabled: agentDisabled,
       }
 
-      const enabledSkillSet = new Set(enabledSkills)
-      const skillSelected = skillKeys.filter((key) => enabledSkillSet.has(key))
-      const skillDisabled = skillKeys.filter((key) => !enabledSkillSet.has(key))
-      const normalizedSkillSet = {
-        mode: skillMode,
-        selected: skillSelected,
-        disabled: skillDisabled,
+      const enabledToolSet = new Set(enabledTools)
+      const toolSelected = toolKeys.filter((key) => enabledToolSet.has(key))
+      const toolDisabled = toolKeys.filter((key) => !enabledToolSet.has(key))
+      next.tool_set = {
+        mode: toolMode,
+        selected: toolSelected,
+        disabled: toolDisabled,
       }
-      next.skill_set = normalizedSkillSet
-      next.tool_set = normalizedSkillSet
 
       await api.patchNode(jobConfigNode.id, {
         text: JSON.stringify(next, null, 2),
@@ -450,18 +432,18 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
 
       <div className="card" style={{ marginTop: 10 }}>
         <div className="row" style={{ justifyContent: 'space-between' }}>
-          <b>Skill Set</b>
+          <b>Tool Set</b>
           <div className="row" style={{ marginBottom: 0 }}>
-            <span className="pill">source: thread skill registry</span>
+            <span className="pill">catalog: {toolsCatalogThreadId ? toolsCatalogThreadId.slice(0, 8) : 'none'}</span>
             <label className="muted">
               mode:
               <select
-                value={skillMode}
+                value={toolMode}
                 onChange={(e) => {
                   const mode = e.target.value as CatalogMode
-                  setSkillMode(mode)
+                  setToolMode(mode)
                   if (mode === 'all_enabled') {
-                    setEnabledSkills([...skillKeys])
+                    setEnabledTools([...toolKeys])
                   }
                 }}
                 style={{ marginLeft: 8 }}
@@ -472,35 +454,32 @@ export default function JobSettingsPanel({ threadId, threads, onAfterSave }: Pro
             </label>
           </div>
         </div>
-        <div className="muted" style={{ marginBottom: 8 }}>skill_set를 우선 저장하고, runtime 호환성을 위해 tool_set에도 같은 값을 미러링합니다.</div>
-        {skillsCatalog.length === 0 ? (
-          <div className="muted">현재 thread에서 관측된 skill registry가 없습니다.</div>
+        {toolsCatalog.length === 0 ? (
+          <div className="muted">Tools Catalog를 찾지 못했거나 `tool_spec` 리소스가 없습니다.</div>
         ) : (
           <div className="routeTableWrap">
             <table className="routeTable">
               <thead>
                 <tr>
                   <th>enabled</th>
-                  <th>skill_id</th>
+                  <th>tool_id</th>
                   <th>title</th>
                   <th>summary</th>
-                  <th>meta</th>
                 </tr>
               </thead>
               <tbody>
-                {skillsCatalog.map((skill) => (
-                  <tr key={`${skill.nodeId}:${skill.key}`}>
+                {toolsCatalog.map((tool) => (
+                  <tr key={`${tool.nodeId}:${tool.key}`}>
                     <td>
                       <input
                         type="checkbox"
-                        checked={enabledSkillsSet.has(skill.key)}
-                        onChange={(e) => toggleSkill(skill.key, e.target.checked)}
+                        checked={enabledToolsSet.has(tool.key)}
+                        onChange={(e) => toggleTool(tool.key, e.target.checked)}
                       />
                     </td>
-                    <td>{skill.key}</td>
-                    <td>{skill.title || '-'}</td>
-                    <td>{skill.summary || '-'}</td>
-                    <td>{skill.meta || '-'}</td>
+                    <td>{tool.key}</td>
+                    <td>{tool.title || '-'}</td>
+                    <td>{tool.summary || '-'}</td>
                   </tr>
                 ))}
               </tbody>
