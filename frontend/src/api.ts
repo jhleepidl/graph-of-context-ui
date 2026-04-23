@@ -653,20 +653,42 @@ export const api = {
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/skill_usage${suffix}`))
   },
-  skills: (threadId?: string | null) => {
+  skills: (threadId?: string | null, options?: { include_defaults?: boolean | null }) => {
     const q = new URLSearchParams()
     const cleanThreadId = (threadId || '').trim()
     if (cleanThreadId) q.set('thread_id', cleanThreadId)
+    if (options && typeof options.include_defaults === 'boolean') q.set('include_defaults', options.include_defaults ? 'true' : 'false')
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/skills${suffix}`))
   },
-  skillDetail: (skillId: string, threadId?: string | null) => {
+  skillDetail: (skillId: string, threadId?: string | null, options?: { include_defaults?: boolean | null }) => {
     const q = new URLSearchParams()
     const cleanThreadId = (threadId || '').trim()
     if (cleanThreadId) q.set('thread_id', cleanThreadId)
+    if (options && typeof options.include_defaults === 'boolean') q.set('include_defaults', options.include_defaults ? 'true' : 'false')
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/skills/${encodeURIComponent(skillId)}${suffix}`))
   },
+  exportSkill: (skillId: string, threadId?: string | null, options?: { include_defaults?: boolean | null }) => {
+    const q = new URLSearchParams()
+    const cleanThreadId = (threadId || '').trim()
+    if (cleanThreadId) q.set('thread_id', cleanThreadId)
+    if (options && typeof options.include_defaults === 'boolean') q.set('include_defaults', options.include_defaults ? 'true' : 'false')
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/skills/${encodeURIComponent(skillId)}/export${suffix}`))
+  },
+  installSkill: (body: { thread_id: string; skill_id?: string | null; package?: Record<string, unknown> | null; source_thread_id?: string | null; context_set_id?: string | null; auto_activate?: boolean }) =>
+    j<any>(apiFetch('/api/skills/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  publishSkill: (body: { skill_id?: string | null; package?: Record<string, unknown> | null; thread_id?: string | null; visibility?: 'public' | 'internal' | null }) =>
+    j<any>(apiFetch('/api/skills/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
   runSkills: (runId: string) =>
     j<any>(apiFetch(`/api/runs/${encodeURIComponent(runId)}/skills`)),
   runContextPacks: (runId: string) =>
@@ -759,6 +781,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
   ),
+  getThreadBoard: (threadId: string) => j<any>(apiFetch(`/api/threads/${threadId}/board`)),
+  approveBoardCandidate: (threadId: string, candidateNodeId: string, body?: { publish_to_library?: boolean }) => j<any>(apiFetch(`/api/threads/${threadId}/board/candidates/${candidateNodeId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  })),
   listResources: (threadId: string, resourceKind?: string | null) => {
     const q = resourceKind ? `?resource_kind=${encodeURIComponent(resourceKind)}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/resources${q}`))

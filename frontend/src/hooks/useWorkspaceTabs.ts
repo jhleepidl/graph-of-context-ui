@@ -6,7 +6,7 @@ const WORKSPACE_MAIN_TAB_STORAGE_KEY = 'goc:workspace-main-tab:v1'
 
 export type MobileSection = 'left' | 'center' | 'right'
 export type RightPanelTab = 'inspector' | 'prompt' | 'run' | 'job_settings' | 'conversation_agents'
-export type WorkspaceMainTab = 'run_studio' | 'graph' | 'raw_trace' | 'artifacts' | 'advanced'
+export type WorkspaceMainTab = 'run_studio' | 'board' | 'graph' | 'raw_trace' | 'artifacts' | 'advanced'
 
 function readStoredRightPanelTab(): RightPanelTab {
   if (typeof window === 'undefined') return 'inspector'
@@ -34,7 +34,7 @@ function readStoredWorkspaceMainTab(): WorkspaceMainTab {
   if (typeof window === 'undefined') return 'run_studio'
   try {
     const raw = window.localStorage.getItem(WORKSPACE_MAIN_TAB_STORAGE_KEY)
-    if (raw === 'run_studio' || raw === 'graph' || raw === 'raw_trace' || raw === 'artifacts' || raw === 'advanced') return raw
+    if (raw === 'run_studio' || raw === 'board' || raw === 'graph' || raw === 'raw_trace' || raw === 'artifacts' || raw === 'advanced') return raw
   } catch {
     // ignore storage failures
   }
@@ -72,6 +72,7 @@ export function useWorkspaceTabs() {
 
   const workspaceMainTabLabel = useMemo(() => {
     if (workspaceMainTab === 'run_studio') return 'Run Studio'
+    if (workspaceMainTab === 'board') return 'Board'
     if (workspaceMainTab === 'graph') return 'Graph'
     if (workspaceMainTab === 'raw_trace') return 'Raw Trace'
     if (workspaceMainTab === 'artifacts') return 'Artifacts'

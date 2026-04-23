@@ -8,6 +8,7 @@ from app.services.runtime_snapshot import (
     iter_payload_containers as _runtime_iter_payload_containers,
     node_payload as _runtime_node_payload,
 )
+from app.services.learning_policy import is_learning_excluded_node
 
 
 SKILL_PACKAGE_KEYS = (
@@ -19,6 +20,8 @@ SKILL_PACKAGE_KEYS = (
     "availableSkills",
     "skill_catalog",
     "skillCatalog",
+    "skill_package",
+    "skillPackage",
 )
 
 DEFAULT_SKILL_REGISTRY: dict[str, dict[str, Any]] = {
@@ -112,6 +115,44 @@ DEFAULT_SKILL_REGISTRY: dict[str, dict[str, Any]] = {
         "visibility": "internal",
         "status": "active",
     },
+    "skill.kskill_korean_stock_search.v1": {
+        "id": "skill.kskill_korean_stock_search.v1",
+        "slug": "skill.kskill_korean_stock_search.v1",
+        "name": "k-skill Korean Stock Search",
+        "version": "v1",
+        "description": "Template package for integrating k-skill Korean stock search through a proxy adapter.",
+        "category": "domain_finance",
+        "capability_tags": ["k-skill", "stock", "krx"],
+        "compatible_roles": ["analyst", "researcher"],
+        "execution_adapter": {"kind": "http_proxy", "endpoint_env": "KSKILL_PROXY_BASE_URL", "external_tool_requirements": ["proxy_http"]},
+        "credential_requirements": [{"key": "KSKILL_PROXY_BASE_URL", "required": False, "provider": "k-skill-proxy"}],
+        "trust_level": "reviewed",
+        "side_effect_level": "read_only",
+        "instructions_ref": None,
+        "resource_refs": [],
+        "utility_refs": [],
+        "visibility": "internal",
+        "status": "active",
+    },
+    "skill.kskill_srt_booking.v1": {
+        "id": "skill.kskill_srt_booking.v1",
+        "slug": "skill.kskill_srt_booking.v1",
+        "name": "k-skill SRT Booking",
+        "version": "v1",
+        "description": "Template package for integrating k-skill SRT booking with explicit login bindings.",
+        "category": "travel",
+        "capability_tags": ["k-skill", "srt", "booking"],
+        "compatible_roles": ["operator", "planner"],
+        "execution_adapter": {"kind": "python_cli", "entrypoint": "python -m srt_booking", "runtime_capabilities_required": ["shell_exec"]},
+        "credential_requirements": [{"key": "KSKILL_SRT_ID", "required": True, "provider": "srt"}, {"key": "KSKILL_SRT_PASSWORD", "required": True, "provider": "srt"}],
+        "trust_level": "reviewed",
+        "side_effect_level": "transactional",
+        "instructions_ref": None,
+        "resource_refs": [],
+        "utility_refs": [],
+        "visibility": "internal",
+        "status": "active",
+    },
 }
 
 
@@ -127,6 +168,14 @@ SKILL_PACKAGE_FIELDS = (
     "instructions_ref",
     "resource_refs",
     "utility_refs",
+    "required_tools",
+    "trigger_terms",
+    "execution_adapter",
+    "credential_requirements",
+    "install_recipe",
+    "source_package",
+    "trust_level",
+    "side_effect_level",
     "visibility",
     "status",
 )
@@ -150,6 +199,77 @@ def _clean_text(value: Any) -> str | None:
 
 def _clean_list_of_text(value: Any, *, limit: int = 32) -> list[str]:
     return _runtime_clean_list_of_text(value, limit=limit)
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _normalize_execution_adapter(value: Any) -> dict[str, Any]:
+    row = _as_dict(value)
+    kind = _clean_text(row.get("kind") or row.get("adapter") or row.get("type") or row.get("mode")) or "prompt_only"
+    adapter = {
+        "kind": kind,
+        "transport": _clean_text(row.get("transport") or row.get("channel") or row.get("protocol")),
+        "entrypoint": _clean_text(row.get("entrypoint") or row.get("command") or row.get("path") or row.get("endpoint")),
+        "endpoint": _clean_text(row.get("endpoint") or row.get("url")),
+        "endpoint_env": _clean_text(row.get("endpoint_env") or row.get("endpointEnv") or row.get("url_env") or row.get("urlEnv")),
+        "working_directory": _clean_text(row.get("working_directory") or row.get("workingDirectory") or row.get("cwd")),
+        "runtime_capabilities_required": _clean_list_of_text(row.get("runtime_capabilities_required") or row.get("runtimeCapabilitiesRequired") or row.get("required_runtime_capabilities")),
+        "external_tool_requirements": _clean_list_of_text(row.get("external_tool_requirements") or row.get("externalToolRequirements") or row.get("required_external_tools")),
+        "install_hint": _clean_text(row.get("install_hint") or row.get("installHint")),
+    }
+    return {key: value for key, value in adapter.items() if _has_non_empty(value)}
+
+
+def _normalize_credential_requirements(value: Any) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else []
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in items:
+        if isinstance(raw, str):
+            raw = {"key": raw}
+        row = _as_dict(raw)
+        key = (_clean_text(row.get("key") or row.get("credential_key") or row.get("credentialKey") or row.get("env")) or "").upper()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        entry = {
+            "key": key,
+            "kind": _clean_text(row.get("kind") or row.get("type")) or "api_key",
+            "required": bool(row.get("required", True)),
+            "delivery": _clean_text(row.get("delivery") or row.get("delivery_method") or row.get("deliveryMethod")) or "job_env",
+            "scope": _clean_text(row.get("scope")),
+            "provider": _clean_text(row.get("provider")),
+            "env_fallback": _clean_text(row.get("env_fallback") or row.get("envFallback") or row.get("env")),
+            "prompt": _clean_text(row.get("prompt") or row.get("description")),
+        }
+        out.append({key: value for key, value in entry.items() if _has_non_empty(value) or key == "required"})
+    return out
+
+
+def _normalize_install_recipe(value: Any) -> dict[str, Any]:
+    row = _as_dict(value)
+    recipe = {
+        "setup_steps": _clean_list_of_text(row.get("setup_steps") or row.get("setupSteps"), limit=64),
+        "python_packages": _clean_list_of_text(row.get("python_packages") or row.get("pythonPackages"), limit=32),
+        "npm_packages": _clean_list_of_text(row.get("npm_packages") or row.get("npmPackages"), limit=32),
+        "system_packages": _clean_list_of_text(row.get("system_packages") or row.get("systemPackages"), limit=32),
+        "verify_commands": _clean_list_of_text(row.get("verify_commands") or row.get("verifyCommands"), limit=32),
+    }
+    return {key: value for key, value in recipe.items() if _has_non_empty(value)}
+
+
+def _normalize_source_package(value: Any) -> dict[str, Any]:
+    row = _as_dict(value)
+    source = {
+        "type": _clean_text(row.get("type") or row.get("source_type") or row.get("sourceType")) or "catalog",
+        "repo_url": _clean_text(row.get("repo_url") or row.get("repoUrl") or row.get("repository")),
+        "repo_path": _clean_text(row.get("repo_path") or row.get("repoPath") or row.get("path")),
+        "homepage": _clean_text(row.get("homepage")),
+        "license": _clean_text(row.get("license")),
+    }
+    return {key: value for key, value in source.items() if _has_non_empty(value)}
 
 
 def _has_non_empty(value: Any) -> bool:
@@ -261,6 +381,14 @@ def normalize_skill_package(raw: Any, *, source_key: str | None = None) -> dict[
         "instructions_ref": _clean_text(raw.get("instructions_ref") or raw.get("instructions_uri") or raw.get("instruction_ref")),
         "resource_refs": _clean_list_of_text(raw.get("resource_refs") or raw.get("resources") or raw.get("resource_ids")),
         "utility_refs": _clean_list_of_text(raw.get("utility_refs") or raw.get("utilities") or raw.get("tool_refs")),
+        "required_tools": _clean_list_of_text(raw.get("required_tools") or raw.get("requiredTools") or raw.get("tool_ids") or raw.get("toolIds")),
+        "trigger_terms": _clean_list_of_text(raw.get("trigger_terms") or raw.get("triggerTerms")),
+        "execution_adapter": _normalize_execution_adapter(raw.get("execution_adapter") or raw.get("executionAdapter")),
+        "credential_requirements": _normalize_credential_requirements(raw.get("credential_requirements") or raw.get("credentialRequirements")),
+        "install_recipe": _normalize_install_recipe(raw.get("install_recipe") or raw.get("installRecipe")),
+        "source_package": _normalize_source_package(raw.get("source_package") or raw.get("sourcePackage")),
+        "trust_level": _clean_text(raw.get("trust_level") or raw.get("trustLevel")) or "reviewed",
+        "side_effect_level": _clean_text(raw.get("side_effect_level") or raw.get("sideEffectLevel")) or "none",
         "visibility": _clean_text(raw.get("visibility")) or "internal",
         "status": _clean_text(raw.get("status")) or "active",
     }
@@ -313,6 +441,14 @@ def extract_skill_packages_from_nodes(nodes: Iterable[Any]) -> dict[str, dict[st
     packages: dict[str, dict[str, Any]] = {}
     for node in sorted(list(nodes), key=lambda item: (str(getattr(item, "created_at", "") or ""), str(getattr(item, "id", "") or ""))):
         payload = _node_payload(node)
+        if str(payload.get("resource_kind") or "").strip() == "skill_package":
+            direct_pkg = normalize_skill_package(payload.get("skill_package") or payload, source_key=f"resource:{getattr(node, 'id', '')}")
+            if direct_pkg:
+                skill_id = str(direct_pkg.get("id") or "").strip()
+                if skill_id:
+                    current = packages.get(skill_id)
+                    packages[skill_id] = merge_skill_packages(current or {"id": skill_id}, direct_pkg)
+
         for prefix, container in _iter_payload_containers(payload):
             for key in SKILL_PACKAGE_KEYS:
                 if key not in container:

@@ -171,6 +171,45 @@ class MintUiTokenRequest(BaseModel):
     ttl_sec: Optional[int] = None
 
 
+class SkillPackageInstallRequest(BaseModel):
+    thread_id: str
+    skill_id: Optional[str] = None
+    package: dict[str, Any] = Field(default_factory=dict)
+    source_thread_id: Optional[str] = None
+    context_set_id: Optional[str] = None
+    auto_activate: bool = True
+
+
+class SkillPackagePublishRequest(BaseModel):
+    skill_id: Optional[str] = None
+    package: dict[str, Any] = Field(default_factory=dict)
+    thread_id: Optional[str] = None
+    visibility: Optional[Literal["public", "internal"]] = "public"
+
+
+
+
+class BoardCandidateApproveRequest(BaseModel):
+    publish_to_library: bool = False
+
+class ThreadRawHistoryUpsertRequest(BaseModel):
+    title: str = "Runtime history"
+    summary: Optional[str] = None
+    raw_text: str
+    stream_key: Optional[str] = None
+    uri: Optional[str] = None
+    chat_id: Optional[str] = None
+    job_id: Optional[str] = None
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    source: Optional[Literal["ddalggak", "manual", "imported"]] = "ddalggak"
+    tags: List[str] = Field(default_factory=list)
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    extracted_artifacts: List[dict[str, Any]] = Field(default_factory=list)
+    update_latest: bool = True
+    auto_activate: bool = False
+
+
 class SplitNodeResponse(BaseModel):
     ok: bool = True
     parent_id: str
@@ -216,7 +255,7 @@ class RebuildActivePolicy(BaseModel):
     recent_assistant_messages: int = 6
     recent_steps: int = 10
     recent_artifacts: int = 5
-    exclude_resource_kinds: List[str] = Field(default_factory=lambda: ["job_config", "tracking_append"])
+    exclude_resource_kinds: List[str] = Field(default_factory=lambda: ["job_config", "tracking_append", "raw_history", "runtime_episode", "history_snapshot"])
     include_pinned: bool = True
 
 

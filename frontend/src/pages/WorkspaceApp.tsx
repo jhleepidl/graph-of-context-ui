@@ -13,6 +13,7 @@ const ExecutionPanel = lazy(() => import('../components/ExecutionPanel'))
 const ConversationAgentsPanel = lazy(() => import('../components/ConversationAgentsPanel'))
 const RunStudioLayout = lazy(() => import('../components/run_studio/RunStudioLayout'))
 const ArtifactsPanel = lazy(() => import('../components/run_studio/ArtifactsPanel'))
+const BoardPanel = lazy(() => import('../components/BoardPanel'))
 import WorkspaceShell from '../components/workspace/WorkspaceShell'
 import WorkspaceRouteState from '../components/workspace/WorkspaceRouteState'
 import { useRunStudioData } from '../hooks/useRunStudioData'
@@ -1047,6 +1048,12 @@ export default function WorkspaceApp() {
           onAddToActive={addNodeToActiveFromStudio}
           onPinNode={pinNodeFromStudio}
           />
+        </Suspense>
+      )}
+
+      {workspaceMainTab === 'board' && (
+        <Suspense fallback={<WorkspacePanelFallback label="Board를 불러오는 중…" />}>
+          <BoardPanel threadId={threadId} />
         </Suspense>
       )}
 

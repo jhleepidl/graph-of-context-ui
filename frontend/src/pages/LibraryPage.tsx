@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 
 const PUBLIC_LIBRARY_TITLE = 'agents:library'
+const PUBLIC_SKILL_LIBRARY_TITLE = 'skills:library'
 const BLUEPRINT_RESOURCE_KIND = 'agent_blueprint'
 const AGENT_RESOURCE_KIND = 'agent_profile'
 const AGENTS_THREAD_TITLES = ['agents:profiles', 'agents'] as const
 const PREFERRED_AGENTS_THREAD_TITLE = AGENTS_THREAD_TITLES[0]
+const SKILL_CATALOG_THREAD_TITLES = ['skills:catalog', 'skills'] as const
 type AgentsThreadTitle = (typeof AGENTS_THREAD_TITLES)[number]
+type SkillCatalogThreadTitle = (typeof SKILL_CATALOG_THREAD_TITLES)[number]
 
 type Props = {
   onNavigate: (path: string) => void
@@ -38,6 +41,36 @@ type BlueprintItem = {
   tags: string[]
 }
 
+type SkillCredentialRequirement = {
+  key: string
+  required?: boolean
+  provider?: string
+}
+
+type SkillExecutionAdapter = {
+  kind?: string
+  entrypoint?: string
+  endpoint?: string
+}
+
+type SkillItem = {
+  id: string
+  name: string
+  version: string
+  description: string
+  category: string
+  capability_tags: string[]
+  compatible_roles: string[]
+  visibility: string
+  status: string
+  source: string
+  trust_level?: string
+  side_effect_level?: string
+  required_tools?: string[]
+  credential_requirements?: SkillCredentialRequirement[]
+  execution_adapter?: SkillExecutionAdapter
+}
+
 function normalizeTitle(title?: string | null): string {
   return (title || '').trim().toLowerCase()
 }
@@ -45,6 +78,14 @@ function normalizeTitle(title?: string | null): string {
 function asAgentsThreadTitle(title?: string | null): AgentsThreadTitle | null {
   const normalized = normalizeTitle(title)
   for (const candidate of AGENTS_THREAD_TITLES) {
+    if (candidate === normalized) return candidate
+  }
+  return null
+}
+
+function asSkillCatalogThreadTitle(title?: string | null): SkillCatalogThreadTitle | null {
+  const normalized = normalizeTitle(title)
+  for (const candidate of SKILL_CATALOG_THREAD_TITLES) {
     if (candidate === normalized) return candidate
   }
   return null
@@ -127,12 +168,31 @@ function isPrivateThread(thread: ThreadSummary): boolean {
   return asString(thread.service_id) !== 'public'
 }
 
+function downloadJson(filename: string, value: unknown) {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+  const blob = new Blob([JSON.stringify(value, null, 2)], { type: 'application/json;charset=utf-8' })
+  const href = URL.createObjectURL(blob)
+  try {
+    const link = document.createElement('a')
+    link.href = href
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  } finally {
+    URL.revokeObjectURL(href)
+  }
+}
+
 export default function LibraryPage({ onNavigate }: Props) {
   const [threads, setThreads] = useState<ThreadSummary[]>([])
   const [libraryThreadId, setLibraryThreadId] = useState<string | null>(null)
+  const [skillLibraryThreadId, setSkillLibraryThreadId] = useState<string | null>(null)
   const [items, setItems] = useState<BlueprintItem[]>([])
+  const [skills, setSkills] = useState<SkillItem[]>([])
   const [loading, setLoading] = useState(false)
   const [installingNodeId, setInstallingNodeId] = useState<string | null>(null)
+  const [skillBusyId, setSkillBusyId] = useState<string | null>(null)
   const [status, setStatus] = useState('')
   const [error, setError] = useState('')
 
@@ -141,12 +201,25 @@ export default function LibraryPage({ onNavigate }: Props) {
     return threads.find((thread) => thread.id === libraryThreadId) || null
   }, [threads, libraryThreadId])
 
+  const skillLibraryThread = useMemo(() => {
+    if (!skillLibraryThreadId) return null
+    return threads.find((thread) => thread.id === skillLibraryThreadId) || null
+  }, [threads, skillLibraryThreadId])
+
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => {
       if (a.createdAt === b.createdAt) return a.nodeId.localeCompare(b.nodeId)
       return a.createdAt < b.createdAt ? 1 : -1
     })
   }, [items])
+
+  const sortedSkills = useMemo(() => {
+    return [...skills].sort((a, b) => {
+      const left = `${a.name}:${a.id}`.toLowerCase()
+      const right = `${b.name}:${b.id}`.toLowerCase()
+      return left.localeCompare(right)
+    })
+  }, [skills])
 
   const countAgentProfilesInThread = useCallback(async (threadId: string): Promise<number> => {
     try {
@@ -205,6 +278,19 @@ export default function LibraryPage({ onNavigate }: Props) {
     return nextId
   }, [pickDefaultAgentsThreadId])
 
+  const ensurePrivateSkillCatalogThread = useCallback(async (): Promise<string> => {
+    const listRaw = await api.threads()
+    const list = Array.isArray(listRaw) ? (listRaw as ThreadSummary[]) : []
+    const existing = list.find((thread) => isPrivateThread(thread) && asSkillCatalogThreadTitle(thread.title))
+    if (existing?.id) return existing.id
+    const created = await api.createThread(SKILL_CATALOG_THREAD_TITLES[0], {
+      meta_json: { catalog_kind: 'skill_package' },
+    })
+    const nextId = asString((created as { id?: string }).id)
+    if (!nextId) throw new Error('skills catalog thread 생성에 실패했습니다.')
+    return nextId
+  }, [])
+
   const ensureDefaultContextSet = useCallback(async (threadId: string): Promise<string | null> => {
     const sets = await api.ctxSets(threadId)
     const list = Array.isArray(sets) ? sets : []
@@ -224,25 +310,45 @@ export default function LibraryPage({ onNavigate }: Props) {
       const publicLibrary = list.find((thread) => {
         return asString(thread.service_id) === 'public' && normalizeTitle(thread.title) === PUBLIC_LIBRARY_TITLE
       }) || null
+      const publicSkillLibrary = list.find((thread) => {
+        return asString(thread.service_id) === 'public' && normalizeTitle(thread.title) === PUBLIC_SKILL_LIBRARY_TITLE
+      }) || null
 
       if (!publicLibrary) {
         setLibraryThreadId(null)
         setItems([])
-        setStatus('아직 Public Agent Library가 생성되지 않았습니다. (admin 승인 시 자동 생성)')
-        return
+      } else {
+        setLibraryThreadId(publicLibrary.id)
+        const res = await api.listResources(publicLibrary.id, BLUEPRINT_RESOURCE_KIND)
+        const rows = Array.isArray(res?.items) ? (res.items as GraphNode[]) : []
+        const mapped = rows
+          .map((node) => nodeToBlueprint(node))
+          .filter((item): item is BlueprintItem => Boolean(item))
+        setItems(mapped)
       }
 
-      setLibraryThreadId(publicLibrary.id)
-      const res = await api.listResources(publicLibrary.id, BLUEPRINT_RESOURCE_KIND)
-      const rows = Array.isArray(res?.items) ? (res.items as GraphNode[]) : []
-      const mapped = rows
-        .map((node) => nodeToBlueprint(node))
-        .filter((item): item is BlueprintItem => Boolean(item))
-      setItems(mapped)
+      if (!publicSkillLibrary) {
+        setSkillLibraryThreadId(null)
+        setSkills([])
+        if (!publicLibrary) setStatus('아직 Public Agent/Skill Library가 생성되지 않았습니다. (admin 승인 또는 publish 시 자동 생성)')
+      } else {
+        setSkillLibraryThreadId(publicSkillLibrary.id)
+        const skillsRes = await api.skills(publicSkillLibrary.id, { include_defaults: false })
+        const skillItems = Array.isArray(skillsRes?.items) ? (skillsRes.items as SkillItem[]) : []
+        setSkills(skillItems)
+      }
+
+      if (publicLibrary && !publicSkillLibrary) {
+        setStatus('Public Agent Library는 준비되어 있고, Skill Library는 아직 비어 있습니다.')
+      }
+      if (!publicLibrary && publicSkillLibrary) {
+        setStatus('Public Skill Library는 준비되어 있고, Agent Library는 아직 비어 있습니다.')
+      }
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
       setError(message)
       setItems([])
+      setSkills([])
     } finally {
       setLoading(false)
     }
@@ -292,6 +398,44 @@ export default function LibraryPage({ onNavigate }: Props) {
     }
   }
 
+  async function handleInstallSkill(item: SkillItem) {
+    setSkillBusyId(item.id)
+    setError('')
+    setStatus('')
+    try {
+      const targetThreadId = await ensurePrivateSkillCatalogThread()
+      const targetContextSetId = await ensureDefaultContextSet(targetThreadId)
+      await api.installSkill({
+        thread_id: targetThreadId,
+        skill_id: item.id,
+        source_thread_id: skillLibraryThreadId,
+        context_set_id: targetContextSetId,
+        auto_activate: true,
+      })
+      setStatus(`설치 완료: ${item.name || item.id} -> private skill catalog`)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSkillBusyId(null)
+    }
+  }
+
+  async function handleDownloadSkill(item: SkillItem) {
+    setSkillBusyId(item.id)
+    setError('')
+    setStatus('')
+    try {
+      const out = await api.exportSkill(item.id, skillLibraryThreadId, { include_defaults: false })
+      const filename = `${(item.id || 'skill_package').replace(/[^a-z0-9-_\.]+/gi, '_')}.json`
+      downloadJson(filename, out?.package || out)
+      setStatus(`다운로드 완료: ${item.name || item.id}`)
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSkillBusyId(null)
+    }
+  }
+
   return (
     <div className="routePage">
       <div className="routeCard">
@@ -305,16 +449,17 @@ export default function LibraryPage({ onNavigate }: Props) {
           </div>
         </div>
 
-        {libraryThread && (
-          <div className="row">
-            <span className="pill">library source: {(libraryThread.title || '(untitled)').trim() || '(untitled)'}</span>
-            <span className="pill">id: {libraryThread.id}</span>
-          </div>
-        )}
+        <div className="row">
+          {libraryThread && <span className="pill">agent library: {(libraryThread.title || '(untitled)').trim() || '(untitled)'}</span>}
+          {skillLibraryThread && <span className="pill">skill library: {(skillLibraryThread.title || '(untitled)').trim() || '(untitled)'}</span>}
+          {libraryThread && <span className="pill">agent library id: {libraryThread.id}</span>}
+          {skillLibraryThread && <span className="pill">skill library id: {skillLibraryThread.id}</span>}
+        </div>
 
         {error && <div className="routeStatus routeStatusError">{error}</div>}
         {status && <div className="routeStatus">{status}</div>}
 
+        <div style={{ marginTop: 16, marginBottom: 8 }}><b>Agent Blueprints</b></div>
         <div className="routeTableWrap">
           <table className="routeTable">
             <thead>
@@ -352,8 +497,62 @@ export default function LibraryPage({ onNavigate }: Props) {
               ))}
               {sortedItems.length === 0 && !loading && (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={11}>
                     <span className="muted">등록된 `agent_blueprint`가 없습니다.</span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ marginTop: 24, marginBottom: 8 }}><b>Skill Packages</b></div>
+        <div className="routeTableWrap">
+          <table className="routeTable">
+            <thead>
+              <tr>
+                <th>skill_id</th>
+                <th>name</th>
+                <th>version</th>
+                <th>category</th>
+                <th>adapter</th>
+                <th>credentials</th>
+                <th>roles</th>
+                <th>tags</th>
+                <th>trust / side effects</th>
+                <th>visibility</th>
+                <th>actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedSkills.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.id}</td>
+                  <td>{item.name || '-'}</td>
+                  <td>{item.version || '-'}</td>
+                  <td>{item.category || '-'}</td>
+                  <td>{item.execution_adapter?.kind || '-'}</td>
+                  <td>{(item.credential_requirements || []).map((entry) => entry.key).join(', ') || '-'}</td>
+                  <td>{(item.compatible_roles || []).join(', ') || '-'}</td>
+                  <td>{(item.capability_tags || []).join(', ') || '-'}</td>
+                  <td>{[item.trust_level, item.side_effect_level].filter(Boolean).join(' / ') || '-'}</td>
+                  <td>{item.visibility || item.status || '-'}</td>
+                  <td>
+                    <div className="row" style={{ gap: 8 }}>
+                      <button onClick={() => void handleDownloadSkill(item)} disabled={skillBusyId === item.id}>
+                        {skillBusyId === item.id ? 'Working...' : 'Download'}
+                      </button>
+                      <button className="primary" onClick={() => void handleInstallSkill(item)} disabled={skillBusyId === item.id}>
+                        {skillBusyId === item.id ? 'Working...' : 'Install'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {sortedSkills.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={8}>
+                    <span className="muted">등록된 public skill package가 없습니다.</span>
                   </td>
                 </tr>
               )}

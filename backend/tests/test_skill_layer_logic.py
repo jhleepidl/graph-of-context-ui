@@ -223,3 +223,38 @@ class SkillLayerProjectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_skill_registry_normalizes_execution_adapter_and_credentials(self) -> None:
+        node = make_node(
+            "skill-structured",
+            "Resource",
+            payload={
+                "resource_kind": "skill_package",
+                "skill_package": {
+                    "id": "skill.kskill_srt_booking.v1",
+                    "name": "k-skill SRT Booking",
+                    "version": "v1",
+                    "execution_adapter": {
+                        "kind": "python_cli",
+                        "entrypoint": "python -m srt_booking",
+                        "runtime_capabilities_required": ["shell_exec"],
+                    },
+                    "credential_requirements": [
+                        {"key": "KSKILL_SRT_ID", "required": True, "provider": "srt"},
+                        {"key": "KSKILL_SRT_PASSWORD", "required": True, "provider": "srt"},
+                    ],
+                    "trust_level": "reviewed",
+                    "side_effect_level": "transactional",
+                },
+            },
+            created_at=datetime(2026, 3, 10, 0, 0, tzinfo=timezone.utc),
+        )
+
+        registry = build_skill_registry(nodes=[node], include_defaults=False)
+        self.assertIn("skill.kskill_srt_booking.v1", registry)
+        skill = registry["skill.kskill_srt_booking.v1"]
+        self.assertEqual(skill["execution_adapter"]["kind"], "python_cli")
+        self.assertEqual(skill["credential_requirements"][0]["key"], "KSKILL_SRT_ID")
+        self.assertEqual(skill["trust_level"], "reviewed")
+        self.assertEqual(skill["side_effect_level"], "transactional")

@@ -1537,3 +1537,11 @@ button.tiny.isActive {
   font-weight: 700;
   color: #0f172a;
 }
+
+.boardLaneWrap { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; align-items: start; }
+.boardLaneColumn { min-width: 0; }
+.boardLaneHeader { position: sticky; top: 0; z-index: 1; }
+.boardCard { overflow: hidden; }
+.boardCardMetaRow { display:flex; flex-wrap: wrap; gap: 6px; }
+.boardPreview { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background:#f8fafc; border:1px solid #e5e7eb; border-radius: 10px; padding: 8px; max-height: 280px; overflow: auto; }
+.boardPanelRoot { display:flex; flex-direction:column; gap: 10px; }

@@ -106,7 +106,7 @@ def default_harness_spec() -> dict[str, Any]:
             "description": "Default visible/editable/shareable harness policy bundle.",
             "tags": ["default", "governed-memory", "runtime"],
             "visibility": "workspace",
-            "updated_at": _utc_iso(),
+            "updated_at": None,
         },
         "projection_policy": {
             "normalize_orchestration_roles_to_operator": True,
@@ -150,7 +150,7 @@ def normalize_harness_spec(raw: Any) -> dict[str, Any]:
     base["metadata"]["description"] = _clean_text(base["metadata"].get("description"), max_len=400) or "Harness policy bundle"
     base["metadata"]["visibility"] = _clean_text(base["metadata"].get("visibility"), max_len=64) or "workspace"
     base["metadata"]["tags"] = _clean_list_of_text(base["metadata"].get("tags"), max_items=16, max_len=48)
-    base["metadata"]["updated_at"] = _utc_iso()
+    base["metadata"]["updated_at"] = _clean_text(base["metadata"].get("updated_at"), max_len=64)
 
     projection = _clean_mapping(incoming.get("projection_policy"))
     base["projection_policy"] = {**base["projection_policy"], **{k: v for k, v in projection.items() if v is not None}}
@@ -277,7 +277,7 @@ def build_harness_summary(spec: Any) -> dict[str, Any]:
             "show_lifecycle": bool(audit.get("show_lifecycle") is not False),
             "show_conflict_history": bool(audit.get("show_conflict_history") is not False),
         },
-        "updated_at": _clean_text(metadata.get("updated_at"), max_len=64) or _utc_iso(),
+        "updated_at": _clean_text(metadata.get("updated_at"), max_len=64),
     }
 
 def save_thread_harness_spec(session: Session, thread: Thread, spec: Any) -> dict[str, Any]:

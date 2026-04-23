@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.models import Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, Node, Thread
 from app.services.memory_graph import summarize_memory_edge, summarize_memory_lifecycle_event
+from app.services.runtime_snapshot import created_sort_key as _created_sort_key
 
 
 def build_run_studio_audit_timeline_impl(
