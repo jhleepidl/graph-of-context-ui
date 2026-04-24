@@ -30,6 +30,7 @@ from app.routers.agents import router as agents_router
 from app.routers.skills import router as skills_router
 from app.routers.memory_graphs import router as memory_graphs_router
 from app.routers.boards import router as boards_router
+from app.routers.improvement_jobs import router as improvement_jobs_router
 from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
@@ -135,5 +136,6 @@ app.include_router(agents_router)
 app.include_router(skills_router)
 app.include_router(memory_graphs_router)
 app.include_router(boards_router)
+app.include_router(improvement_jobs_router)
 
 app.include_router(hierarchy_router)

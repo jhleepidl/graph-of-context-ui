@@ -787,6 +787,18 @@ export const api = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body || {}),
   })),
+  listImprovementJobs: (threadId: string) => j<any>(apiFetch(`/api/threads/${threadId}/improvement_jobs`)),
+  createImprovementJob: (threadId: string, body: Record<string, unknown>) => j<any>(apiFetch(`/api/threads/${threadId}/improvement_jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  })),
+  getImprovementJob: (threadId: string, jobId: string) => j<any>(apiFetch(`/api/threads/${threadId}/improvement_jobs/${jobId}`)),
+  reportImprovementJob: (threadId: string, jobId: string, body: Record<string, unknown>) => j<any>(apiFetch(`/api/threads/${threadId}/improvement_jobs/${jobId}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  })),
   listResources: (threadId: string, resourceKind?: string | null) => {
     const q = resourceKind ? `?resource_kind=${encodeURIComponent(resourceKind)}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/resources${q}`))

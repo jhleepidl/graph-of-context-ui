@@ -120,6 +120,18 @@ def _card(node: Node, payload: dict[str, Any], lane_id: str) -> dict[str, Any]:
         'promoted_resource_kind': _clean_text(payload.get('promoted_resource_kind')) or None,
         'published_to_library': bool(payload.get('published_to_library') is True),
         'stale': bool(payload.get('stale') is True),
+        'improvement_job_id': _clean_text(payload.get('improvement_job_id') or payload.get('job_id')) or None,
+        'improvement_target': _clean_text(payload.get('improvement_target')) or None,
+        'target_runtime': _clean_text(payload.get('target_runtime')) or None,
+        'phase': _clean_text(payload.get('phase')) or None,
+        'status': _clean_text(payload.get('status')) or None,
+        'last_patch_status': _clean_text(payload.get('last_patch_status')) or None,
+        'last_test_status': _clean_text(payload.get('last_test_status')) or None,
+        'last_canary_status': _clean_text(payload.get('last_canary_status')) or None,
+        'last_promotion_status': _clean_text(payload.get('last_promotion_status')) or None,
+        'last_llm_trace_status': _clean_text(payload.get('last_llm_trace_status')) or None,
+        'latest_reports': payload.get('latest_reports') if isinstance(payload.get('latest_reports'), dict) else None,
+        'report_counts': payload.get('report_counts') if isinstance(payload.get('report_counts'), dict) else None,
         'counts': {
             'line_count': len([line for line in preview.splitlines() if line.strip()]),
             'artifact_count': len(payload.get('extracted_artifacts') or []) if isinstance(payload.get('extracted_artifacts'), list) else 0,
@@ -133,6 +145,12 @@ def _lane_meta(lane_id: str) -> tuple[str, str]:
     mapping = {
         'raw_history': ('Raw history', 'Visible to users in GoC but excluded from learning/promotion.'),
         'promotion_candidates': ('Candidates', 'Structured artifacts that may be promoted after review/eval.'),
+        'improvement_jobs': ('Improvement jobs', 'Self-improvement jobs created from Telegram/runtime control.'),
+        'code_diffs': ('Code diffs & patch plans', 'Diff summaries and patch plans generated while iterating on forge runtimes.'),
+        'code_snapshots': ('Code snapshots', 'Repository/workspace snapshots used to inspect current runtime code.'),
+        'test_reports': ('Test reports', 'Automated test runs executed for improvement jobs.'),
+        'canary_results': ('Canary results', 'Canary or restart validation results for forge/stable runtimes.'),
+        'llm_traces': ('LLM traces', 'Redacted trace summaries for model calls captured during runtime or self-improvement jobs.'),
         'skill_packages': ('Skill packages', 'Installed or attached skill packages for this thread.'),
         'team_assets': ('Team assets', 'Thread-level team/agent blueprint resources.'),
         'other_resources': ('Other resources', 'Board-visible resources that do not fit another lane.'),
@@ -145,9 +163,15 @@ def _lane_order(lane_id: str) -> int:
     return {
         'raw_history': 0,
         'promotion_candidates': 1,
-        'skill_packages': 2,
-        'team_assets': 3,
-        'other_resources': 4,
+        'improvement_jobs': 2,
+        'code_diffs': 3,
+        'code_snapshots': 4,
+        'test_reports': 5,
+        'canary_results': 6,
+        'llm_traces': 7,
+        'skill_packages': 8,
+        'team_assets': 9,
+        'other_resources': 10,
     }.get(lane_id, 99)
 
 
@@ -158,6 +182,18 @@ def _pick_lane(payload: dict[str, Any]) -> str | None:
         return 'raw_history'
     if is_promotion_candidate_payload(payload):
         return 'promotion_candidates'
+    if kind == 'improvement_job':
+        return 'improvement_jobs'
+    if kind in {'code_diff', 'repo_diff', 'patch_plan'}:
+        return 'code_diffs'
+    if kind in {'repo_snapshot', 'code_snapshot', 'module_index'}:
+        return 'code_snapshots'
+    if kind == 'test_report':
+        return 'test_reports'
+    if kind == 'canary_result':
+        return 'canary_results'
+    if kind == 'llm_trace_summary':
+        return 'llm_traces'
     if kind == 'skill_package':
         return 'skill_packages'
     if kind in {'team_blueprint', 'agent_blueprint', 'team_manifest', 'harness_package'}:

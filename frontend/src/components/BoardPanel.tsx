@@ -26,6 +26,18 @@ type BoardCard = {
   promoted_resource_kind?: string | null
   published_to_library?: boolean
   stale?: boolean
+  improvement_job_id?: string | null
+  improvement_target?: string | null
+  target_runtime?: string | null
+  phase?: string | null
+  status?: string | null
+  last_patch_status?: string | null
+  last_test_status?: string | null
+  last_canary_status?: string | null
+  last_promotion_status?: string | null
+  last_llm_trace_status?: string | null
+  latest_reports?: Record<string, { status?: string | null; phase?: string | null; summary?: string | null }> | null
+  report_counts?: Record<string, number> | null
   counts?: Record<string, number>
   payload?: Record<string, unknown>
 }
@@ -194,6 +206,15 @@ export default function BoardPanel({ threadId }: { threadId: string | null }) {
                     {cleanText(card.promoted_resource_kind) && <span className="pill">promoted as: {cleanText(card.promoted_resource_kind)}</span>}
                     {card.published_to_library === true && <span className="pill">published to library</span>}
                     {card.stale === true && <span className="pill">stale</span>}
+                    {cleanText(card.improvement_target) && <span className="pill">target: {cleanText(card.improvement_target)}</span>}
+                    {cleanText(card.target_runtime) && <span className="pill">runtime: {cleanText(card.target_runtime)}</span>}
+                    {cleanText(card.phase) && <span className="pill">phase: {cleanText(card.phase)}</span>}
+                    {cleanText(card.status) && <span className="pill">status: {cleanText(card.status)}</span>}
+                    {cleanText(card.last_patch_status) && <span className="pill">last patch: {cleanText(card.last_patch_status)}</span>}
+                    {cleanText(card.last_test_status) && <span className="pill">last test: {cleanText(card.last_test_status)}</span>}
+                    {cleanText(card.last_canary_status) && <span className="pill">last canary: {cleanText(card.last_canary_status)}</span>}
+                    {cleanText(card.last_promotion_status) && <span className="pill">last promote: {cleanText(card.last_promotion_status)}</span>}
+                    {cleanText(card.last_llm_trace_status) && <span className="pill">trace: {cleanText(card.last_llm_trace_status)}</span>}
                   </div>
                   {(card.tags || []).length > 0 && (
                     <div className="boardCardMetaRow" style={{ marginTop: 6 }}>
@@ -206,7 +227,24 @@ export default function BoardPanel({ threadId }: { threadId: string | null }) {
                     {cleanText(card.history_stream_key) && <span>{(formatWhen(card.created_at) || cleanText(card.source)) ? ' · ' : ''}stream: {cleanText(card.history_stream_key)}</span>}
                     {cleanText(card.derived_from_history_title) && <span>{(formatWhen(card.created_at) || cleanText(card.source) || cleanText(card.history_stream_key)) ? ' · ' : ''}from: {cleanText(card.derived_from_history_title)}</span>}
                     {cleanText(card.promoted_node_id) && <span>{(formatWhen(card.created_at) || cleanText(card.source) || cleanText(card.history_stream_key) || cleanText(card.derived_from_history_title)) ? ' · ' : ''}promoted node: {cleanText(card.promoted_node_id).slice(0, 8)}</span>}
+                    {cleanText(card.improvement_job_id) && <span>{(formatWhen(card.created_at) || cleanText(card.source) || cleanText(card.history_stream_key) || cleanText(card.derived_from_history_title) || cleanText(card.promoted_node_id)) ? ' · ' : ''}job: {cleanText(card.improvement_job_id).slice(0, 12)}</span>}
                   </div>
+                  {card.report_counts && Object.keys(card.report_counts).length > 0 && (
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      reports: {Object.entries(card.report_counts).map(([kind, count]) => `${kind}=${count}`).join(' · ')}
+                    </div>
+                  )}
+                  {card.latest_reports && typeof card.latest_reports === 'object' && Object.keys(card.latest_reports).length > 0 && (
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      latest: {Object.entries(card.latest_reports).slice(0, 4).map(([kind, value]) => {
+                        const row = value && typeof value === 'object' ? value : {}
+                        const phase = cleanText(row.phase)
+                        const status = cleanText(row.status)
+                        const summary = cleanText(row.summary)
+                        return `${kind}=${status || '-'}${phase ? `@${phase}` : ''}${summary ? `·${summary.slice(0, 60)}` : ''}`
+                      }).join(' · ')}
+                    </div>
+                  )}
                   {canApprove && (
                     <div className="row" style={{ marginTop: 8, gap: 8 }}>
                       <button disabled={busy} onClick={() => handleApprove(card, false)}>

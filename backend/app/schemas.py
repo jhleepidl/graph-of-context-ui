@@ -189,6 +189,34 @@ class SkillPackagePublishRequest(BaseModel):
 
 
 
+
+
+class ImprovementJobCreateRequest(BaseModel):
+    title: Optional[str] = None
+    target_repo: Literal["ddalggak", "goc"]
+    instruction: str
+    target_runtime: Optional[Literal["stable", "forge"]] = "forge"
+    requested_by: Optional[str] = None
+    workspace_root: Optional[str] = None
+    related_run_ids: List[str] = Field(default_factory=list)
+    related_history_streams: List[str] = Field(default_factory=list)
+    related_candidate_ids: List[str] = Field(default_factory=list)
+    labels: List[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    job_id: Optional[str] = None
+
+
+class ImprovementJobReportRequest(BaseModel):
+    kind: Literal["repo_snapshot", "code_diff", "test_report", "canary_result", "promotion_decision", "patch_plan", "runtime_event", "llm_trace_summary"]
+    phase: Optional[str] = None
+    status: Optional[str] = None
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    preview_text: Optional[str] = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    labels: List[str] = Field(default_factory=list)
+
 class BoardCandidateApproveRequest(BaseModel):
     publish_to_library: bool = False
 
