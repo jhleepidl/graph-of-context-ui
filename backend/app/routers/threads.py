@@ -570,20 +570,18 @@ def ensure_thread(body: ThreadEnsureRequest):
         return _thread_to_response(t)
 
 
-
-
 @legacy_router.get("", response_model=list[ThreadRead])
-def list_threads_legacy():
+def legacy_list_threads():
     return list_threads()
 
 
 @legacy_router.post("", response_model=ThreadRead)
-def create_thread_legacy(body: ThreadCreate):
+def legacy_create_thread(body: ThreadCreate):
     return create_thread(body)
 
 
 @legacy_router.post("/ensure", response_model=ThreadRead)
-def ensure_thread_legacy(body: ThreadEnsureRequest):
+def legacy_ensure_thread(body: ThreadEnsureRequest):
     return ensure_thread(body)
 
 

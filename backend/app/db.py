@@ -10,7 +10,7 @@ from sqlalchemy.engine.url import make_url
 from sqlmodel import SQLModel, Session, create_engine
 
 from app.config import get_env
-from app.models import ServiceRequest, Thread
+from app.models import ConversationTeamConfig, ServiceRequest, Thread
 from app.services.agent_defaults import ensure_default_agents
 
 DEFAULT_DB_URL = "postgresql+psycopg2://postgres:postgres@localhost:5432/goc"
@@ -189,11 +189,25 @@ def _ensure_service_request_columns() -> None:
             conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN description TEXT"))
 
 
+def _ensure_conversation_team_config_columns() -> None:
+    table_name = getattr(ConversationTeamConfig, "__tablename__", "conversation_team_configs")
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        if table_name not in inspector.get_table_names():
+            return
+        cols = {c["name"] for c in inspector.get_columns(table_name)}
+        if "state_json" not in cols:
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN state_json TEXT DEFAULT '{{}}'"))
+            cols.add("state_json")
+        conn.execute(text(f"UPDATE {table_name} SET state_json = '{{}}' WHERE state_json IS NULL"))
+
+
 def init_db() -> None:
     ensure_database_exists(DB_URL)
     SQLModel.metadata.create_all(engine)
     _ensure_thread_columns()
     _ensure_service_request_columns()
+    _ensure_conversation_team_config_columns()
     try:
         with session_scope() as session:
             ensure_default_agents(session)
