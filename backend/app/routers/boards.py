@@ -130,6 +130,11 @@ def _card(node: Node, payload: dict[str, Any], lane_id: str) -> dict[str, Any]:
         'last_canary_status': _clean_text(payload.get('last_canary_status')) or None,
         'last_promotion_status': _clean_text(payload.get('last_promotion_status')) or None,
         'last_llm_trace_status': _clean_text(payload.get('last_llm_trace_status')) or None,
+        'last_review_status': _clean_text(payload.get('last_review_status')) or None,
+        'last_review_risk': _clean_text(payload.get('last_review_risk')) or None,
+        'last_eval_gate_status': _clean_text(payload.get('last_eval_gate_status')) or None,
+        'last_rollback_status': _clean_text(payload.get('last_rollback_status')) or None,
+        'eval_gate': payload.get('eval_gate') if isinstance(payload.get('eval_gate'), dict) else None,
         'latest_reports': payload.get('latest_reports') if isinstance(payload.get('latest_reports'), dict) else None,
         'report_counts': payload.get('report_counts') if isinstance(payload.get('report_counts'), dict) else None,
         'counts': {
@@ -151,6 +156,9 @@ def _lane_meta(lane_id: str) -> tuple[str, str]:
         'test_reports': ('Test reports', 'Automated test runs executed for improvement jobs.'),
         'canary_results': ('Canary results', 'Canary or restart validation results for forge/stable runtimes.'),
         'llm_traces': ('LLM traces', 'Redacted trace summaries for model calls captured during runtime or self-improvement jobs.'),
+        'review_reports': ('Review reports', 'External reviewer results for self-improvement patches.'),
+        'eval_gates': ('Eval gates', 'Promotion gate decisions combining tests, canary, review, forbidden paths, and diff size.'),
+        'rollback_reports': ('Rollback reports', 'Rollback command outputs and post-promotion recovery evidence.'),
         'skill_packages': ('Skill packages', 'Installed or attached skill packages for this thread.'),
         'team_assets': ('Team assets', 'Thread-level team/agent blueprint resources.'),
         'other_resources': ('Other resources', 'Board-visible resources that do not fit another lane.'),
@@ -169,9 +177,12 @@ def _lane_order(lane_id: str) -> int:
         'test_reports': 5,
         'canary_results': 6,
         'llm_traces': 7,
-        'skill_packages': 8,
-        'team_assets': 9,
-        'other_resources': 10,
+        'review_reports': 8,
+        'eval_gates': 9,
+        'rollback_reports': 10,
+        'skill_packages': 11,
+        'team_assets': 12,
+        'other_resources': 13,
     }.get(lane_id, 99)
 
 
@@ -194,6 +205,12 @@ def _pick_lane(payload: dict[str, Any]) -> str | None:
         return 'canary_results'
     if kind == 'llm_trace_summary':
         return 'llm_traces'
+    if kind == 'review_report':
+        return 'review_reports'
+    if kind == 'eval_gate':
+        return 'eval_gates'
+    if kind == 'rollback_report':
+        return 'rollback_reports'
     if kind == 'skill_package':
         return 'skill_packages'
     if kind in {'team_blueprint', 'agent_blueprint', 'team_manifest', 'harness_package'}:

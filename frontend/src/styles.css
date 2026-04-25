@@ -1545,3 +1545,12 @@ button.tiny.isActive {
 .boardCardMetaRow { display:flex; flex-wrap: wrap; gap: 6px; }
 .boardPreview { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background:#f8fafc; border:1px solid #e5e7eb; border-radius: 10px; padding: 8px; max-height: 280px; overflow: auto; }
 .boardPanelRoot { display:flex; flex-direction:column; gap: 10px; }
+
+.runStudioAgencyCockpit {
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.85), rgba(255,255,255,0.98));
+}
+
+.runStudioAgencyCockpit > .runStudioGrid {
+  margin-top: 10px;
+}

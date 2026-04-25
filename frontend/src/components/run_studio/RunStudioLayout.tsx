@@ -246,7 +246,7 @@ export default function RunStudioLayout({
           <div>
             <h2 style={{ margin: 0 }}>Run Studio</h2>
             <div className="muted">
-              {summary?.thread?.title || 'Untitled thread'} | context: {summary?.context_set?.name || 'default'}
+              Agency cockpit: agent 분담, handoff, review, synthesis를 먼저 보여줍니다. | {summary?.thread?.title || 'Untitled thread'} | context: {summary?.context_set?.name || 'default'}
             </div>
           </div>
           <div className="row" style={{ marginBottom: 0 }}>
@@ -286,6 +286,29 @@ export default function RunStudioLayout({
           controlPlaneSummary={controlPlaneSummary}
         />
       </div>
+
+      <section className="card runStudioPanel runStudioAgencyCockpit">
+        <div className="runStudioPanelHeader">
+          <div>
+            <h3>Agency Cockpit</h3>
+            <div className="muted">자율 agent들이 어떻게 나뉘고, 서로 검토하고, 다시 합쳐지는지 보는 기본 화면입니다. Diagnostics와 self-improve는 보조 영역으로 둡니다.</div>
+          </div>
+          <div className="runStudioMetaRow" style={{ marginBottom: 0 }}>
+            <span className="pill">agents: {controlPlaneSummary?.runtimeAgentCount ?? teamView?.items?.length ?? effectiveTeam?.items?.length ?? 0}</span>
+            <span className="pill">collaboration: {collaboration?.count ?? collaboration?.items?.length ?? 0}</span>
+            {orchestration?.parallel_group_count ? <span className="pill">parallel groups: {orchestration.parallel_group_count}</span> : null}
+          </div>
+        </div>
+        <div className="runStudioGrid runStudioGrid--bottom">
+          <ExecutionMapPanel
+            orchestration={orchestration}
+            teamView={teamView}
+            collaboration={collaboration}
+            checkpoints={checkpoints}
+          />
+          <CollaborationPanel collaboration={collaboration} />
+        </div>
+      </section>
 
       <div className="runStudioGrid runStudioGrid--top">
         {teamView || effectiveTeam ? (
@@ -414,7 +437,12 @@ export default function RunStudioLayout({
             />
             <div className="runStudioGrid runStudioGrid--bottom">
               <OrchestrationPanel orchestration={orchestration} checkpoints={checkpoints} teamView={teamView} />
-              <CollaborationPanel collaboration={collaboration} />
+              <section className="card runStudioPanel">
+                <div className="runStudioPanelHeader">
+                  <h3>Collaboration detail</h3>
+                </div>
+                <div className="muted">주요 collaboration은 상단 Agency Cockpit에 항상 표시됩니다. 이 영역은 checkpoint/authority와 함께 보는 상세 실행 진단입니다.</div>
+              </section>
             </div>
             <div className="runStudioGrid runStudioGrid--bottom">
               <CheckpointPanel checkpoints={checkpoints} />

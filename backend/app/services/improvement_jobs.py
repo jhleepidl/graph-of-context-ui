@@ -22,6 +22,9 @@ REPORT_RESOURCE_KINDS = {
     "patch_plan",
     "runtime_event",
     "llm_trace_summary",
+    "review_report",
+    "eval_gate",
+    "rollback_report",
 }
 
 
@@ -337,6 +340,25 @@ def record_improvement_job_report(
         job_payload['last_promotion_status'] = clean_status
     elif clean_kind == 'llm_trace_summary':
         job_payload['last_llm_trace_status'] = clean_status
+    elif clean_kind == 'review_report':
+        job_payload['last_review_status'] = clean_status
+        review_payload = _as_dict(_as_dict(payload).get('payload')) if isinstance(payload, dict) else {}
+        risk = _clean_text(review_payload.get('risk') or _as_dict(payload).get('risk'), 64)
+        if risk:
+            job_payload['last_review_risk'] = risk
+    elif clean_kind == 'eval_gate':
+        job_payload['last_eval_gate_status'] = clean_status
+        gate_payload = _as_dict(payload)
+        job_payload['eval_gate'] = {
+            'status': clean_status,
+            'reasons': _as_list(gate_payload.get('reasons'))[:8],
+            'warnings': _as_list(gate_payload.get('warnings'))[:8],
+            'review_risk': _clean_text(gate_payload.get('review_risk'), 64) or None,
+            'forbidden_paths_changed': bool(gate_payload.get('forbidden_paths_changed') is True),
+            'changed_file_count': gate_payload.get('changed_file_count'),
+        }
+    elif clean_kind == 'rollback_report':
+        job_payload['last_rollback_status'] = clean_status
     job_node.payload_json = _jdump(job_payload)
     session.add(job_node)
     session.flush()

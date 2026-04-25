@@ -36,6 +36,11 @@ type BoardCard = {
   last_canary_status?: string | null
   last_promotion_status?: string | null
   last_llm_trace_status?: string | null
+  last_review_status?: string | null
+  last_review_risk?: string | null
+  last_eval_gate_status?: string | null
+  last_rollback_status?: string | null
+  eval_gate?: { status?: string | null; reasons?: string[]; warnings?: string[]; review_risk?: string | null; forbidden_paths_changed?: boolean; changed_file_count?: number | null } | null
   latest_reports?: Record<string, { status?: string | null; phase?: string | null; summary?: string | null }> | null
   report_counts?: Record<string, number> | null
   counts?: Record<string, number>
@@ -215,6 +220,10 @@ export default function BoardPanel({ threadId }: { threadId: string | null }) {
                     {cleanText(card.last_canary_status) && <span className="pill">last canary: {cleanText(card.last_canary_status)}</span>}
                     {cleanText(card.last_promotion_status) && <span className="pill">last promote: {cleanText(card.last_promotion_status)}</span>}
                     {cleanText(card.last_llm_trace_status) && <span className="pill">trace: {cleanText(card.last_llm_trace_status)}</span>}
+                    {cleanText(card.last_review_status) && <span className="pill">review: {cleanText(card.last_review_status)}</span>}
+                    {cleanText(card.last_review_risk) && <span className="pill">risk: {cleanText(card.last_review_risk)}</span>}
+                    {cleanText(card.last_eval_gate_status) && <span className="pill">gate: {cleanText(card.last_eval_gate_status)}</span>}
+                    {cleanText(card.last_rollback_status) && <span className="pill">rollback: {cleanText(card.last_rollback_status)}</span>}
                   </div>
                   {(card.tags || []).length > 0 && (
                     <div className="boardCardMetaRow" style={{ marginTop: 6 }}>
@@ -229,6 +238,13 @@ export default function BoardPanel({ threadId }: { threadId: string | null }) {
                     {cleanText(card.promoted_node_id) && <span>{(formatWhen(card.created_at) || cleanText(card.source) || cleanText(card.history_stream_key) || cleanText(card.derived_from_history_title)) ? ' · ' : ''}promoted node: {cleanText(card.promoted_node_id).slice(0, 8)}</span>}
                     {cleanText(card.improvement_job_id) && <span>{(formatWhen(card.created_at) || cleanText(card.source) || cleanText(card.history_stream_key) || cleanText(card.derived_from_history_title) || cleanText(card.promoted_node_id)) ? ' · ' : ''}job: {cleanText(card.improvement_job_id).slice(0, 12)}</span>}
                   </div>
+                  {card.eval_gate && typeof card.eval_gate === 'object' && (
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      gate detail: {cleanText(card.eval_gate.status) || '-'}
+                      {Array.isArray(card.eval_gate.reasons) && card.eval_gate.reasons.length > 0 ? ` · block: ${card.eval_gate.reasons.slice(0, 2).join('; ')}` : ''}
+                      {Array.isArray(card.eval_gate.warnings) && card.eval_gate.warnings.length > 0 ? ` · warn: ${card.eval_gate.warnings.slice(0, 2).join('; ')}` : ''}
+                    </div>
+                  )}
                   {card.report_counts && Object.keys(card.report_counts).length > 0 && (
                     <div className="muted" style={{ marginTop: 6 }}>
                       reports: {Object.entries(card.report_counts).map(([kind, count]) => `${kind}=${count}`).join(' · ')}

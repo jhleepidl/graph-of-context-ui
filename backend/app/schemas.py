@@ -207,7 +207,19 @@ class ImprovementJobCreateRequest(BaseModel):
 
 
 class ImprovementJobReportRequest(BaseModel):
-    kind: Literal["repo_snapshot", "code_diff", "test_report", "canary_result", "promotion_decision", "patch_plan", "runtime_event", "llm_trace_summary"]
+    kind: Literal[
+        "repo_snapshot",
+        "code_diff",
+        "test_report",
+        "canary_result",
+        "promotion_decision",
+        "patch_plan",
+        "runtime_event",
+        "llm_trace_summary",
+        "review_report",
+        "eval_gate",
+        "rollback_report",
+    ]
     phase: Optional[str] = None
     status: Optional[str] = None
     title: Optional[str] = None

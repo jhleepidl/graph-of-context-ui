@@ -195,3 +195,86 @@ class ImprovementJobLogicTests(unittest.TestCase):
         self.assertEqual(payload['last_promotion_status'], 'ready_for_promote')
         self.assertEqual(payload['status'], 'ready_for_promote')
         self.assertEqual(payload['phase'], 'awaiting_approval')
+
+    def test_review_eval_gate_and_rollback_reports_populate_board_lanes(self):
+        created = self.client.post(
+            f'/api/threads/{self.thread_id}/improvement_jobs',
+            json={
+                'target_repo': 'ddalggak',
+                'instruction': 'Gate promotion with review and rollback metadata',
+                'target_runtime': 'forge',
+            },
+            headers=self._headers(),
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        job_id = created.json()['job']['payload']['job_id']
+
+        review = self.client.post(
+            f'/api/threads/{self.thread_id}/improvement_jobs/{job_id}/report',
+            json={
+                'kind': 'review_report',
+                'phase': 'review_completed',
+                'status': 'completed',
+                'summary': 'Gemini reviewer found low risk',
+                'preview_text': 'Risk: low\nRecommend promote.',
+                'payload': {'risk': 'low'},
+            },
+            headers=self._headers(),
+        )
+        self.assertEqual(review.status_code, 200, review.text)
+
+        gate = self.client.post(
+            f'/api/threads/{self.thread_id}/improvement_jobs/{job_id}/report',
+            json={
+                'kind': 'eval_gate',
+                'phase': 'gate_passed',
+                'status': 'passed',
+                'summary': 'promotion gate passed',
+                'preview_text': 'status: passed',
+                'payload': {
+                    'status': 'passed',
+                    'reasons': [],
+                    'warnings': [],
+                    'review_risk': 'low',
+                    'forbidden_paths_changed': False,
+                    'changed_file_count': 2,
+                },
+            },
+            headers=self._headers(),
+        )
+        self.assertEqual(gate.status_code, 200, gate.text)
+
+        rollback = self.client.post(
+            f'/api/threads/{self.thread_id}/improvement_jobs/{job_id}/report',
+            json={
+                'kind': 'rollback_report',
+                'phase': 'rollback_blocked',
+                'status': 'blocked',
+                'summary': 'rollback command is not configured yet',
+                'preview_text': 'missing rollback command',
+            },
+            headers=self._headers(),
+        )
+        self.assertEqual(rollback.status_code, 200, rollback.text)
+
+        board = self.client.get(f'/api/threads/{self.thread_id}/board', headers=self._headers())
+        self.assertEqual(board.status_code, 200, board.text)
+        lanes = {lane['id']: lane for lane in board.json()['lanes']}
+        self.assertIn('review_reports', lanes)
+        self.assertIn('eval_gates', lanes)
+        self.assertIn('rollback_reports', lanes)
+        self.assertTrue(any(card.get('resource_kind') == 'review_report' for card in lanes['review_reports']['cards']))
+        self.assertTrue(any(card.get('resource_kind') == 'eval_gate' for card in lanes['eval_gates']['cards']))
+        self.assertTrue(any(card.get('resource_kind') == 'rollback_report' for card in lanes['rollback_reports']['cards']))
+
+        fetched = self.client.get(
+            f'/api/threads/{self.thread_id}/improvement_jobs/{job_id}',
+            headers=self._headers(),
+        )
+        self.assertEqual(fetched.status_code, 200, fetched.text)
+        payload = fetched.json()['job']['payload']
+        self.assertEqual(payload['last_review_status'], 'completed')
+        self.assertEqual(payload['last_review_risk'], 'low')
+        self.assertEqual(payload['last_eval_gate_status'], 'passed')
+        self.assertEqual(payload['last_rollback_status'], 'blocked')
+        self.assertEqual(payload['eval_gate']['review_risk'], 'low')
