@@ -1554,3 +1554,154 @@ button.tiny.isActive {
 .runStudioAgencyCockpit > .runStudioGrid {
   margin-top: 10px;
 }
+
+.runStudioSkillMapHero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.runStudioSkillMapHeroTitle {
+  font-weight: 800;
+  color: #0f172a;
+  margin-bottom: 3px;
+}
+
+.runStudioSkillMatrixWrap {
+  overflow-x: auto;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: #fff;
+  margin-top: 10px;
+}
+
+.runStudioSkillMatrixTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 620px;
+}
+
+.runStudioSkillMatrixTable th,
+.runStudioSkillMatrixTable td {
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 10px 12px;
+}
+
+.runStudioSkillMatrixTable th {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #1e3a8a;
+  background: #eff6ff;
+}
+
+.runStudioSkillMatrixTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.runStudioSkillMatrixName {
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.runStudioSkillMatrixId {
+  font-size: 11px;
+  margin-top: 3px;
+  word-break: break-word;
+}
+
+.runStudioSkillMatrixCount {
+  width: 72px;
+  text-align: center !important;
+  font-weight: 800;
+  color: #1e3a8a;
+}
+
+.runStudioAgentSkillBadgeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.runStudioAgentSkillBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #f8fbff;
+  color: #0f172a;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.runStudioAgentSkillBadge b {
+  font-size: 12px;
+}
+
+.runStudioAgentSkillBadge span {
+  color: #475569;
+}
+
+.runStudioAgentSkillBadge em {
+  font-style: normal;
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.runStudioSkillLevel--full {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.runStudioSkillLevel--selected {
+  background: #e0f2fe;
+  color: #075985;
+  border-color: #7dd3fc;
+}
+
+.runStudioSkillLevel--metadata {
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.runStudioSkillLevel--blocked {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.runStudioSkillCoverageNotice,
+.runStudioEmptyNotice {
+  border: 1px dashed #cbd5e1;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #475569;
+  padding: 10px;
+  margin-top: 10px;
+}
+
+@media (max-width: 720px) {
+  .runStudioSkillMapHero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .runStudioSkillMatrixTable {
+    min-width: 560px;
+  }
+}
