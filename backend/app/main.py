@@ -13,7 +13,6 @@ from app.auth import (
 )
 from app.db import dispose_engine, init_db, ping_db
 from app.config import get_env
-from app.routers.threads import legacy_router as legacy_threads_router
 from app.routers.threads import router as threads_router
 from app.routers.messages import router as messages_router
 from app.routers.context_sets import router as ctx_router
@@ -122,7 +121,6 @@ def _shutdown():
     dispose_engine()
 
 app.include_router(threads_router)
-app.include_router(legacy_threads_router)
 app.include_router(messages_router)
 app.include_router(ctx_router)
 app.include_router(folds_router)

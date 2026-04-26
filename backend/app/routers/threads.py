@@ -57,7 +57,6 @@ from app.auth import get_current_principal
 from app.tenant import current_service_id, require_node_access, require_thread_access, require_thread_write_access, PUBLIC_SERVICE_ID
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
-legacy_router = APIRouter(prefix="/api/thread", tags=["threads"])
 logger = logging.getLogger(__name__)
 
 
@@ -255,10 +254,6 @@ ALLOWED_NODE_TYPES = {
     "MemoryItem",
     "Observation",
     "ContextSummary",
-    "ParticipantSignal",
-    "ParticipantDigest",
-    "ChannelVerifierDecision",
-    "ChannelPromotionApplied",
 }
 
 
@@ -572,21 +567,6 @@ def ensure_thread(body: ThreadEnsureRequest):
         s.commit()
         s.refresh(t)
         return _thread_to_response(t)
-
-
-@legacy_router.get("", response_model=list[ThreadRead])
-def legacy_list_threads():
-    return list_threads()
-
-
-@legacy_router.post("", response_model=ThreadRead)
-def legacy_create_thread(body: ThreadCreate):
-    return create_thread(body)
-
-
-@legacy_router.post("/ensure", response_model=ThreadRead)
-def legacy_ensure_thread(body: ThreadEnsureRequest):
-    return ensure_thread(body)
 
 
 @router.get("/{thread_id}", response_model=ThreadRead)

@@ -10,7 +10,7 @@ from sqlalchemy.engine.url import make_url
 from sqlmodel import SQLModel, Session, create_engine
 
 from app.config import get_env
-from app.models import ConversationTeamConfig, MemoryNode, MemoryProjection, MemorySurface, ServiceRequest, Thread
+from app.models import ServiceRequest, Thread
 from app.services.agent_defaults import ensure_default_agents
 
 DEFAULT_DB_URL = "postgresql+psycopg2://postgres:postgres@localhost:5432/goc"
@@ -189,95 +189,11 @@ def _ensure_service_request_columns() -> None:
             conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN description TEXT"))
 
 
-def _ensure_conversation_team_config_columns() -> None:
-    table_name = getattr(ConversationTeamConfig, "__tablename__", "conversation_team_configs")
-    with engine.begin() as conn:
-        inspector = inspect(conn)
-        if table_name not in inspector.get_table_names():
-            return
-        cols = {c["name"] for c in inspector.get_columns(table_name)}
-        if "state_json" not in cols:
-            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN state_json TEXT DEFAULT '{{}}'"))
-            cols.add("state_json")
-        conn.execute(text(f"UPDATE {table_name} SET state_json = '{{}}' WHERE state_json IS NULL"))
-
-
-
-
-def _add_column_if_missing(conn, table_name: str, cols: set[str], column_name: str, ddl: str) -> None:
-    if column_name in cols:
-        return
-    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"))
-    cols.add(column_name)
-
-
-def _ensure_memory_graph_columns() -> None:
-    with engine.begin() as conn:
-        inspector = inspect(conn)
-        tables = set(inspector.get_table_names())
-
-        surface_table = getattr(MemorySurface, "__tablename__", "memory_surfaces")
-        if surface_table in tables:
-            cols = {c["name"] for c in inspector.get_columns(surface_table)}
-            _add_column_if_missing(conn, surface_table, cols, "title", "TEXT DEFAULT ''")
-            _add_column_if_missing(conn, surface_table, cols, "semantic_kind", "VARCHAR(255) DEFAULT 'generic'")
-            _add_column_if_missing(conn, surface_table, cols, "visibility_scope", "VARCHAR(255) DEFAULT 'shared'")
-            _add_column_if_missing(conn, surface_table, cols, "write_mode", "VARCHAR(255) DEFAULT 'shared'")
-            _add_column_if_missing(conn, surface_table, cols, "policy_json", "TEXT DEFAULT '{}'")
-            _add_column_if_missing(conn, surface_table, cols, "created_at", "TIMESTAMP")
-            _add_column_if_missing(conn, surface_table, cols, "updated_at", "TIMESTAMP")
-            conn.execute(text(f"UPDATE {surface_table} SET title = '' WHERE title IS NULL"))
-            conn.execute(text(f"UPDATE {surface_table} SET semantic_kind = 'generic' WHERE semantic_kind IS NULL"))
-            conn.execute(text(f"UPDATE {surface_table} SET visibility_scope = 'shared' WHERE visibility_scope IS NULL"))
-            conn.execute(text(f"UPDATE {surface_table} SET write_mode = 'shared' WHERE write_mode IS NULL"))
-            conn.execute(text(f"UPDATE {surface_table} SET policy_json = '{{}}' WHERE policy_json IS NULL"))
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{surface_table}_thread_id ON {surface_table} (thread_id)"))
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{surface_table}_surface_id ON {surface_table} (surface_id)"))
-
-        node_table = getattr(MemoryNode, "__tablename__", "memory_nodes")
-        if node_table in tables:
-            cols = {c["name"] for c in inspector.get_columns(node_table)}
-            _add_column_if_missing(conn, node_table, cols, "node_type", "VARCHAR(255) DEFAULT 'note'")
-            _add_column_if_missing(conn, node_table, cols, "owner_agent_id", "VARCHAR(255)")
-            _add_column_if_missing(conn, node_table, cols, "owner_role_id", "VARCHAR(255)")
-            _add_column_if_missing(conn, node_table, cols, "content_json", "TEXT DEFAULT '{}'")
-            _add_column_if_missing(conn, node_table, cols, "provenance_json", "TEXT DEFAULT '{}'")
-            _add_column_if_missing(conn, node_table, cols, "trust_tier", "VARCHAR(255) DEFAULT 'derived'")
-            _add_column_if_missing(conn, node_table, cols, "status", "VARCHAR(255) DEFAULT 'draft'")
-            _add_column_if_missing(conn, node_table, cols, "created_run_id", "VARCHAR(255)")
-            _add_column_if_missing(conn, node_table, cols, "created_at", "TIMESTAMP")
-            _add_column_if_missing(conn, node_table, cols, "updated_at", "TIMESTAMP")
-            conn.execute(text(f"UPDATE {node_table} SET node_type = 'note' WHERE node_type IS NULL"))
-            conn.execute(text(f"UPDATE {node_table} SET content_json = '{{}}' WHERE content_json IS NULL"))
-            conn.execute(text(f"UPDATE {node_table} SET provenance_json = '{{}}' WHERE provenance_json IS NULL"))
-            conn.execute(text(f"UPDATE {node_table} SET trust_tier = 'derived' WHERE trust_tier IS NULL"))
-            conn.execute(text(f"UPDATE {node_table} SET status = 'draft' WHERE status IS NULL"))
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{node_table}_thread_id ON {node_table} (thread_id)"))
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{node_table}_surface_id ON {node_table} (surface_id)"))
-
-        projection_table = getattr(MemoryProjection, "__tablename__", "memory_projections")
-        if projection_table in tables:
-            cols = {c["name"] for c in inspector.get_columns(projection_table)}
-            _add_column_if_missing(conn, projection_table, cols, "run_id", "VARCHAR(255)")
-            _add_column_if_missing(conn, projection_table, cols, "agent_id", "VARCHAR(255)")
-            _add_column_if_missing(conn, projection_table, cols, "role_id", "VARCHAR(255)")
-            _add_column_if_missing(conn, projection_table, cols, "visible_node_ids_json", "TEXT DEFAULT '[]'")
-            _add_column_if_missing(conn, projection_table, cols, "blocked_node_ids_json", "TEXT DEFAULT '[]'")
-            _add_column_if_missing(conn, projection_table, cols, "summary_json", "TEXT DEFAULT '{}'")
-            _add_column_if_missing(conn, projection_table, cols, "budget_tokens", "INTEGER DEFAULT 0")
-            _add_column_if_missing(conn, projection_table, cols, "compiled_tokens_estimate", "INTEGER DEFAULT 0")
-            _add_column_if_missing(conn, projection_table, cols, "created_at", "TIMESTAMP")
-            _add_column_if_missing(conn, projection_table, cols, "updated_at", "TIMESTAMP")
-            conn.execute(text(f"UPDATE {projection_table} SET visible_node_ids_json = '[]' WHERE visible_node_ids_json IS NULL"))
-            conn.execute(text(f"UPDATE {projection_table} SET blocked_node_ids_json = '[]' WHERE blocked_node_ids_json IS NULL"))
-            conn.execute(text(f"UPDATE {projection_table} SET summary_json = '{{}}' WHERE summary_json IS NULL"))
 def init_db() -> None:
     ensure_database_exists(DB_URL)
     SQLModel.metadata.create_all(engine)
     _ensure_thread_columns()
     _ensure_service_request_columns()
-    _ensure_conversation_team_config_columns()
-    _ensure_memory_graph_columns()
     try:
         with session_scope() as session:
             ensure_default_agents(session)
