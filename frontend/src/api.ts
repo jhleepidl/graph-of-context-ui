@@ -598,6 +598,20 @@ export const api = {
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/run_studio/trace_scope${suffix}`))
   },
+  runStudioMemoryTopology: (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/memory/topology${suffix}`))
+  },
+  runStudioMemoryDemand: (threadId: string, runId?: string | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/memory/demand${suffix}`))
+  },
   runStudioMemoryGraph: async (threadId: string, runId?: string | null) => {
     const q = new URLSearchParams()
     const cleanRunId = (runId || '').trim()

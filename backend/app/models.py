@@ -282,6 +282,62 @@ class MemoryProjection(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+
+
+class MemoryTopologySnapshot(SQLModel, table=True):
+    __tablename__ = "memory_topology_snapshots"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    mode: str = Field(default="compact_single", index=True)
+    state: str = Field(default="compact_single", index=True)
+    stress_score: float = Field(default=0.0, index=True)
+    source: str = Field(default="ddalggak", index=True)
+    topology_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryTopologyEvent(SQLModel, table=True):
+    __tablename__ = "memory_topology_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    snapshot_id: Optional[str] = Field(default=None, index=True)
+    kind: str = Field(default="memory_topology_event", index=True)
+    previous_mode: Optional[str] = Field(default=None, index=True)
+    next_mode: Optional[str] = Field(default=None, index=True)
+    stress_score: float = Field(default=0.0, index=True)
+    source: str = Field(default="ddalggak", index=True)
+    event_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryDemandEvent(SQLModel, table=True):
+    __tablename__ = "memory_demand_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    query: str = Field(default="", index=True)
+    reason: str = Field(default="context_preflight", index=True)
+    demand_reasons_json: str = Field(default="[]")
+    sources_json: str = Field(default="[]")
+    item_count: int = Field(default=0, index=True)
+    agent_id: Optional[str] = Field(default=None, index=True)
+    role_id: Optional[str] = Field(default=None, index=True)
+    retrieval_mode: str = Field(default="runtime_preflight", index=True)
+    classifier: Optional[str] = Field(default=None, index=True)
+    confidence: Optional[float] = Field(default=None, index=True)
+    source_types_json: str = Field(default="[]")
+    surface_ids_json: str = Field(default="[]")
+    source: str = Field(default="ddalggak", index=True)
+    event_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class MemoryEdge(SQLModel, table=True):
     __tablename__ = "memory_edges"
     __table_args__ = (UniqueConstraint("thread_id", "edge_type", "from_node_id", "to_node_id", name="uq_memory_edges_pair"),)

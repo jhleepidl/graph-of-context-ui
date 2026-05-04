@@ -8,6 +8,8 @@ import {
   type RunStudioSkillUsage,
   type RunStudioSummary,
   type RunStudioMemoryGraph,
+  type RunStudioMemoryTopology,
+  type RunStudioMemoryDemand,
   type RunStudioRunBundle,
   type RunStudioCrossReferences,
   type RunStudioTraceScope,
@@ -24,7 +26,7 @@ type RefreshOptions = {
   includeLoadedDetails?: boolean
 }
 
-type DetailKey = 'agentTeam' | 'contextDecisions' | 'evidence' | 'contextPacks' | 'skillUsage' | 'memoryGraph' | 'traceScope' | 'teamSelection'
+type DetailKey = 'agentTeam' | 'contextDecisions' | 'evidence' | 'contextPacks' | 'skillUsage' | 'memoryGraph' | 'memoryTopology' | 'memoryDemand' | 'traceScope' | 'teamSelection'
 
 type DetailState = Record<DetailKey, boolean>
 
@@ -39,6 +41,8 @@ const EMPTY_DETAIL_STATE: DetailState = {
   contextPacks: false,
   skillUsage: false,
   memoryGraph: false,
+  memoryTopology: false,
+  memoryDemand: false,
   traceScope: false,
   teamSelection: false,
 }
@@ -72,6 +76,8 @@ export function useRunStudioData() {
   const [contextPacks, setContextPacks] = useState<RunStudioContextPacks | null>(null)
   const [skillUsage, setSkillUsage] = useState<RunStudioSkillUsage | null>(null)
   const [memoryGraph, setMemoryGraph] = useState<RunStudioMemoryGraph | null>(null)
+  const [memoryTopology, setMemoryTopology] = useState<RunStudioMemoryTopology | null>(null)
+  const [memoryDemand, setMemoryDemand] = useState<RunStudioMemoryDemand | null>(null)
   const [traceScope, setTraceScope] = useState<RunStudioTraceScope | null>(null)
   const [crossReferences, setCrossReferences] = useState<RunStudioCrossReferences | null>(null)
   const [auditTimeline, setAuditTimeline] = useState<RunStudioAuditTimeline | null>(null)
@@ -113,6 +119,8 @@ export function useRunStudioData() {
     setContextPacks(null)
     setSkillUsage(null)
     setMemoryGraph(null)
+    setMemoryTopology(null)
+    setMemoryDemand(null)
     setTraceScope(null)
     setCrossReferences(null)
     setAuditTimeline(null)
@@ -186,6 +194,20 @@ export function useRunStudioData() {
     return runDetailRequest('memoryGraph', () => api.runStudioMemoryGraph(tId, rId), setMemoryGraph, options)
   }, [runDetailRequest])
 
+  const loadMemoryTopology = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
+    const tId = cleanText(threadId)
+    if (!tId) return null
+    const rId = cleanText(runId) || undefined
+    return runDetailRequest('memoryTopology', () => api.runStudioMemoryTopology(tId, rId), setMemoryTopology, options)
+  }, [runDetailRequest])
+
+  const loadMemoryDemand = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
+    const tId = cleanText(threadId)
+    if (!tId) return null
+    const rId = cleanText(runId) || undefined
+    return runDetailRequest('memoryDemand', () => api.runStudioMemoryDemand(tId, rId), setMemoryDemand, options)
+  }, [runDetailRequest])
+
   const loadTraceScope = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
@@ -225,6 +247,14 @@ export function useRunStudioData() {
       setMemoryGraph(bundle.memory_graph)
       markDetailLoaded('memoryGraph', true)
     }
+    if (bundle.memory_topology) {
+      setMemoryTopology(bundle.memory_topology)
+      markDetailLoaded('memoryTopology', true)
+    }
+    if (bundle.memory_demand) {
+      setMemoryDemand(bundle.memory_demand)
+      markDetailLoaded('memoryDemand', true)
+    }
     if (bundle.trace_scope) {
       setTraceScope(bundle.trace_scope)
       markDetailLoaded('traceScope', true)
@@ -255,7 +285,7 @@ export function useRunStudioData() {
     if (!tId) return null
     const cId = cleanText(contextSetId) || undefined
     const rId = cleanText(runId) || undefined
-    const bundleKeys: DetailKey[] = ['evidence', 'contextPacks', 'skillUsage', 'memoryGraph', 'traceScope']
+    const bundleKeys: DetailKey[] = ['evidence', 'contextPacks', 'skillUsage', 'memoryGraph', 'memoryTopology', 'memoryDemand', 'traceScope']
     bundleKeys.forEach((key) => markDetailLoading(key, true))
     if (!options?.silent) setError('')
     try {
@@ -282,7 +312,7 @@ export function useRunStudioData() {
     if (!tId || !rId) return null
 
     const sameFocusedRun = cleanText(focusedRunId) === rId
-    const detailBundleAlreadyLoaded = detailLoaded.evidence && detailLoaded.contextPacks && detailLoaded.skillUsage && detailLoaded.memoryGraph && detailLoaded.traceScope
+    const detailBundleAlreadyLoaded = detailLoaded.evidence && detailLoaded.contextPacks && detailLoaded.skillUsage && detailLoaded.memoryGraph && detailLoaded.memoryTopology && detailLoaded.memoryDemand && detailLoaded.traceScope
     setFocusedRunId(rId)
     setFocusedEventId(cleanText(eventMeta?.eventId) || null)
     setFocusedEventLabel(cleanText(eventMeta?.label))
@@ -292,6 +322,8 @@ export function useRunStudioData() {
         contextPacks,
         skillUsage,
         memoryGraph,
+        memory_topology: memoryTopology,
+        memory_demand: memoryDemand,
         traceScope,
         cross_references: crossReferences,
         projection_retrieval: projectionRetrieval,
@@ -303,7 +335,7 @@ export function useRunStudioData() {
     }
 
     return await loadRunBundle(tId, cId, rId, options)
-  }, [auditTimeline, contextPacks, detailLoaded.contextPacks, detailLoaded.evidence, detailLoaded.memoryGraph, detailLoaded.skillUsage, detailLoaded.traceScope, evidence, focusedRunId, loadRunBundle, memoryGraph, skillUsage, traceScope, crossReferences, projectionRetrieval, graphCompression, harnessSpec, harnessSummary])
+  }, [auditTimeline, contextPacks, detailLoaded.contextPacks, detailLoaded.evidence, detailLoaded.memoryGraph, detailLoaded.memoryTopology, detailLoaded.memoryDemand, detailLoaded.skillUsage, detailLoaded.traceScope, evidence, focusedRunId, loadRunBundle, memoryGraph, memoryTopology, memoryDemand, skillUsage, traceScope, crossReferences, projectionRetrieval, graphCompression, harnessSpec, harnessSummary])
 
   const clearRunDrilldown = useCallback(async (threadId?: string | null, contextSetId?: string | null, options?: LoadDetailOptions) => {
     const hadFocusedRun = !!cleanText(focusedRunId)
@@ -315,7 +347,7 @@ export function useRunStudioData() {
     const cId = cleanText(contextSetId) || undefined
     const fallbackRunId = cleanText(summary?.current_run_skills?.run_id) || undefined
     const silent = options?.silent ?? true
-    const shouldReloadBundle = detailLoaded.evidence || detailLoaded.contextPacks || detailLoaded.skillUsage || detailLoaded.memoryGraph || detailLoaded.traceScope
+    const shouldReloadBundle = detailLoaded.evidence || detailLoaded.contextPacks || detailLoaded.skillUsage || detailLoaded.memoryGraph || detailLoaded.memoryTopology || detailLoaded.memoryDemand || detailLoaded.traceScope
     if (shouldReloadBundle) await loadRunBundle(tId, cId, fallbackRunId, { silent })
     return fallbackRunId || null
   }, [detailLoaded, focusedRunId, loadRunBundle, summary])
@@ -344,7 +376,7 @@ export function useRunStudioData() {
         const effectiveRunId = cleanText(focusedRunId || summaryRunId) || undefined
         const tasks: Promise<unknown>[] = []
         if (loadedSnapshot.contextDecisions) tasks.push(loadContextDecisions(tId, cId, { silent: true }))
-        if (loadedSnapshot.evidence || loadedSnapshot.contextPacks || loadedSnapshot.skillUsage || loadedSnapshot.memoryGraph || loadedSnapshot.traceScope) {
+        if (loadedSnapshot.evidence || loadedSnapshot.contextPacks || loadedSnapshot.skillUsage || loadedSnapshot.memoryGraph || loadedSnapshot.memoryTopology || loadedSnapshot.memoryDemand || loadedSnapshot.traceScope) {
           tasks.push(loadRunBundle(tId, cId, effectiveRunId, { silent: true }))
         }
         if (loadedSnapshot.teamSelection) tasks.push(loadTeamSelection(tId, { silent: true }))
@@ -368,6 +400,8 @@ export function useRunStudioData() {
     contextPacks,
     skillUsage,
     memoryGraph,
+    memoryTopology,
+    memoryDemand,
     traceScope,
     crossReferences,
     projectionRetrieval,
@@ -393,6 +427,8 @@ export function useRunStudioData() {
     loadSkillUsage,
     loadRunBundle,
     loadMemoryGraph,
+    loadMemoryTopology,
+    loadMemoryDemand,
     loadTraceScope,
     loadTeamSelection,
     focusRunDrilldown,

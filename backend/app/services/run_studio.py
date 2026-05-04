@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.models import ContextSet, Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, Node, TeamSelectionEvent, Thread
+from app.models import ContextSet, Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, MemoryTopologySnapshot, MemoryTopologyEvent, MemoryDemandEvent, Node, TeamSelectionEvent, Thread
 from app.services.conversation_team import build_conversation_team_projection
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
@@ -28,6 +28,8 @@ from app.services.run_skill_summary import (
     build_thread_skill_usage_summary,
 )
 from app.services.memory_graph import summarize_memory_conflicts, summarize_memory_edge, summarize_memory_lifecycle_event
+from app.services.memory_topology import build_run_studio_memory_topology
+from app.services.memory_demand import build_run_studio_memory_demand
 from app.services.run_studio_cross_references import build_run_bundle_cross_references as _build_run_bundle_cross_references_impl
 from app.services.run_studio_audit_timeline import build_run_studio_audit_timeline_impl
 from app.services.run_studio_graph_compression import build_run_studio_graph_compression
@@ -41,7 +43,7 @@ from app.services.team_recommender import build_team_selection_dataset
 CLAIM_NODE_TYPES = {"Decision", "Assumption", "Plan", "Observation", "ContextSummary"}
 
 
-RUN_BUNDLE_CACHE_VERSION = "v1"
+RUN_BUNDLE_CACHE_VERSION = "v2"
 PROJECTION_RETRIEVAL_CACHE_VERSION = "v1"
 CROSS_REFERENCE_CACHE_VERSION = "v1"
 AUDIT_TIMELINE_CACHE_VERSION = "v2"
@@ -82,6 +84,9 @@ def _build_graph_version_payload(session: Session, *, thread: Thread, context_se
             'nodes': _query_version_stats(session, Node, Node.created_at, thread_id=thread.id),
             'edges': _query_version_stats(session, Edge, Edge.created_at, thread_id=thread.id),
             'memory_nodes': _query_version_stats(session, MemoryNode, MemoryNode.updated_at, thread_id=thread.id),
+            'memory_topology_snapshots': _query_version_stats(session, MemoryTopologySnapshot, MemoryTopologySnapshot.updated_at, thread_id=thread.id),
+            'memory_topology_events': _query_version_stats(session, MemoryTopologyEvent, MemoryTopologyEvent.created_at, thread_id=thread.id),
+            'memory_demand_events': _query_version_stats(session, MemoryDemandEvent, MemoryDemandEvent.created_at, thread_id=thread.id),
             'memory_edges': _query_version_stats(session, MemoryEdge, MemoryEdge.updated_at, thread_id=thread.id),
             'memory_conflicts': _query_version_stats(session, MemoryConflict, MemoryConflict.updated_at, thread_id=thread.id),
             'memory_lifecycle_events': _query_version_stats(session, MemoryLifecycleEvent, MemoryLifecycleEvent.created_at, thread_id=thread.id),
@@ -1599,6 +1604,8 @@ def build_run_studio_run_bundle(
     context_packs = build_run_studio_context_packs(session, thread=thread, run_id=clean_run_id, nodes=nodes, edges=edges)
     skill_usage = build_run_studio_skill_usage(session, thread=thread, run_id=clean_run_id, nodes=nodes, edges=edges)
     memory_graph = build_run_studio_memory_graph(session, thread=thread, run_id=clean_run_id)
+    memory_topology = build_run_studio_memory_topology(session, thread=thread, run_id=clean_run_id)
+    memory_demand = build_run_studio_memory_demand(session, thread=thread, run_id=clean_run_id)
     trace_scope = build_run_studio_trace_scope(session, thread=thread, run_id=clean_run_id, nodes=nodes, edges=edges)
 
     cache_hits: dict[str, bool] = {}
@@ -1698,6 +1705,8 @@ def build_run_studio_run_bundle(
         'context_packs': context_packs,
         'skill_usage': skill_usage,
         'memory_graph': memory_graph,
+        'memory_topology': memory_topology,
+        'memory_demand': memory_demand,
         'trace_scope': trace_scope,
         'cross_references': cross_references,
         'projection_retrieval': projection_retrieval,

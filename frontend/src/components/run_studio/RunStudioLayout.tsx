@@ -20,6 +20,8 @@ import MissingContextPanel from './MissingContextPanel'
 import SkillUsagePanel from './SkillUsagePanel'
 import AdvancedToolsPanel from './AdvancedToolsPanel'
 import MemoryProjectionPanel from './MemoryProjectionPanel'
+import MemoryTopologyPanel from './MemoryTopologyPanel'
+import MemoryDemandPanel from './MemoryDemandPanel'
 import TeamRecommendationPanel from './TeamRecommendationPanel'
 import SelectionOutcomePanel from './SelectionOutcomePanel'
 import CrossReferencePanel from './CrossReferencePanel'
@@ -35,6 +37,8 @@ import {
   type RunStudioSkillUsage,
   type RunStudioSummary,
   type RunStudioMemoryGraph,
+  type RunStudioMemoryTopology,
+  type RunStudioMemoryDemand,
   type RunStudioTraceScope,
   type RunStudioCrossReferences,
   type RunStudioAuditTimeline,
@@ -66,6 +70,8 @@ type DetailState = {
   contextPacks?: boolean
   skillUsage?: boolean
   memoryGraph?: boolean
+  memoryTopology?: boolean
+  memoryDemand?: boolean
   traceScope?: boolean
   teamSelection?: boolean
 }
@@ -78,6 +84,8 @@ type Props = {
   contextPacks: RunStudioContextPacks | null
   skillUsage: RunStudioSkillUsage | null
   memoryGraph: RunStudioMemoryGraph | null
+  memoryTopology: RunStudioMemoryTopology | null
+  memoryDemand: RunStudioMemoryDemand | null
   traceScope: RunStudioTraceScope | null
   crossReferences: RunStudioCrossReferences | null
   auditTimeline: RunStudioAuditTimeline | null
@@ -97,6 +105,8 @@ type Props = {
   onLoadContextPacks?: () => void
   onLoadSkillUsage?: () => void
   onLoadMemoryGraph?: () => void
+  onLoadMemoryTopology?: () => void
+  onLoadMemoryDemand?: () => void
   onLoadTraceScope?: () => void
   onLoadTeamSelection?: () => void
   onInspectTeamSelectionEvent?: (row: TeamSelectionDatasetRow) => void
@@ -141,6 +151,8 @@ export default function RunStudioLayout({
   contextPacks,
   skillUsage,
   memoryGraph,
+  memoryTopology,
+  memoryDemand,
   traceScope,
   crossReferences,
   auditTimeline,
@@ -160,6 +172,7 @@ export default function RunStudioLayout({
   onLoadContextPacks,
   onLoadSkillUsage,
   onLoadMemoryGraph,
+  onLoadMemoryTopology,
   onLoadTraceScope,
   onLoadTeamSelection,
   onInspectTeamSelectionEvent,
@@ -285,6 +298,22 @@ export default function RunStudioLayout({
           checkpoints={checkpoints}
           controlPlaneSummary={controlPlaneSummary}
         />
+      </div>
+
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <MemoryTopologyPanel
+          topology={memoryTopology}
+          onLoadDetail={onLoadMemoryTopology}
+          detailLoading={Boolean(detailLoading?.memoryTopology)}
+          detailLoaded={Boolean(detailLoaded?.memoryTopology || memoryTopology)}
+        />
+        <MemoryDemandPanel
+          demand={memoryDemand}
+          onLoadDetail={onLoadMemoryDemand}
+          detailLoading={Boolean(detailLoading?.memoryDemand)}
+          detailLoaded={Boolean(detailLoaded?.memoryDemand || memoryDemand)}
+        />
+        <ScopeMapPanel scopeProjection={scopeProjection} />
       </div>
 
       <section className="card runStudioPanel runStudioAgencyCockpit">

@@ -610,6 +610,124 @@ export type RunStudioMemoryGraph = {
   conflict_reason_counts?: Record<string, number>
 }
 
+
+export type MemoryTopologySurface = {
+  id?: string | null
+  surface_id?: string | null
+  title?: string | null
+  kind?: string | null
+  semantic_kind?: string | null
+  visibility_scope?: string | null
+  write_mode?: string | null
+  readers?: string[]
+  writers?: string[]
+  steward?: string[]
+  path?: string | null
+  lens?: string | null
+  promotion_policy?: string | null
+  [key: string]: unknown
+}
+
+export type MemoryTopologyGrant = {
+  agent_id?: string | null
+  role?: string | null
+  provider?: string | null
+  read?: string[]
+  write?: string[]
+  lens?: string | null
+  write_mode?: string | null
+  [key: string]: unknown
+}
+
+export type MemoryTopologyMaintenanceAction = {
+  action?: string | null
+  target?: string | null
+  reason?: string | null
+  candidate_only?: boolean
+  destructive?: boolean
+  [key: string]: unknown
+}
+
+export type RunStudioMemoryTopology = {
+  schema_version?: string | null
+  source?: string | null
+  snapshot_id?: string | null
+  run_id?: string | null
+  mode?: string | null
+  state?: string | null
+  stress?: { score?: number; reasons?: string[]; components?: Record<string, number>; [key: string]: unknown } | null
+  stress_score?: number | null
+  selection_reason?: string[]
+  stats?: Record<string, unknown>
+  surfaces?: MemoryTopologySurface[]
+  surface_count?: number
+  surface_kind_counts?: Record<string, number>
+  agent_grants?: Record<string, MemoryTopologyGrant>
+  agent_grant_count?: number
+  maintenance?: {
+    generated_at?: string | null
+    idle_safe?: boolean
+    destructive_changes?: boolean
+    actions?: MemoryTopologyMaintenanceAction[]
+    [key: string]: unknown
+  } | null
+  maintenance_action_count?: number
+  idle_safe?: boolean
+  destructive_changes?: boolean
+  events?: Array<Record<string, unknown>>
+  event_count?: number
+  created_at?: string | null
+  updated_at?: string | null
+  fallback?: boolean
+}
+
+
+export type MemoryDemandEvent = {
+  id?: string | null
+  run_id?: string | null
+  query?: string | null
+  reason?: string | null
+  demand_reasons?: string[]
+  sources?: string[]
+  item_count?: number
+  agent_id?: string | null
+  role_id?: string | null
+  retrieval_mode?: string | null
+  classifier?: string | null
+  confidence?: number | null
+  source_types?: string[]
+  surface_ids?: string[]
+  router_memory_plan?: Record<string, unknown> | null
+  source?: string | null
+  matching?: Record<string, unknown> | null
+  created_at?: string | null
+  event?: Record<string, unknown>
+}
+
+export type RunStudioMemoryDemand = {
+  schema_version?: string | null
+  thread_id?: string | null
+  run_id?: string | null
+  event_count?: number
+  events?: MemoryDemandEvent[]
+  reason_counts?: Record<string, number>
+  source_counts?: Record<string, number>
+  retrieval_mode_counts?: Record<string, number>
+  classifier_counts?: Record<string, number>
+  source_type_counts?: Record<string, number>
+  surface_counts?: Record<string, number>
+  agent_counts?: Record<string, number>
+  latest_query?: string | null
+  latest_at?: string | null
+  preflight_semantics?: {
+    goal?: string | null
+    runtime_contract?: string | null
+    matching_note?: string | null
+    [key: string]: unknown
+  } | null
+  empty?: boolean
+}
+
 export type RunStudioTraceScope = {
   run_id?: string | null
   scope?: string | null
@@ -1002,6 +1120,8 @@ export type RunStudioRunBundle = {
   context_packs?: RunStudioContextPacks | null
   skill_usage?: RunStudioSkillUsage | null
   memory_graph?: RunStudioMemoryGraph | null
+  memory_topology?: RunStudioMemoryTopology | null
+  memory_demand?: RunStudioMemoryDemand | null
   trace_scope?: RunStudioTraceScope | null
   cross_references?: RunStudioCrossReferences | null
   projection_retrieval?: RunStudioProjectionRetrieval | null

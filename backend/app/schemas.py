@@ -618,6 +618,21 @@ class MemoryConflictResolveRequest(SQLModel):
     resolution_source: str | None = None
     merge_note: str | None = None
 
+
+
+class MemoryTopologyRecordRequest(SQLModel):
+    run_id: str | None = None
+    topology: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] | None = None
+    source: str | None = "ddalggak"
+
+
+class MemoryDemandRecordRequest(SQLModel):
+    run_id: str | None = None
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = "ddalggak"
+
+
 class TeamRecommendationRequest(SQLModel):
     task_text: str
     limit: int | None = 3

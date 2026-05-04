@@ -149,6 +149,8 @@ export default function WorkspaceApp() {
     contextPacks: runStudioContextPacks,
     skillUsage: runStudioSkillUsage,
     memoryGraph: runStudioMemoryGraph,
+    memoryTopology: runStudioMemoryTopology,
+    memoryDemand: runStudioMemoryDemand,
     traceScope: runStudioTraceScope,
     crossReferences: runStudioCrossReferences,
     auditTimeline: runStudioAuditTimeline,
@@ -172,6 +174,8 @@ export default function WorkspaceApp() {
     loadContextPacks: loadRunStudioContextPacks,
     loadSkillUsage: loadRunStudioSkillUsage,
     loadMemoryGraph: loadRunStudioMemoryGraph,
+    loadMemoryTopology: loadRunStudioMemoryTopology,
+    loadMemoryDemand: loadRunStudioMemoryDemand,
     loadTraceScope: loadRunStudioTraceScope,
     loadTeamSelection: loadRunStudioTeamSelection,
     focusRunDrilldown: focusRunStudioDrilldown,
@@ -980,6 +984,8 @@ export default function WorkspaceApp() {
           contextPacks={runStudioContextPacks}
           skillUsage={runStudioSkillUsage}
           memoryGraph={runStudioMemoryGraph}
+          memoryTopology={runStudioMemoryTopology}
+          memoryDemand={runStudioMemoryDemand}
           traceScope={runStudioTraceScope}
           crossReferences={runStudioCrossReferences}
           auditTimeline={runStudioAuditTimeline}
@@ -1015,6 +1021,14 @@ export default function WorkspaceApp() {
           onLoadMemoryGraph={() => {
             const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
             void loadRunStudioMemoryGraph(threadId || undefined, currentRunId || undefined)
+          }}
+          onLoadMemoryTopology={() => {
+            const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
+            void loadRunStudioMemoryTopology(threadId || undefined, currentRunId || undefined)
+          }}
+          onLoadMemoryDemand={() => {
+            const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id
+            void loadRunStudioMemoryDemand(threadId || undefined, currentRunId || undefined)
           }}
           onLoadTraceScope={() => {
             const currentRunId = runStudioFocusedRunId || runStudioSummary?.current_run_skills?.run_id

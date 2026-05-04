@@ -13,6 +13,8 @@ from app.schemas import (
     MemoryNodeTransitionRequest,
     MemoryProjectionRequest,
     MemorySurfaceCreateRequest,
+    MemoryTopologyRecordRequest,
+    MemoryDemandRecordRequest,
     TeamRecommendationRequest,
     TeamSelectionRecordRequest,
 )
@@ -31,6 +33,17 @@ from app.services.memory_graph import (
     summarize_memory_projection,
 )
 from app.services.team_recommender import build_team_selection_dataset, recommend_team_blueprints, serialize_team_selection_dataset_jsonl
+from app.services.memory_topology import (
+    build_run_studio_memory_topology,
+    list_memory_topology_events,
+    record_memory_topology_snapshot,
+    summarize_memory_topology,
+)
+from app.services.memory_demand import (
+    build_run_studio_memory_demand,
+    list_memory_demand_events,
+    record_memory_demand_events,
+)
 from app.tenant import require_thread_access, require_thread_write_access
 
 router = APIRouter(prefix='/api', tags=['memory_graph'])
@@ -897,6 +910,91 @@ def resolve_memory_conflict(conflict_id: str, body: MemoryConflictResolveRequest
         session.commit()
         session.refresh(row)
         return {'conflict': summarize_memory_conflict({'id': row.id, 'surface_id': row.surface_id, 'left_node_id': row.left_node_id, 'right_node_id': row.right_node_id, 'status': row.status, 'reason': row.reason, 'resolution_json': _jload(row.resolution_json, {})})}
+
+
+
+
+@router.post('/threads/{thread_id}/memory/topology')
+def record_memory_topology(thread_id: str, body: MemoryTopologyRecordRequest):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        row = record_memory_topology_snapshot(
+            session,
+            thread=thread,
+            topology=body.topology or {},
+            run_id=(str(body.run_id).strip() if body.run_id else None),
+            source=(str(body.source).strip() if body.source else 'ddalggak'),
+            events=body.events or [],
+        )
+        session.commit()
+        session.refresh(row)
+        summary = summarize_memory_topology(
+            _jload(row.topology_json, {}),
+            source=row.source,
+            snapshot_id=row.id,
+            run_id=row.run_id,
+            created_at=row.created_at.isoformat() if row.created_at else None,
+            events=list_memory_topology_events(session, thread_id=thread.id, run_id=row.run_id, limit=12),
+        )
+        return {'snapshot_id': row.id, 'thread_id': thread.id, 'topology': summary}
+
+
+@router.get('/threads/{thread_id}/memory/topology')
+def get_memory_topology(thread_id: str, run_id: str | None = None):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return build_run_studio_memory_topology(session, thread=thread, run_id=run_id)
+
+
+@router.get('/threads/{thread_id}/memory/topology/events')
+def get_memory_topology_events(thread_id: str, run_id: str | None = None, limit: int = 20):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return {
+            'thread_id': thread.id,
+            'run_id': (str(run_id).strip() if run_id else None),
+            'items': list_memory_topology_events(session, thread_id=thread.id, run_id=run_id, limit=limit),
+        }
+
+
+@router.post('/threads/{thread_id}/memory/demand')
+def record_memory_demand(thread_id: str, body: MemoryDemandRecordRequest):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        rows = record_memory_demand_events(
+            session,
+            thread=thread,
+            events=body.events or [],
+            run_id=(str(body.run_id).strip() if body.run_id else None),
+            source=(str(body.source).strip() if body.source else 'ddalggak'),
+        )
+        session.commit()
+        for row in rows:
+            session.refresh(row)
+        return {
+            'thread_id': thread.id,
+            'run_id': (str(body.run_id).strip() if body.run_id else None),
+            'count': len(rows),
+            'memory_demand': build_run_studio_memory_demand(session, thread=thread, run_id=body.run_id),
+        }
+
+
+@router.get('/threads/{thread_id}/memory/demand')
+def get_memory_demand(thread_id: str, run_id: str | None = None, limit: int = 20):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return build_run_studio_memory_demand(session, thread=thread, run_id=run_id, limit=limit)
+
+
+@router.get('/threads/{thread_id}/memory/demand/events')
+def get_memory_demand_events(thread_id: str, run_id: str | None = None, limit: int = 20):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return {
+            'thread_id': thread.id,
+            'run_id': (str(run_id).strip() if run_id else None),
+            'items': list_memory_demand_events(session, thread_id=thread.id, run_id=run_id, limit=limit),
+        }
 
 
 @router.post('/team/recommend')
