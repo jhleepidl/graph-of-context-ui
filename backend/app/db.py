@@ -10,7 +10,20 @@ from sqlalchemy.engine.url import make_url
 from sqlmodel import SQLModel, Session, create_engine
 
 from app.config import get_env
-from app.models import ServiceRequest, Thread
+from app.models import (
+    ServiceRequest,
+    Thread,
+    MemorySurface,
+    MemoryNode,
+    MemoryProjection,
+    MemoryTopologySnapshot,
+    MemoryTopologyEvent,
+    MemoryDemandEvent,
+    MemoryEdge,
+    MemoryLifecycleEvent,
+    MemoryConflict,
+    TeamSelectionEvent,
+)
 from app.services.agent_defaults import ensure_default_agents
 
 DEFAULT_DB_URL = "postgresql+psycopg2://postgres:postgres@localhost:5432/goc"
@@ -189,11 +202,163 @@ def _ensure_service_request_columns() -> None:
             conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN description TEXT"))
 
 
+
+
+def _ensure_table_columns(table_model, columns: dict[str, str], *, indexed: set[str] | None = None) -> None:
+    table_name = getattr(table_model, "__tablename__", "")
+    if not table_name:
+        return
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        if table_name not in inspector.get_table_names():
+            return
+        existing = {c["name"] for c in inspector.get_columns(table_name)}
+        for name, ddl in columns.items():
+            if name in existing:
+                continue
+            conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}"))
+            existing.add(name)
+        for name in indexed or set():
+            if name in existing:
+                conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table_name}_{name} ON {table_name} ({name})"))
+
+
+def _ensure_memory_runtime_columns() -> None:
+    text_col = "TEXT"
+    str_col = "VARCHAR(255)"
+    ts_col = "TIMESTAMP"
+    _ensure_table_columns(MemorySurface, {
+        "thread_id": str_col,
+        "surface_id": str_col,
+        "title": text_col,
+        "semantic_kind": str_col,
+        "visibility_scope": str_col,
+        "write_mode": str_col,
+        "policy_json": text_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "surface_id", "semantic_kind", "visibility_scope", "write_mode", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryNode, {
+        "thread_id": str_col,
+        "surface_id": str_col,
+        "node_type": str_col,
+        "owner_agent_id": str_col,
+        "owner_role_id": str_col,
+        "content_json": text_col,
+        "provenance_json": text_col,
+        "trust_tier": str_col,
+        "status": str_col,
+        "created_run_id": str_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "surface_id", "node_type", "owner_agent_id", "owner_role_id", "trust_tier", "status", "created_run_id", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryProjection, {
+        "thread_id": str_col,
+        "run_id": str_col,
+        "agent_id": str_col,
+        "role_id": str_col,
+        "visible_node_ids_json": text_col,
+        "blocked_node_ids_json": text_col,
+        "summary_json": text_col,
+        "created_at": ts_col,
+    }, indexed={"thread_id", "run_id", "agent_id", "role_id", "created_at"})
+    _ensure_table_columns(MemoryTopologySnapshot, {
+        "thread_id": str_col,
+        "run_id": str_col,
+        "mode": str_col,
+        "state": str_col,
+        "stress_score": "FLOAT",
+        "source": str_col,
+        "topology_json": text_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "run_id", "mode", "state", "stress_score", "source", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryTopologyEvent, {
+        "thread_id": str_col,
+        "run_id": str_col,
+        "snapshot_id": str_col,
+        "kind": str_col,
+        "previous_mode": str_col,
+        "next_mode": str_col,
+        "stress_score": "FLOAT",
+        "source": str_col,
+        "event_json": text_col,
+        "created_at": ts_col,
+    }, indexed={"thread_id", "run_id", "snapshot_id", "kind", "previous_mode", "next_mode", "stress_score", "source", "created_at"})
+    _ensure_table_columns(MemoryDemandEvent, {
+        "thread_id": str_col,
+        "run_id": str_col,
+        "query": text_col,
+        "reason": str_col,
+        "demand_reasons_json": text_col,
+        "sources_json": text_col,
+        "item_count": "INTEGER",
+        "agent_id": str_col,
+        "role_id": str_col,
+        "retrieval_mode": str_col,
+        "classifier": str_col,
+        "confidence": "FLOAT",
+        "source_types_json": text_col,
+        "surface_ids_json": text_col,
+        "source": str_col,
+        "event_json": text_col,
+        "created_at": ts_col,
+    }, indexed={"thread_id", "run_id", "reason", "item_count", "agent_id", "role_id", "retrieval_mode", "classifier", "source", "created_at"})
+    _ensure_table_columns(MemoryEdge, {
+        "thread_id": str_col,
+        "edge_type": str_col,
+        "from_node_id": str_col,
+        "to_node_id": str_col,
+        "from_surface_id": str_col,
+        "to_surface_id": str_col,
+        "status": str_col,
+        "rationale": text_col,
+        "provenance_json": text_col,
+        "created_run_id": str_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "edge_type", "from_node_id", "to_node_id", "from_surface_id", "to_surface_id", "status", "created_run_id", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryLifecycleEvent, {
+        "thread_id": str_col,
+        "node_id": str_col,
+        "surface_id": str_col,
+        "event_type": str_col,
+        "from_status": str_col,
+        "to_status": str_col,
+        "actor": str_col,
+        "source": str_col,
+        "summary": text_col,
+        "metadata_json": text_col,
+        "created_run_id": str_col,
+        "created_at": ts_col,
+    }, indexed={"thread_id", "node_id", "surface_id", "event_type", "from_status", "to_status", "actor", "source", "created_run_id", "created_at"})
+    _ensure_table_columns(MemoryConflict, {
+        "thread_id": str_col,
+        "surface_id": str_col,
+        "left_node_id": str_col,
+        "right_node_id": str_col,
+        "status": str_col,
+        "reason": text_col,
+        "resolution_json": text_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "surface_id", "left_node_id", "right_node_id", "status", "created_at", "updated_at"})
+    _ensure_table_columns(TeamSelectionEvent, {
+        "thread_id": str_col,
+        "run_id": str_col,
+        "task_text": text_col,
+        "selected_blueprint_id": str_col,
+        "recommendation_json": text_col,
+        "outcome_json": text_col,
+        "created_at": ts_col,
+    }, indexed={"thread_id", "run_id", "selected_blueprint_id", "created_at"})
+
 def init_db() -> None:
     ensure_database_exists(DB_URL)
     SQLModel.metadata.create_all(engine)
     _ensure_thread_columns()
     _ensure_service_request_columns()
+    _ensure_memory_runtime_columns()
     try:
         with session_scope() as session:
             ensure_default_agents(session)

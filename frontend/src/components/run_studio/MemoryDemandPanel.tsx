@@ -8,13 +8,28 @@ type Props = {
   detailLoaded?: boolean
 }
 
+function safeStringify(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (value === null || typeof value === 'undefined') return ''
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 function cleanText(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : String(value || '').trim()
+  return safeStringify(value).trim()
+}
+
+function isNonEmptyText(value: string): value is string {
+  return value.length > 0
 }
 
 function listText(values: unknown, fallback = '—'): string {
   if (!Array.isArray(values) || values.length === 0) return fallback
-  return values.map((value) => cleanText(value)).filter(Boolean).join(', ') || fallback
+  return values.map((value) => cleanText(value)).filter(isNonEmptyText).join(', ') || fallback
 }
 
 function topCounts(counts?: Record<string, number>, limit = 5): Array<[string, number]> {
@@ -27,6 +42,10 @@ function topCounts(counts?: Record<string, number>, limit = 5): Array<[string, n
 
 function eventLabel(event: MemoryDemandEvent): string {
   return cleanText(event.agent_id || event.role_id || event.reason || 'preflight')
+}
+
+function matchingStrategy(event: MemoryDemandEvent): string {
+  return cleanText(event.matching?.strategy)
 }
 
 function formatTime(value?: string | null): string {
@@ -124,9 +143,9 @@ export default function MemoryDemandPanel({ demand, onLoadDetail, detailLoading,
                   <div className="muted">demand: {listText(event.demand_reasons)} · source types: {listText(event.source_types)} · surfaces: {listText(event.surface_ids)}</div>
                   <div className="muted">sources: {listText(event.sources)}</div>
                   {event.router_memory_plan && Object.keys(event.router_memory_plan).length > 0 && (
-                    <div className="muted">router plan: {cleanText(JSON.stringify(event.router_memory_plan)).slice(0, 260)}</div>
+                    <div className="muted">router plan: {cleanText(event.router_memory_plan).slice(0, 260)}</div>
                   )}
-                  {event.matching?.strategy && <div className="muted">strategy: {cleanText(event.matching.strategy)}</div>}
+                  {matchingStrategy(event) && <div className="muted">strategy: {matchingStrategy(event)}</div>}
                 </div>
               ))}
             </div>

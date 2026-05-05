@@ -173,6 +173,7 @@ export default function RunStudioLayout({
   onLoadSkillUsage,
   onLoadMemoryGraph,
   onLoadMemoryTopology,
+  onLoadMemoryDemand,
   onLoadTraceScope,
   onLoadTeamSelection,
   onInspectTeamSelectionEvent,

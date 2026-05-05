@@ -44,6 +44,15 @@ function normalizeSkillLevel(value: unknown): string {
   return cleanText(value) || 'metadata_only'
 }
 
+
+function isAgentSkillRow(row: AgentSkillRow | null): row is AgentSkillRow {
+  return row !== null
+}
+
+function isNonEmptyText(value: string): value is string {
+  return value.length > 0
+}
+
 function skillLevelClass(level: string): string {
   const clean = level.toLowerCase()
   if (clean.includes('full') || clean.includes('runtime') || clean.includes('loaded')) return 'runStudioSkillLevel--full'
@@ -53,36 +62,36 @@ function skillLevelClass(level: string): string {
 }
 
 function buildSkillRows(agent: AgentSkillAttachmentProjection): AgentSkillRow[] {
-  const explicitRows = (agent.attached_skills || [])
-    .map((skill) => {
-      const id = cleanText(skill.skill_id)
-      if (!id) return null
-      return {
-        id,
-        name: humanizeSkill(skill.skill_name || id),
-        level: normalizeSkillLevel(skill.load_level),
-        selectedBy: cleanText(skill.selected_by) || null,
-        status: cleanText(skill.status) || null,
-        reason: cleanText(skill.selection_reason) || null,
-      }
+  const explicitRows: AgentSkillRow[] = []
+  ;(agent.attached_skills || []).forEach((skill) => {
+    const id = cleanText(skill.skill_id)
+    if (!id) return
+    explicitRows.push({
+      id,
+      name: humanizeSkill(skill.skill_name || id),
+      level: normalizeSkillLevel(skill.load_level),
+      selectedBy: cleanText(skill.selected_by) || null,
+      status: cleanText(skill.status) || null,
+      reason: cleanText(skill.selection_reason) || null,
     })
-    .filter((row): row is AgentSkillRow => Boolean(row))
+  })
 
   if (explicitRows.length > 0) return explicitRows
 
-  return (agent.attached_skill_ids || [])
-    .map((skillIdRaw) => {
-      const id = cleanText(skillIdRaw)
-      if (!id) return null
-      return {
-        id,
-        name: humanizeSkill(id),
-        level: 'metadata_only',
-        selectedBy: null,
-      }
+  const fallbackRows: AgentSkillRow[] = []
+  ;(agent.attached_skill_ids || []).forEach((skillIdRaw) => {
+    const id = cleanText(skillIdRaw)
+    if (!id) return
+    fallbackRows.push({
+      id,
+      name: humanizeSkill(id),
+      level: 'metadata_only',
+      selectedBy: null,
     })
-    .filter((row): row is AgentSkillRow => Boolean(row))
+  })
+  return fallbackRows
 }
+
 
 function buildAgentRows(agents: AgentSkillAttachmentProjection[]): AgentWithSkillRows[] {
   return agents.map((agent) => ({ agent, rows: buildSkillRows(agent) }))
@@ -199,7 +208,7 @@ export default function AttachedSkillsPanel({ summary, team }: Props) {
                         <span
                           key={`${skill.id}:${agent.runtimeId || agent.label}:${agent.level}:${agentIndex}`}
                           className="runStudioAgentSkillBadge"
-                          title={[agent.slot ? `slot: ${agent.slot}` : '', agent.selectedBy ? `selected by: ${agent.selectedBy}` : ''].filter(Boolean).join(' · ')}
+                          title={[agent.slot ? `slot: ${agent.slot}` : '', agent.selectedBy ? `selected by: ${agent.selectedBy}` : ''].filter(isNonEmptyText).join(' · ')}
                         >
                           <b>{agent.label}</b>
                           <span>{agent.role}</span>

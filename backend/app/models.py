@@ -236,8 +236,6 @@ class MemorySurface(SQLModel, table=True):
     __tablename__ = "memory_surfaces"
     __table_args__ = (UniqueConstraint("thread_id", "surface_id", name="uq_memory_surfaces_thread_surface"),)
 
-    __tablename__ = "memory_surfaces"
-
     id: str = Field(default_factory=new_id, primary_key=True)
     thread_id: str = Field(index=True)
     surface_id: str = Field(index=True)

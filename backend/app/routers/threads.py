@@ -254,6 +254,10 @@ ALLOWED_NODE_TYPES = {
     "MemoryItem",
     "Observation",
     "ContextSummary",
+    "ParticipantSignal",
+    "ParticipantDigest",
+    "ChannelVerifierDecision",
+    "ChannelPromotionApplied",
 }
 
 
