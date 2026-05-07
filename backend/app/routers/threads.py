@@ -57,6 +57,7 @@ from app.services.memory_review import build_memory_review_overview
 from app.services.proposals import apply_runtime_proposal_action, build_review_inbox, list_runtime_proposals, upsert_runtime_proposals
 from app.services.canonical_projection_worker import process_runtime_proposal_projections
 from app.services.semantic_memory_index import search_thread_semantic_items
+from app.services.watch_tasks import list_thread_watch_tasks, upsert_thread_watch_task, apply_watch_task_action
 from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
 from app.services.harness_package import build_harness_package_payload
 from app.auth import get_current_principal
@@ -1379,6 +1380,46 @@ def get_thread_semantic_index_search(thread_id: str, query: str = "", item_type:
         if not thread:
             raise HTTPException(404, "thread not found")
         return search_thread_semantic_items(session, thread, query=query, item_types=item_type or [], limit=limit, include_inactive=include_inactive)
+
+
+@router.get("/{thread_id}/watch-tasks")
+def get_thread_watch_tasks(thread_id: str, limit: int = 20):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return list_thread_watch_tasks(session, thread, limit=limit)
+
+
+@router.post("/{thread_id}/watch-tasks")
+def post_thread_watch_task(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return upsert_thread_watch_task(session, thread, body or {}, source=str((body or {}).get("source") or "ddalggak"))
+
+
+@router.post("/{thread_id}/watch-tasks/{task_id}/action")
+def post_thread_watch_task_action(thread_id: str, task_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        try:
+            return apply_watch_task_action(
+                session,
+                thread,
+                task_id,
+                action=str((body or {}).get("action") or ""),
+                reason=str((body or {}).get("reason") or ""),
+                actor=str((body or {}).get("actor") or "goc"),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
 
 @router.post("/{thread_id}/memory/materialization/preview")

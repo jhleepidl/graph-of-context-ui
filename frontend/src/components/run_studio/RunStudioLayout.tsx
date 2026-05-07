@@ -25,6 +25,7 @@ import MemoryDemandPanel from './MemoryDemandPanel'
 import MemoryMaterializationPanel from './MemoryMaterializationPanel'
 import MemoryRuleSkillReviewPanel from './MemoryRuleSkillReviewPanel'
 import ReviewInboxPanel from './ReviewInboxPanel'
+import WatchTasksPanel from './WatchTasksPanel'
 import TeamRecommendationPanel from './TeamRecommendationPanel'
 import SelectionOutcomePanel from './SelectionOutcomePanel'
 import CrossReferencePanel from './CrossReferencePanel'
@@ -307,6 +308,7 @@ export default function RunStudioLayout({
       </div>
 
       <ReviewInboxPanel threadId={threadId} />
+      <WatchTasksPanel threadId={threadId} />
       <MemoryRuleSkillReviewPanel threadId={threadId} />
 
       <div className="runStudioGrid runStudioGrid--bottom">

@@ -1140,3 +1140,23 @@ export const api = {
       }),
     ),
 }
+
+export function listThreadWatchTasks(threadId: string, limit = 20) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/watch-tasks?limit=${encodeURIComponent(String(limit))}`))
+}
+
+export function upsertThreadWatchTask(threadId: string, body: Record<string, any>) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/watch-tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }))
+}
+
+export function applyThreadWatchTaskAction(threadId: string, taskId: string, body: { action: string; reason?: string; actor?: string }) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/watch-tasks/${taskId}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }))
+}

@@ -489,6 +489,46 @@ class RuntimeCommit(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class WatchTask(SQLModel, table=True):
+    __tablename__ = "watch_tasks"
+    __table_args__ = (UniqueConstraint("thread_id", "contract_id", name="uq_watch_tasks_thread_contract"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    contract_id: str = Field(index=True)
+    workflow_kind: str = Field(default="bounded_continuous_loop", index=True)
+    status: str = Field(default="active", index=True)
+    goal: str = Field(default="")
+    current_iteration: int = Field(default=0, index=True)
+    min_iterations: int = Field(default=1, index=True)
+    max_iterations: int = Field(default=1, index=True)
+    required_passes_json: str = Field(default="[]")
+    approval_boundary: bool = Field(default=False, index=True)
+    stop_conditions_json: str = Field(default="[]")
+    contract_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class WatchIteration(SQLModel, table=True):
+    __tablename__ = "watch_iterations"
+    __table_args__ = (UniqueConstraint("thread_id", "task_id", "iteration", "event", name="uq_watch_iterations_task_event"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    task_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    iteration: int = Field(default=0, index=True)
+    status: str = Field(default="recorded", index=True)
+    event: str = Field(default="watch_iteration_event", index=True)
+    summary: str = Field(default="")
+    stop_reason: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class TeamSelectionEvent(SQLModel, table=True):
     __tablename__ = "team_selection_events"
 
