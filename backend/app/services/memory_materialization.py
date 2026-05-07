@@ -26,60 +26,63 @@ def _clip(value: Any = "", max_len: int = 220) -> str:
     return text if len(text) <= max_len else text[: max_len - 1].strip() + "…"
 
 
-DOMAIN_SPECS: list[dict[str, Any]] = [
+GENERIC_SHAPE_SPECS: list[dict[str, Any]] = [
     {
-        "id": "meal_tracking",
-        "title": "Meal tracking",
-        "table": "meal_entries",
-        "description": "Repeated meal/food logs should become a queryable time-series table when aggregate questions emerge.",
+        "id": "time_series",
+        "title": "Time-series memory",
+        "table": "time_series_entries",
+        "description": "Repeated temporal observations should become a queryable event series when range, trend, missing-entry, or aggregate questions emerge.",
         "evidence": re.compile(r"아침|점심|저녁|간식|야식|식사|먹었|먹은|메뉴|칼로리|영양|단백질|탄수화물|meal|breakfast|lunch|dinner|snack|ate|diet|food", re.I),
         "aggregate": re.compile(r"이번\s*주|지난\s*주|최근|평균|합계|며칠|추세|비율|빠진|거른|count|average|trend|weekly|monthly|summary", re.I),
         "correction": re.compile(r"아까|수정|정정|아니라|추가|취소|빼줘|update|correct|instead|actually", re.I),
         "columns": [
             {"name": "id", "type": "text", "role": "primary_key"},
-            {"name": "eaten_at", "type": "datetime", "nullable": True},
-            {"name": "meal_type", "type": "text", "nullable": True},
-            {"name": "foods", "type": "json", "nullable": False},
+            {"name": "occurred_at", "type": "datetime", "nullable": True},
+            {"name": "series_key", "type": "text", "nullable": True},
+            {"name": "subject", "type": "text", "nullable": True},
+            {"name": "value_json", "type": "json", "nullable": True},
             {"name": "notes", "type": "text", "nullable": True},
             {"name": "source_ref", "type": "text", "nullable": False},
             {"name": "confidence", "type": "real", "nullable": False},
             {"name": "status", "type": "text", "default": "active"},
         ],
-        "operations": ["add_meal", "update_meal", "list_meals", "summarize_meals", "detect_missing_meals"],
+        "operations": ["add_time_series_entry", "update_time_series_entry", "list_time_series_entries", "summarize_time_series", "detect_missing_time_series_entries"],
+        "aliases": ["meal_tracking", "habit_tracking", "metric_tracking"],
     },
     {
-        "id": "expense_tracking",
-        "title": "Expense tracking",
-        "table": "expense_entries",
-        "description": "Repeated spending/payment notes should become a table when totals, categories, or ranges are queried.",
+        "id": "record_collection",
+        "title": "Record collection",
+        "table": "memory_records",
+        "description": "Repeated similarly shaped records should become a typed collection when filtering, totals, categories, or updates matter.",
         "evidence": re.compile(r"지출|결제|샀|구매|영수증|가격|비용|원\b|달러|카드|현금|expense|spent|bought|cost|receipt|price|paid", re.I),
         "aggregate": re.compile(r"합계|총액|평균|카테고리|이번\s*달|지난\s*달|최근|비율|total|average|category|monthly|weekly", re.I),
         "correction": re.compile(r"환불|취소|정정|수정|아니라|refund|cancel|correct|actually", re.I),
         "columns": [
             {"name": "id", "type": "text", "role": "primary_key"},
-            {"name": "spent_at", "type": "datetime", "nullable": True},
-            {"name": "merchant", "type": "text", "nullable": True},
-            {"name": "amount", "type": "real", "nullable": True},
-            {"name": "currency", "type": "text", "nullable": True},
+            {"name": "recorded_at", "type": "datetime", "nullable": True},
+            {"name": "record_type", "type": "text", "nullable": True},
+            {"name": "title", "type": "text", "nullable": True},
+            {"name": "value_json", "type": "json", "nullable": True},
             {"name": "category", "type": "text", "nullable": True},
             {"name": "notes", "type": "text", "nullable": True},
             {"name": "source_ref", "type": "text"},
             {"name": "confidence", "type": "real"},
             {"name": "status", "type": "text", "default": "active"},
         ],
-        "operations": ["add_expense", "list_expenses", "summarize_expenses"],
+        "operations": ["add_record", "update_record", "list_records", "summarize_records"],
+        "aliases": ["expense_tracking"],
     },
     {
-        "id": "conference_knowledge",
-        "title": "Conference public knowledge",
-        "table": "conference_facts",
-        "description": "Public conference facts should become a sourced knowledge pack with freshness rules instead of private memory.",
+        "id": "source_knowledge_base",
+        "title": "Sourced knowledge base",
+        "table": "sourced_facts",
+        "description": "Reusable public or source-backed facts should become a sourced knowledge pack with provenance and freshness rules instead of private memory.",
         "evidence": re.compile(r"학회|컨퍼런스|ICDE|NeurIPS|ICML|CVPR|SIGMOD|VLDB|deadline|submission|registration|venue|CFP|call for papers|conference", re.I),
         "aggregate": re.compile(r"마감|일정|언제|등록|비자|장소|venue|deadline|date|schedule|fee|registration", re.I),
         "correction": re.compile(r"변경|업데이트|최신|바뀌|update|changed|latest|refresh", re.I),
         "columns": [
             {"name": "id", "type": "text", "role": "primary_key"},
-            {"name": "conference_key", "type": "text"},
+            {"name": "topic_key", "type": "text"},
             {"name": "fact_type", "type": "text"},
             {"name": "title", "type": "text"},
             {"name": "value_json", "type": "json"},
@@ -88,15 +91,16 @@ DOMAIN_SPECS: list[dict[str, Any]] = [
             {"name": "freshness_ttl_days", "type": "integer", "default": 14},
             {"name": "confidence", "type": "real"},
         ],
-        "operations": ["add_conference_fact", "list_conference_facts", "refresh_conference_facts"],
+        "operations": ["add_sourced_fact", "list_sourced_facts", "refresh_sourced_facts"],
         "publishable": True,
-        "freshness_policy": {"refresh_on_clone": True, "ttl_days": 14, "requires_refresh_for": ["deadlines", "registration fees", "venue changes", "visa/travel advisories"]},
+        "freshness_policy": {"refresh_on_clone": True, "ttl_days": 14, "requires_refresh_for": ["deadlines", "prices/fees", "venues/locations", "policy/API/legal/medical/financial facts"]},
+        "aliases": ["conference_knowledge"],
     },
     {
-        "id": "action_item_tracking",
-        "title": "Action item tracking",
-        "table": "action_items",
-        "description": "Repeated TODO/action-item decisions should become a status table when ownership or deadlines matter.",
+        "id": "task_board",
+        "title": "Task board",
+        "table": "task_items",
+        "description": "Repeated TODOs, ownership, deadlines, and status updates should become a task board when progress and accountability matter.",
         "evidence": re.compile(r"TODO|할\s*일|액션|담당|마감|해야|진행|pending|done|blocked|action item|owner|deadline|task", re.I),
         "aggregate": re.compile(r"남은|완료|상태|마감|담당자별|pending|done|status|overdue|by owner", re.I),
         "correction": re.compile(r"완료|취소|변경|수정|미뤄|done|cancel|update|postpone", re.I),
@@ -109,7 +113,8 @@ DOMAIN_SPECS: list[dict[str, Any]] = [
             {"name": "source_ref", "type": "text"},
             {"name": "confidence", "type": "real"},
         ],
-        "operations": ["add_action_item", "update_action_item_status", "list_action_items"],
+        "operations": ["add_task_item", "update_task_item_status", "list_task_items"],
+        "aliases": ["action_item_tracking"],
     },
 ]
 
@@ -172,7 +177,7 @@ def _score(spec: dict[str, Any], evidence: list[dict[str, Any]], demands: list[d
     public_pressure = min(1.0, len(public_rows) / 3) if spec.get("publishable") else 0.0
     score = min(1.0, repetition * .42 + query_pressure * .36 + correction_pressure * .14 + public_pressure * .08)
     reasons = []
-    if repetition >= .35: reasons.append("repeated_domain_memory")
+    if repetition >= .35: reasons.append("repeated_shape_memory")
     if query_pressure >= .25: reasons.append("aggregate_or_range_queries_detected")
     if correction_pressure >= .2: reasons.append("updates_or_retractions_detected")
     if public_pressure >= .2: reasons.append("public_source_knowledge_candidate")
@@ -245,13 +250,15 @@ def _candidate(spec: dict[str, Any], scored: dict[str, Any]) -> dict[str, Any]:
     rec = _recommendation(scored["score"], back)
     return {
         "candidate_id": f"{spec['id']}_{int(datetime.now(timezone.utc).timestamp())}",
+        "shape_id": spec["id"],
         "domain": spec["id"],
+        "legacy_domain_aliases": spec.get("aliases", []),
         "title": spec["title"],
         "description": spec["description"],
         "materialization_score": scored["score"],
         "recommendation": rec,
         "reasons": scored["reasons"],
-        "signal_counts": {"evidence": len(scored["evidence_rows"]), "domain_queries": len(scored["query_rows"]), "aggregate_queries": len(scored["aggregate_rows"]), "corrections": len(scored["correction_rows"]), "public_sources": len(scored["public_rows"])},
+        "signal_counts": {"evidence": len(scored["evidence_rows"]), "domain_queries": len(scored["query_rows"]), "shape_queries": len(scored["query_rows"]), "aggregate_queries": len(scored["aggregate_rows"]), "corrections": len(scored["correction_rows"]), "public_sources": len(scored["public_rows"])},
         "proposed_store": "sqlite_shadow_table" if rec == "create_shadow_table" else ("typed_jsonl_event_log" if rec == "create_typed_jsonl_first" else "markdown_with_watch"),
         "proposed_schema": {"table": spec["table"], "columns": spec["columns"], "create_table_sql": _sql(spec["table"], spec["columns"])},
         "proposed_operations": [{"name": n, "kind": "runtime_safe_operation"} for n in spec["operations"]],
@@ -267,7 +274,7 @@ def build_memory_materialization_preview(session: Session, thread: Thread, *, mi
     demands = _demands(session, thread)
     topology = _latest_topology(session, thread)
     candidates = []
-    for spec in DOMAIN_SPECS:
+    for spec in GENERIC_SHAPE_SPECS:
         scored = _score(spec, evidence, demands)
         if scored["score"] >= min_score or len(scored["evidence_rows"]) >= 4 or len(scored["aggregate_rows"]) >= 1:
             candidates.append(_candidate(spec, scored))
@@ -275,13 +282,14 @@ def build_memory_materialization_preview(session: Session, thread: Thread, *, mi
     candidates = candidates[: max(1, int(max_candidates or 6))]
     return {
         "kind": "goc_memory_materialization_preview",
-        "schema_version": 1,
+        "schema_version": 2,
         "thread_id": thread.id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "detector": {"kind": "generic_memory_shape_detector", "shape_ids": [spec["id"] for spec in GENERIC_SHAPE_SPECS]},
         "inventory": {"evidence_items": len(evidence), "demand_queries": len(demands), "memory_topology_mode": topology.get("mode") if isinstance(topology, dict) else None},
         "summary": {"candidate_count": len(candidates), "shadow_table_candidates": len([c for c in candidates if c.get("recommendation") == "create_shadow_table"]), "typed_jsonl_candidates": len([c for c in candidates if c.get("recommendation") == "create_typed_jsonl_first"]), "watchlist_candidates": len([c for c in candidates if c.get("recommendation") == "watch_and_continue_markdown"]), "publishable_knowledge_candidates": len([c for c in candidates if c.get("publish_policy", {}).get("publishable_as") == "sourced_knowledge_pack"])},
         "candidates": candidates,
-        "next_steps": ["Review candidate schema and backfill preview before enabling write functions.", "Create shadow tables only until the user or policy approves canonical writes.", "Keep source memory as provenance; do not delete raw memory automatically."] if candidates else ["Keep compact markdown memory for now.", "Continue collecting usage signals until a repeated queryable domain emerges."],
+        "next_steps": ["Review generic shape, schema and backfill preview before enabling write functions.", "Create shadow tables only until the user or policy approves canonical writes.", "Keep source memory as provenance; do not delete raw memory automatically."] if candidates else ["Keep compact markdown memory for now.", "Continue collecting usage signals until a repeated queryable memory shape emerges."],
     }
 
 
@@ -298,7 +306,7 @@ def save_memory_materialization_candidates(session: Session, thread: Thread, *, 
     for candidate in preview.get("candidates") or []:
         record = MemoryMaterializationCandidate(
             thread_id=thread.id,
-            domain=_clean(candidate.get("domain")),
+            domain=_clean(candidate.get("shape_id") or candidate.get("domain")),
             title=_clean(candidate.get("title")),
             status="candidate",
             score=float(candidate.get("materialization_score") or 0.0),
@@ -355,8 +363,10 @@ def _candidate_from_body_or_record(session: Session, thread: Thread, body: dict[
         preview = build_memory_materialization_preview(session, thread)
         candidates = preview.get("candidates") or []
         if domain:
+            wanted = _clean(domain).lower()
             for c in candidates:
-                if _clean(c.get("domain")) == domain:
+                aliases = [_clean(x).lower() for x in (c.get("legacy_domain_aliases") or c.get("aliases") or [])]
+                if wanted in {_clean(c.get("domain")).lower(), _clean(c.get("shape_id")).lower(), _clean(c.get("candidate_id")).lower(), _clean(c.get("title")).lower(), *aliases}:
                     return c
         if candidates:
             return candidates[0]
@@ -366,7 +376,7 @@ def _candidate_from_body_or_record(session: Session, thread: Thread, body: dict[
 
 def _normalize_schema(candidate: dict[str, Any]) -> dict[str, Any]:
     proposed = candidate.get("proposed_schema") or {}
-    table = _safe_id(proposed.get("table") or candidate.get("domain") or "memory_entries")
+    table = _safe_id(proposed.get("table") or candidate.get("shape_id") or candidate.get("domain") or "memory_entries")
     cols = []
     for col in proposed.get("columns") or []:
         if not isinstance(col, dict):
@@ -417,7 +427,7 @@ def create_shadow_memory_module(session: Session, thread: Thread, body: dict[str
     body = body or {}
     candidate = _candidate_from_body_or_record(session, thread, body)
     schema = _normalize_schema(candidate)
-    module_id = _safe_id(body.get("module_id") or candidate.get("domain") or schema.get("table"))
+    module_id = _safe_id(body.get("module_id") or candidate.get("shape_id") or candidate.get("domain") or schema.get("table"))
     rows = list((candidate.get("backfill_preview") or {}).get("rows") or [])
     operations = []
     for op in candidate.get("proposed_operations") or []:
@@ -441,8 +451,9 @@ def create_shadow_memory_module(session: Session, thread: Thread, body: dict[str
         "kind": "goc_memory_module_manifest",
         "schema_version": 1,
         "module_id": module_id,
-        "domain": _clean(candidate.get("domain")),
-        "title": _clean(candidate.get("title") or candidate.get("domain") or module_id),
+        "shape_id": _clean(candidate.get("shape_id") or candidate.get("domain")),
+        "domain": _clean(candidate.get("shape_id") or candidate.get("domain")),
+        "title": _clean(candidate.get("title") or candidate.get("shape_id") or candidate.get("domain") or module_id),
         "status": "shadow",
         "canonical_memory_switch": False,
         "raw_memory_retained": True,

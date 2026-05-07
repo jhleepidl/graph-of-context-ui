@@ -4,6 +4,7 @@ import { createMemoryMaterializationShadowModule, listMemoryMaterializationModul
 type Props = { threadId?: string | null }
 type Candidate = {
   candidate_id?: string
+  shape_id?: string
   domain?: string
   title?: string
   description?: string
@@ -25,7 +26,7 @@ function num(value: unknown): number { return typeof value === 'number' && Numbe
 function trunc(value: unknown, max = 220): string { const text = clean(value); return text.length > max ? `${text.slice(0, max - 1).trim()}…` : text }
 function signalSummary(candidate: Candidate): string {
   const c = candidate.signal_counts || {}
-  return [`evidence=${num(c.evidence)}`, `queries=${num(c.domain_queries)}`, `aggregate=${num(c.aggregate_queries)}`, `corrections=${num(c.corrections)}`].join(' · ')
+  return [`evidence=${num(c.evidence)}`, `queries=${num(c.shape_queries ?? c.domain_queries)}`, `aggregate=${num(c.aggregate_queries)}`, `corrections=${num(c.corrections)}`].join(' · ')
 }
 
 export default function MemoryMaterializationPanel({ threadId }: Props) {
@@ -68,7 +69,7 @@ export default function MemoryMaterializationPanel({ threadId }: Props) {
   const createShadow = React.useCallback(async (candidate: Candidate) => {
     const t = clean(threadId)
     if (!t) { setError('Select a GoC thread before creating a shadow module.'); return }
-    const key = clean(candidate.domain || candidate.candidate_id || candidate.title)
+    const key = clean(candidate.shape_id || candidate.domain || candidate.candidate_id || candidate.title)
     setCreating(key); setError(''); setNotice('')
     try {
       const result = await createMemoryMaterializationShadowModule(t, { candidate })
@@ -115,9 +116,9 @@ export default function MemoryMaterializationPanel({ threadId }: Props) {
         const back = candidate.backfill_preview || {}
         const sample = arr<Record<string, unknown>>(back.rows)[0]
         const publishable = clean(candidate.publish_policy?.publishable_as) === 'sourced_knowledge_pack'
-        const key = clean(candidate.domain || candidate.candidate_id || candidate.title)
-        return <article key={`${candidate.domain}:${table}`} className="runStudioPanelSubcard" style={{ margin: 0 }}>
-          <div className="row" style={{ marginBottom: 6 }}><b>{clean(candidate.title) || clean(candidate.domain) || 'Memory module'}</b><span className="pill">score {num(candidate.materialization_score).toFixed(2)}</span><span className="pill">{clean(candidate.recommendation) || 'watch'}</span></div>
+        const key = clean(candidate.shape_id || candidate.domain || candidate.candidate_id || candidate.title)
+        return <article key={`${candidate.shape_id || candidate.domain}:${table}`} className="runStudioPanelSubcard" style={{ margin: 0 }}>
+          <div className="row" style={{ marginBottom: 6 }}><b>{clean(candidate.title) || clean(candidate.shape_id || candidate.domain) || 'Memory module'}</b>{clean(candidate.shape_id || candidate.domain) && <span className="pill">shape {clean(candidate.shape_id || candidate.domain)}</span>}<span className="pill">score {num(candidate.materialization_score).toFixed(2)}</span><span className="pill">{clean(candidate.recommendation) || 'watch'}</span></div>
           <div className="muted">{clean(candidate.description)}</div>
           <div className="runStudioMetaRow" style={{ marginTop: 6 }}><span className="pill">store: {clean(candidate.proposed_store) || '-'}</span>{table && <span className="pill">table: {table}</span>}{publishable && <span className="pill">publishable knowledge pack</span>}</div>
           <div className="muted" style={{ marginTop: 6 }}>signals: {signalSummary(candidate)}</div>

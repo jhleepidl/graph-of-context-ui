@@ -13,7 +13,7 @@ class MemoryMaterializationLogicTest(unittest.TestCase):
         self.engine = create_engine('sqlite:///:memory:')
         SQLModel.metadata.create_all(self.engine)
 
-    def test_meal_materialization_preview(self):
+    def test_time_series_materialization_preview(self):
         from sqlmodel import Session
         from app.models import MemoryDemandEvent, Node, Thread
         from app.services.memory_materialization import build_memory_materialization_preview
@@ -33,10 +33,10 @@ class MemoryMaterializationLogicTest(unittest.TestCase):
             session.commit()
             preview = build_memory_materialization_preview(session, thread)
             self.assertEqual(preview['kind'], 'goc_memory_materialization_preview')
-            meal = next((row for row in preview['candidates'] if row['domain'] == 'meal_tracking'), None)
-            self.assertIsNotNone(meal)
-            self.assertEqual(meal['proposed_schema']['table'], 'meal_entries')
-            self.assertFalse(meal['safety']['generated_code_execution'])
+            series = next((row for row in preview['candidates'] if row.get('shape_id') == 'time_series'), None)
+            self.assertIsNotNone(series)
+            self.assertEqual(series['proposed_schema']['table'], 'time_series_entries')
+            self.assertFalse(series['safety']['generated_code_execution'])
 
     def test_shadow_module_persists_rows_without_enabling_writes(self):
         from sqlmodel import Session
@@ -57,9 +57,9 @@ class MemoryMaterializationLogicTest(unittest.TestCase):
             session.add(MemoryDemandEvent(thread_id=thread.id, query='이번 주 식사 요약해줘', sources_json='["nodes"]', item_count=4))
             session.commit()
             preview = build_memory_materialization_preview(session, thread, min_score=.1)
-            meal = next(row for row in preview['candidates'] if row['domain'] == 'meal_tracking')
-            module = create_shadow_memory_module(session, thread, {'candidate': meal})
-            self.assertEqual(module['domain'], 'meal_tracking')
+            series = next(row for row in preview['candidates'] if row.get('shape_id') == 'time_series')
+            module = create_shadow_memory_module(session, thread, {'candidate': series})
+            self.assertEqual(module['domain'], 'time_series')
             self.assertEqual(module['status'], 'shadow')
             self.assertFalse(module['manifest']['canonical_memory_switch'])
             self.assertGreaterEqual(module['row_count'], 3)
