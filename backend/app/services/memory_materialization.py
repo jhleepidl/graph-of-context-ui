@@ -31,6 +31,8 @@ GENERIC_SHAPE_SPECS: list[dict[str, Any]] = [
         "id": "time_series",
         "title": "Time-series memory",
         "table": "time_series_entries",
+        "preferred_store": "relational_table",
+        "vector_fields": ["subject", "notes"],
         "description": "Repeated temporal observations should become a queryable event series when range, trend, missing-entry, or aggregate questions emerge.",
         "evidence": re.compile(r"아침|점심|저녁|간식|야식|식사|먹었|먹은|메뉴|칼로리|영양|단백질|탄수화물|meal|breakfast|lunch|dinner|snack|ate|diet|food", re.I),
         "aggregate": re.compile(r"이번\s*주|지난\s*주|최근|평균|합계|며칠|추세|비율|빠진|거른|count|average|trend|weekly|monthly|summary", re.I),
@@ -53,6 +55,8 @@ GENERIC_SHAPE_SPECS: list[dict[str, Any]] = [
         "id": "record_collection",
         "title": "Record collection",
         "table": "memory_records",
+        "preferred_store": "hybrid_table_vector_index",
+        "vector_fields": ["title", "notes", "category"],
         "description": "Repeated similarly shaped records should become a typed collection when filtering, totals, categories, or updates matter.",
         "evidence": re.compile(r"지출|결제|샀|구매|영수증|가격|비용|원\b|달러|카드|현금|expense|spent|bought|cost|receipt|price|paid", re.I),
         "aggregate": re.compile(r"합계|총액|평균|카테고리|이번\s*달|지난\s*달|최근|비율|total|average|category|monthly|weekly", re.I),
@@ -76,6 +80,8 @@ GENERIC_SHAPE_SPECS: list[dict[str, Any]] = [
         "id": "source_knowledge_base",
         "title": "Sourced knowledge base",
         "table": "sourced_facts",
+        "preferred_store": "hybrid_table_vector_index",
+        "vector_fields": ["topic_key", "fact_type", "title", "value_json", "source_url"],
         "description": "Reusable public or source-backed facts should become a sourced knowledge pack with provenance and freshness rules instead of private memory.",
         "evidence": re.compile(r"학회|컨퍼런스|ICDE|NeurIPS|ICML|CVPR|SIGMOD|VLDB|deadline|submission|registration|venue|CFP|call for papers|conference", re.I),
         "aggregate": re.compile(r"마감|일정|언제|등록|비자|장소|venue|deadline|date|schedule|fee|registration", re.I),
@@ -100,6 +106,8 @@ GENERIC_SHAPE_SPECS: list[dict[str, Any]] = [
         "id": "task_board",
         "title": "Task board",
         "table": "task_items",
+        "preferred_store": "relational_table_with_vector_notes",
+        "vector_fields": ["title", "owner"],
         "description": "Repeated TODOs, ownership, deadlines, and status updates should become a task board when progress and accountability matter.",
         "evidence": re.compile(r"TODO|할\s*일|액션|담당|마감|해야|진행|pending|done|blocked|action item|owner|deadline|task", re.I),
         "aggregate": re.compile(r"남은|완료|상태|마감|담당자별|pending|done|status|overdue|by owner", re.I),
@@ -245,6 +253,36 @@ def _recommendation(score: float, backfill_rows: list[dict[str, Any]]) -> str:
     return "no_action"
 
 
+
+def _proposed_store(spec: dict[str, Any], recommendation: str) -> str:
+    if recommendation in {"watch_and_continue_markdown", "no_action"}:
+        return "markdown_with_watch"
+    preferred = _clean(spec.get("preferred_store"))
+    if preferred:
+        return preferred
+    if recommendation == "create_shadow_table":
+        return "sqlite_shadow_table"
+    if recommendation == "create_typed_jsonl_first":
+        return "typed_jsonl_event_log"
+    return "markdown_with_watch"
+
+
+def _storage_contract(spec: dict[str, Any], recommendation: str) -> dict[str, Any]:
+    store = _proposed_store(spec, recommendation)
+    vector = bool(re.search(r"vector|embedding", store, re.I) or spec.get("vector_fields"))
+    return {
+        "canonical_payload": False,
+        "raw_memory_retained": True,
+        "generated_code_execution": False,
+        "canonical_memory_switch": False,
+        "storage_backend": store,
+        "vector_index": vector,
+        "vector_fields": list(spec.get("vector_fields") or [])[:8],
+        "metadata_filter_required": vector,
+        "safe_now": ["candidate_preview", "schema_draft", "backfill_dry_run", "shadow_projection"],
+        "requires_approval_for": ["canonical_write_path", "raw_memory_deletion", "public_publish", "generated_code_execution"],
+    }
+
 def _candidate(spec: dict[str, Any], scored: dict[str, Any]) -> dict[str, Any]:
     back = _backfill(spec, scored["evidence_rows"])
     rec = _recommendation(scored["score"], back)
@@ -259,7 +297,8 @@ def _candidate(spec: dict[str, Any], scored: dict[str, Any]) -> dict[str, Any]:
         "recommendation": rec,
         "reasons": scored["reasons"],
         "signal_counts": {"evidence": len(scored["evidence_rows"]), "domain_queries": len(scored["query_rows"]), "shape_queries": len(scored["query_rows"]), "aggregate_queries": len(scored["aggregate_rows"]), "corrections": len(scored["correction_rows"]), "public_sources": len(scored["public_rows"])},
-        "proposed_store": "sqlite_shadow_table" if rec == "create_shadow_table" else ("typed_jsonl_event_log" if rec == "create_typed_jsonl_first" else "markdown_with_watch"),
+        "proposed_store": _proposed_store(spec, rec),
+        "storage_contract": _storage_contract(spec, rec),
         "proposed_schema": {"table": spec["table"], "columns": spec["columns"], "create_table_sql": _sql(spec["table"], spec["columns"])},
         "proposed_operations": [{"name": n, "kind": "runtime_safe_operation"} for n in spec["operations"]],
         "backfill_preview": {"total_candidates": len(back), "high_confidence": len([r for r in back if float(r.get("confidence") or 0) >= .75]), "needs_review": len([r for r in back if float(r.get("confidence") or 0) < .75]), "rows": back[:12]},
@@ -287,7 +326,7 @@ def build_memory_materialization_preview(session: Session, thread: Thread, *, mi
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "detector": {"kind": "generic_memory_shape_detector", "shape_ids": [spec["id"] for spec in GENERIC_SHAPE_SPECS]},
         "inventory": {"evidence_items": len(evidence), "demand_queries": len(demands), "memory_topology_mode": topology.get("mode") if isinstance(topology, dict) else None},
-        "summary": {"candidate_count": len(candidates), "shadow_table_candidates": len([c for c in candidates if c.get("recommendation") == "create_shadow_table"]), "typed_jsonl_candidates": len([c for c in candidates if c.get("recommendation") == "create_typed_jsonl_first"]), "watchlist_candidates": len([c for c in candidates if c.get("recommendation") == "watch_and_continue_markdown"]), "publishable_knowledge_candidates": len([c for c in candidates if c.get("publish_policy", {}).get("publishable_as") == "sourced_knowledge_pack"])},
+        "summary": {"candidate_count": len(candidates), "shadow_table_candidates": len([c for c in candidates if c.get("recommendation") == "create_shadow_table"]), "typed_jsonl_candidates": len([c for c in candidates if c.get("recommendation") == "create_typed_jsonl_first"]), "watchlist_candidates": len([c for c in candidates if c.get("recommendation") == "watch_and_continue_markdown"]), "publishable_knowledge_candidates": len([c for c in candidates if c.get("publish_policy", {}).get("publishable_as") == "sourced_knowledge_pack"]), "vector_index_candidates": len([c for c in candidates if c.get("storage_contract", {}).get("vector_index") is True])},
         "candidates": candidates,
         "next_steps": ["Review generic shape, schema and backfill preview before enabling write functions.", "Create shadow tables only until the user or policy approves canonical writes.", "Keep source memory as provenance; do not delete raw memory automatically."] if candidates else ["Keep compact markdown memory for now.", "Continue collecting usage signals until a repeated queryable memory shape emerges."],
     }

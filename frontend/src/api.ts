@@ -250,6 +250,58 @@ export function getMemoryReviewOverview(threadId: string) {
   return j<any>(apiFetch(`/api/threads/${threadId}/memory/review/overview`))
 }
 
+export function getReviewInbox(threadId: string, options: { include_detected?: boolean; limit?: number } = {}) {
+  const params = new URLSearchParams()
+  if (typeof options.include_detected !== 'undefined') params.set('include_detected', options.include_detected ? 'true' : 'false')
+  if (options.limit) params.set('limit', String(options.limit))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return j<any>(apiFetch(`/api/threads/${threadId}/review/inbox${suffix}`))
+}
+
+export function listRuntimeProposals(threadId: string, options: { status?: string; kind?: string; include_closed?: boolean; limit?: number } = {}) {
+  const params = new URLSearchParams()
+  if (options.status) params.set('status', options.status)
+  if (options.kind) params.set('kind', options.kind)
+  if (typeof options.include_closed !== 'undefined') params.set('include_closed', options.include_closed ? 'true' : 'false')
+  if (options.limit) params.set('limit', String(options.limit))
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return j<any>(apiFetch(`/api/threads/${threadId}/proposals${suffix}`))
+}
+
+export function upsertRuntimeProposals(threadId: string, body: { proposals?: Record<string, unknown>[]; proposal?: Record<string, unknown>; source?: string; run_id?: string } = {}) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/proposals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function applyRuntimeProposalAction(threadId: string, proposalId: string, body: { action: string; reason?: string; actor?: string }) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/proposals/${encodeURIComponent(proposalId)}/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function runCanonicalProjectionWorker(threadId: string, body: { projections?: Record<string, unknown>[]; limit?: number; actor?: string } = {}) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/canonical-projections/worker`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function searchThreadSemanticIndex(threadId: string, options: { query?: string; item_type?: string[]; limit?: number; include_inactive?: boolean } = {}) {
+  const params = new URLSearchParams()
+  if (options.query) params.set('query', options.query)
+  for (const itemType of options.item_type || []) params.append('item_type', itemType)
+  if (options.limit) params.set('limit', String(options.limit))
+  if (typeof options.include_inactive !== 'undefined') params.set('include_inactive', options.include_inactive ? 'true' : 'false')
+  const suffix = params.toString() ? `?${params.toString()}` : ''
+  return j<any>(apiFetch(`/api/threads/${threadId}/semantic-index/search${suffix}`))
+}
+
 export function previewMemoryMaterialization(
   threadId: string,
   body: { min_score?: number; max_candidates?: number; include_backfill_preview?: boolean } = {},

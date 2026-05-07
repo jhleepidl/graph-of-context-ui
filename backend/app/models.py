@@ -443,6 +443,52 @@ class MemoryModuleRow(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+class RuntimeProposal(SQLModel, table=True):
+    __tablename__ = "runtime_proposals"
+    __table_args__ = (UniqueConstraint("thread_id", "proposal_id", name="uq_runtime_proposals_thread_proposal"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    proposal_id: str = Field(index=True)
+    proposal_kind: str = Field(default="memory_candidate", index=True)
+    title: str = Field(default="")
+    summary: str = Field(default="")
+    source_original_text: str = Field(default="")
+    source_original_language: str = Field(default="", index=True)
+    display_text: str = Field(default="")
+    canonical_language: str = Field(default="en", index=True)
+    canonical_text_en: str = Field(default="")
+    canonical_projection_status: str = Field(default="", index=True)
+    canonical_projection_id: str = Field(default="", index=True)
+    projection_method: str = Field(default="", index=True)
+    projection_confidence: float = Field(default=0.0, index=True)
+    user_surface_locale: str = Field(default="", index=True)
+    risk: str = Field(default="medium", index=True)
+    status: str = Field(default="pending_review", index=True)
+    source: str = Field(default="runtime", index=True)
+    source_id: str = Field(default="", index=True)
+    recommended_action: str = Field(default="")
+    evidence_status: str = Field(default="", index=True)
+    proposal_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class RuntimeCommit(SQLModel, table=True):
+    __tablename__ = "runtime_commits"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    proposal_id: str = Field(default="", index=True)
+    action: str = Field(default="commit", index=True)
+    status: str = Field(default="committed", index=True)
+    actor: str = Field(default="goc", index=True)
+    reason: str = Field(default="")
+    commit_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class TeamSelectionEvent(SQLModel, table=True):
     __tablename__ = "team_selection_events"
 

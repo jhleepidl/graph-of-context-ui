@@ -54,6 +54,9 @@ from app.services.team_blueprint import export_thread_team_blueprint, install_th
 from app.services.team_publish_candidate import build_thread_team_publish_candidate
 from app.services.memory_materialization import build_memory_materialization_preview, create_shadow_memory_module, list_memory_materialization_candidates, list_memory_modules, save_memory_materialization_candidates
 from app.services.memory_review import build_memory_review_overview
+from app.services.proposals import apply_runtime_proposal_action, build_review_inbox, list_runtime_proposals, upsert_runtime_proposals
+from app.services.canonical_projection_worker import process_runtime_proposal_projections
+from app.services.semantic_memory_index import search_thread_semantic_items
 from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
 from app.services.harness_package import build_harness_package_payload
 from app.auth import get_current_principal
@@ -1300,6 +1303,82 @@ def get_thread_memory_review_overview(thread_id: str):
         if not thread:
             raise HTTPException(404, "thread not found")
         return build_memory_review_overview(session, thread)
+
+
+@router.get("/{thread_id}/review/inbox")
+def get_thread_review_inbox(thread_id: str, include_detected: bool = True, limit: int = 100):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return build_review_inbox(session, thread, include_detected=include_detected, limit=limit)
+
+
+@router.get("/{thread_id}/proposals")
+def get_thread_runtime_proposals(thread_id: str, status: str | None = None, kind: str | None = None, include_closed: bool = False, limit: int = 100):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return list_runtime_proposals(session, thread, status=status, kind=kind, include_closed=include_closed, limit=limit)
+
+
+@router.post("/{thread_id}/proposals")
+def post_thread_runtime_proposals(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        rows = []
+        if isinstance(body, dict):
+            if isinstance(body.get("proposals"), list):
+                rows = body.get("proposals") or []
+            elif isinstance(body.get("proposal"), dict):
+                rows = [body.get("proposal") or {}]
+            else:
+                rows = [body]
+        source = str((body or {}).get("source") or "ddalggak").strip() if isinstance(body, dict) else "ddalggak"
+        run_id = str((body or {}).get("run_id") or (body or {}).get("runId") or "").strip() if isinstance(body, dict) else ""
+        return upsert_runtime_proposals(session, thread, rows, source=source, run_id=run_id or None)
+
+
+@router.post("/{thread_id}/proposals/{proposal_id}/action")
+def post_thread_runtime_proposal_action(thread_id: str, proposal_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        try:
+            return apply_runtime_proposal_action(session, thread, proposal_id, body or {})
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/{thread_id}/canonical-projections/worker")
+def post_thread_canonical_projection_worker(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        projections = body.get("projections") if isinstance(body, dict) and isinstance(body.get("projections"), list) else []
+        limit = int((body or {}).get("limit") or 50) if isinstance(body, dict) else 50
+        actor = str((body or {}).get("actor") or "goc_projection_worker") if isinstance(body, dict) else "goc_projection_worker"
+        return process_runtime_proposal_projections(session, thread, projections=projections, limit=limit, actor=actor)
+
+
+@router.get("/{thread_id}/semantic-index/search")
+def get_thread_semantic_index_search(thread_id: str, query: str = "", item_type: list[str] | None = Query(default=None), limit: int = 10, include_inactive: bool = False):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return search_thread_semantic_items(session, thread, query=query, item_types=item_type or [], limit=limit, include_inactive=include_inactive)
 
 
 @router.post("/{thread_id}/memory/materialization/preview")

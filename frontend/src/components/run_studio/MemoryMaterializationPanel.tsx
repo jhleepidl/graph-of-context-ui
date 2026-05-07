@@ -11,6 +11,7 @@ type Candidate = {
   materialization_score?: number
   recommendation?: string
   proposed_store?: string
+  storage_contract?: { vector_index?: boolean; vector_fields?: string[]; storage_backend?: string }
   proposed_schema?: { table?: string }
   proposed_operations?: Array<{ name?: string }>
   signal_counts?: Record<string, number>
@@ -99,6 +100,7 @@ export default function MemoryMaterializationPanel({ threadId }: Props) {
         <span className="pill">candidates: {num(summary.candidate_count || candidates.length)}</span>
         <span className="pill">shadow tables: {num(summary.shadow_table_candidates)}</span>
         <span className="pill">knowledge packs: {num(summary.publishable_knowledge_candidates)}</span>
+        <span className="pill">vector index: {num(summary.vector_index_candidates)}</span>
         <span className="pill">modules: {modules.length}</span>
       </div>
       {notice && <div className="runStudioSuccess" style={{ marginTop: 8 }}>{notice}</div>}
@@ -120,7 +122,7 @@ export default function MemoryMaterializationPanel({ threadId }: Props) {
         return <article key={`${candidate.shape_id || candidate.domain}:${table}`} className="runStudioPanelSubcard" style={{ margin: 0 }}>
           <div className="row" style={{ marginBottom: 6 }}><b>{clean(candidate.title) || clean(candidate.shape_id || candidate.domain) || 'Memory module'}</b>{clean(candidate.shape_id || candidate.domain) && <span className="pill">shape {clean(candidate.shape_id || candidate.domain)}</span>}<span className="pill">score {num(candidate.materialization_score).toFixed(2)}</span><span className="pill">{clean(candidate.recommendation) || 'watch'}</span></div>
           <div className="muted">{clean(candidate.description)}</div>
-          <div className="runStudioMetaRow" style={{ marginTop: 6 }}><span className="pill">store: {clean(candidate.proposed_store) || '-'}</span>{table && <span className="pill">table: {table}</span>}{publishable && <span className="pill">publishable knowledge pack</span>}</div>
+          <div className="runStudioMetaRow" style={{ marginTop: 6 }}><span className="pill">store: {clean(candidate.proposed_store) || '-'}</span>{table && <span className="pill">table: {table}</span>}{candidate.storage_contract?.vector_index && <span className="pill">vector fields: {arr<string>(candidate.storage_contract?.vector_fields).join(', ') || 'enabled'}</span>}{publishable && <span className="pill">publishable knowledge pack</span>}</div>
           <div className="muted" style={{ marginTop: 6 }}>signals: {signalSummary(candidate)}</div>
           <div className="muted">backfill: {num(back.total_candidates)} rows · {num(back.high_confidence)} high confidence · {num(back.needs_review)} review</div>
           {ops.length > 0 && <div className="muted">functions drafted: {ops.join(', ')} · disabled until approval</div>}
