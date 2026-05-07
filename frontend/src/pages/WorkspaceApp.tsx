@@ -977,6 +977,7 @@ export default function WorkspaceApp() {
       {workspaceMainTab === 'run_studio' && (
         <Suspense fallback={<WorkspacePanelFallback label="Run Studio를 불러오는 중…" />}>
           <RunStudioLayout
+          threadId={threadId}
           summary={runStudioSummary}
           team={runStudioAgentTeam}
           decisions={runStudioContextDecisions}

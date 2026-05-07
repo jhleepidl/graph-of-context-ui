@@ -389,6 +389,60 @@ class MemoryConflict(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+
+
+class MemoryMaterializationCandidate(SQLModel, table=True):
+    __tablename__ = "memory_materialization_candidates"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    domain: str = Field(default="", index=True)
+    title: str = Field(default="")
+    status: str = Field(default="candidate", index=True)  # candidate | shadow_created | dismissed | approved
+    score: float = Field(default=0.0, index=True)
+    recommendation: str = Field(default="", index=True)
+    candidate_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryModule(SQLModel, table=True):
+    __tablename__ = "memory_modules"
+    __table_args__ = (UniqueConstraint("thread_id", "module_id", name="uq_memory_modules_thread_module"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    module_id: str = Field(index=True)
+    domain: str = Field(default="", index=True)
+    title: str = Field(default="")
+    status: str = Field(default="shadow", index=True)  # shadow | active | archived
+    table_name: str = Field(default="", index=True)
+    schema_json: str = Field(default="{}")
+    operations_json: str = Field(default="[]")
+    manifest_json: str = Field(default="{}")
+    row_count: int = Field(default=0, index=True)
+    review_count: int = Field(default=0, index=True)
+    high_confidence_count: int = Field(default=0, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MemoryModuleRow(SQLModel, table=True):
+    __tablename__ = "memory_module_rows"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    module_id: str = Field(index=True)
+    row_key: str = Field(default="", index=True)
+    status: str = Field(default="shadow", index=True)
+    review_state: str = Field(default="needs_review", index=True)
+    row_json: str = Field(default="{}")
+    source_ref: str = Field(default="", index=True)
+    confidence: float = Field(default=0.0, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class TeamSelectionEvent(SQLModel, table=True):
     __tablename__ = "team_selection_events"
 

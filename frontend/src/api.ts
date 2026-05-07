@@ -234,6 +234,57 @@ export function installThreadTeamManifest(
   }))
 }
 
+export function previewThreadTeamPublishCandidate(
+  threadId: string,
+  body: { visibility?: string } = {},
+) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/team/blueprint/publish_candidate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+
+export function getMemoryReviewOverview(threadId: string) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/memory/review/overview`))
+}
+
+export function previewMemoryMaterialization(
+  threadId: string,
+  body: { min_score?: number; max_candidates?: number; include_backfill_preview?: boolean } = {},
+) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/memory/materialization/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function saveMemoryMaterializationCandidates(
+  threadId: string,
+  body: { min_score?: number; max_candidates?: number } = {},
+) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/memory/materialization/candidates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
+export function listMemoryMaterializationModules(threadId: string, includeRows = false) {
+  const suffix = includeRows ? '?include_rows=true' : ''
+  return j<any>(apiFetch(`/api/threads/${threadId}/memory/materialization/modules${suffix}`))
+}
+
+export function createMemoryMaterializationShadowModule(threadId: string, body: Record<string, unknown> = {}) {
+  return j<any>(apiFetch(`/api/threads/${threadId}/memory/materialization/modules/shadow`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }))
+}
+
 export const api = {
   telegramWebAppLogin: (body: { init_data: string; max_age_sec?: number; ttl_sec?: number }) =>
     j<any>(apiFetch('/api/auth/telegram/webapp', {

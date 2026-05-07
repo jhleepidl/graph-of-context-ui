@@ -44,6 +44,21 @@ def add_message(thread_id: str, body: MessageCreate):
         return n.model_dump()
 
 
+@router.get("/threads/{thread_id}/messages")
+def list_messages(thread_id: str, limit: int = Query(default=200, ge=1, le=1000)):
+    with Session(engine) as s:
+        require_thread_access(s, thread_id)
+        rows = s.exec(
+            select(Node)
+            .where(Node.thread_id == thread_id, Node.type == 'Message')
+            .order_by(Node.created_at.desc(), Node.id.desc())
+            .limit(limit)
+        ).all()
+        rows = list(reversed(rows))
+        items = [row.model_dump() for row in rows]
+        return {'ok': True, 'thread_id': thread_id, 'count': len(items), 'items': items, 'messages': items}
+
+
 def _resource_text(body: ResourceNodeCreate) -> str:
     lines = [f"Resource: {body.name.strip()}"]
     if body.resource_kind:

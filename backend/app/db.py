@@ -22,6 +22,9 @@ from app.models import (
     MemoryEdge,
     MemoryLifecycleEvent,
     MemoryConflict,
+    MemoryMaterializationCandidate,
+    MemoryModule,
+    MemoryModuleRow,
     TeamSelectionEvent,
 )
 from app.services.agent_defaults import ensure_default_agents
@@ -227,6 +230,8 @@ def _ensure_memory_runtime_columns() -> None:
     text_col = "TEXT"
     str_col = "VARCHAR(255)"
     ts_col = "TIMESTAMP"
+    real_col = "FLOAT"
+    int_col = "INTEGER"
     _ensure_table_columns(MemorySurface, {
         "thread_id": str_col,
         "surface_id": str_col,
@@ -343,6 +348,46 @@ def _ensure_memory_runtime_columns() -> None:
         "created_at": ts_col,
         "updated_at": ts_col,
     }, indexed={"thread_id", "surface_id", "left_node_id", "right_node_id", "status", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryMaterializationCandidate, {
+        "thread_id": str_col,
+        "domain": str_col,
+        "title": text_col,
+        "status": str_col,
+        "score": real_col,
+        "recommendation": str_col,
+        "candidate_json": text_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "domain", "status", "score", "recommendation", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryModule, {
+        "thread_id": str_col,
+        "module_id": str_col,
+        "domain": str_col,
+        "title": text_col,
+        "status": str_col,
+        "table_name": str_col,
+        "schema_json": text_col,
+        "operations_json": text_col,
+        "manifest_json": text_col,
+        "row_count": int_col,
+        "review_count": int_col,
+        "high_confidence_count": int_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "module_id", "domain", "status", "table_name", "created_at", "updated_at"})
+    _ensure_table_columns(MemoryModuleRow, {
+        "thread_id": str_col,
+        "module_id": str_col,
+        "row_key": str_col,
+        "status": str_col,
+        "review_state": str_col,
+        "row_json": text_col,
+        "source_ref": text_col,
+        "confidence": real_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "module_id", "row_key", "status", "review_state", "source_ref", "confidence", "created_at", "updated_at"})
+
     _ensure_table_columns(TeamSelectionEvent, {
         "thread_id": str_col,
         "run_id": str_col,

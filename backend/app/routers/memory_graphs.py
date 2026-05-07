@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from fastapi import APIRouter, HTTPException, Response
 from sqlmodel import Session, select
 
@@ -58,6 +59,89 @@ def _jload(raw, default):
         return json.loads(raw or '')
     except Exception:
         return default
+
+
+def _body_dict(body: Any) -> dict[str, Any]:
+    if isinstance(body, dict):
+        return body
+    if hasattr(body, 'model_dump'):
+        try:
+            return body.model_dump(exclude_none=True)
+        except TypeError:
+            return body.model_dump()
+        except Exception:
+            return {}
+    if hasattr(body, 'dict'):
+        try:
+            return body.dict(exclude_none=True)
+        except TypeError:
+            return body.dict()
+        except Exception:
+            return {}
+    return {}
+
+
+def _pick_payload_value(payload: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    for key in keys:
+        if key in payload and payload.get(key) is not None:
+            return payload.get(key)
+    return default
+
+
+def _normalize_memory_surface_request(body: Any) -> dict[str, Any]:
+    payload = _body_dict(body)
+    policy = _pick_payload_value(payload, 'policy', 'policy_json', 'policyJson', default=None)
+    if isinstance(policy, str):
+        policy = _jload(policy, {})
+    return {
+        'surface_id': _pick_payload_value(payload, 'surface_id', 'surfaceId', 'id', default=''),
+        'title': _pick_payload_value(payload, 'title', 'name', default=None),
+        'semantic_kind': _pick_payload_value(payload, 'semantic_kind', 'semanticKind', 'kind', default=None),
+        'visibility_scope': _pick_payload_value(payload, 'visibility_scope', 'visibilityScope', 'visibility', default=None),
+        'write_mode': _pick_payload_value(payload, 'write_mode', 'writeMode', default=None),
+        'policy': policy if isinstance(policy, dict) else {},
+    }
+
+
+def _normalize_memory_node_request(body: Any) -> dict[str, Any]:
+    payload = _body_dict(body)
+    content = _pick_payload_value(payload, 'content', 'content_json', 'contentJson', 'payload', 'payload_json', 'payloadJson', default=None)
+    if isinstance(content, str):
+        parsed = _jload(content, None)
+        content = parsed if isinstance(parsed, dict) else {'text': content}
+    if not isinstance(content, dict):
+        text = _pick_payload_value(payload, 'text', 'summary', 'markdown', default=None)
+        content = {'text': text} if text is not None else {}
+    provenance = _pick_payload_value(payload, 'provenance', 'provenance_json', 'provenanceJson', default=None)
+    if isinstance(provenance, str):
+        provenance = _jload(provenance, {})
+    return {
+        'surface_id': _pick_payload_value(payload, 'surface_id', 'surfaceId', default=''),
+        'node_type': _pick_payload_value(payload, 'node_type', 'nodeType', 'type', default=None),
+        'owner_agent_id': _pick_payload_value(payload, 'owner_agent_id', 'ownerAgentId', 'agent_id', 'agentId', default=None),
+        'owner_role_id': _pick_payload_value(payload, 'owner_role_id', 'ownerRoleId', 'role_id', 'roleId', default=None),
+        'content': content,
+        'provenance': provenance if isinstance(provenance, dict) else {},
+        'trust_tier': _pick_payload_value(payload, 'trust_tier', 'trustTier', default=None),
+        'status': _pick_payload_value(payload, 'status', default=None),
+        'created_run_id': _pick_payload_value(payload, 'created_run_id', 'createdRunId', 'run_id', 'runId', default=None),
+    }
+
+
+def _normalize_event_record_request(body: Any) -> dict[str, Any]:
+    payload = _body_dict(body)
+    events = _pick_payload_value(payload, 'events', 'items', default=None)
+    if events is None:
+        event = _pick_payload_value(payload, 'event', 'item', default=None)
+        events = [event] if isinstance(event, dict) else []
+    if not isinstance(events, list):
+        events = []
+    return {
+        'run_id': _pick_payload_value(payload, 'run_id', 'runId', default=None),
+        'source': _pick_payload_value(payload, 'source', default='ddalggak'),
+        'events': events,
+        'topology': _pick_payload_value(payload, 'topology', 'memory_topology', 'memoryTopology', default={}),
+    }
 
 
 def _extract_supporting_links(*payloads: dict | None) -> dict[str, list[str]]:
@@ -181,10 +265,10 @@ def _upsert_memory_edge(
 
 
 @router.post('/threads/{thread_id}/memory/surfaces')
-def create_memory_surface(thread_id: str, body: MemorySurfaceCreateRequest):
+def create_memory_surface(thread_id: str, body: Any):
     with Session(engine) as session:
         thread = require_thread_write_access(session, thread_id)
-        normalized_rows = normalize_memory_surfaces([body.model_dump() if hasattr(body, 'model_dump') else body.dict()])
+        normalized_rows = normalize_memory_surfaces([_normalize_memory_surface_request(body)])
         if not normalized_rows:
             raise HTTPException(400, 'invalid memory surface payload')
         payload = normalized_rows[0]
@@ -213,10 +297,11 @@ def create_memory_surface(thread_id: str, body: MemorySurfaceCreateRequest):
 
 
 @router.post('/threads/{thread_id}/memory/nodes')
-def create_memory_node(thread_id: str, body: MemoryNodeCreateRequest):
+def create_memory_node(thread_id: str, body: Any):
     with Session(engine) as session:
         thread = require_thread_write_access(session, thread_id)
-        surface_id = str(body.surface_id).strip()
+        payload = _normalize_memory_node_request(body)
+        surface_id = str(payload.get('surface_id') or '').strip()
         surface = session.exec(
             select(MemorySurface).where(
                 MemorySurface.thread_id == thread.id,
@@ -228,14 +313,14 @@ def create_memory_node(thread_id: str, body: MemoryNodeCreateRequest):
         row = MemoryNode(
             thread_id=thread.id,
             surface_id=surface_id,
-            node_type=str(body.node_type or 'note').strip() or 'note',
-            owner_agent_id=(str(body.owner_agent_id).strip() if body.owner_agent_id else None),
-            owner_role_id=(str(body.owner_role_id).strip() if body.owner_role_id else None),
-            content_json=_jdump(body.content or {}),
-            provenance_json=_jdump(body.provenance or {}),
-            trust_tier=str(body.trust_tier or 'derived').strip() or 'derived',
-            status=str(body.status or 'draft').strip() or 'draft',
-            created_run_id=(str(body.created_run_id).strip() if body.created_run_id else None),
+            node_type=str(payload.get('node_type') or 'note').strip() or 'note',
+            owner_agent_id=(str(payload.get('owner_agent_id')).strip() if payload.get('owner_agent_id') else None),
+            owner_role_id=(str(payload.get('owner_role_id')).strip() if payload.get('owner_role_id') else None),
+            content_json=_jdump(payload.get('content') or {}),
+            provenance_json=_jdump(payload.get('provenance') or {}),
+            trust_tier=str(payload.get('trust_tier') or 'derived').strip() or 'derived',
+            status=str(payload.get('status') or 'draft').strip() or 'draft',
+            created_run_id=(str(payload.get('created_run_id')).strip() if payload.get('created_run_id') else None),
             updated_at=utcnow(),
         )
         session.add(row)
@@ -252,7 +337,7 @@ def create_memory_node(thread_id: str, body: MemoryNodeCreateRequest):
             source='memory_node_create',
             summary=f"Node {row.id} created on surface {row.surface_id} as {row.status}",
             metadata={
-                **_extract_supporting_links(body.provenance if isinstance(body.provenance, dict) else {}),
+                **_extract_supporting_links(payload.get('provenance') if isinstance(payload.get('provenance'), dict) else {}),
                 'supporting_memory_node_ids': [row.id],
             },
             created_run_id=row.created_run_id,
@@ -915,16 +1000,18 @@ def resolve_memory_conflict(conflict_id: str, body: MemoryConflictResolveRequest
 
 
 @router.post('/threads/{thread_id}/memory/topology')
-def record_memory_topology(thread_id: str, body: MemoryTopologyRecordRequest):
+def record_memory_topology(thread_id: str, body: Any):
     with Session(engine) as session:
         thread = require_thread_write_access(session, thread_id)
+        payload = _normalize_event_record_request(body)
+        run_id = (str(payload.get('run_id')).strip() if payload.get('run_id') else None)
         row = record_memory_topology_snapshot(
             session,
             thread=thread,
-            topology=body.topology or {},
-            run_id=(str(body.run_id).strip() if body.run_id else None),
-            source=(str(body.source).strip() if body.source else 'ddalggak'),
-            events=body.events or [],
+            topology=payload.get('topology') or {},
+            run_id=run_id,
+            source=(str(payload.get('source')).strip() if payload.get('source') else 'ddalggak'),
+            events=payload.get('events') or [],
         )
         session.commit()
         session.refresh(row)
@@ -958,24 +1045,26 @@ def get_memory_topology_events(thread_id: str, run_id: str | None = None, limit:
 
 
 @router.post('/threads/{thread_id}/memory/demand')
-def record_memory_demand(thread_id: str, body: MemoryDemandRecordRequest):
+def record_memory_demand(thread_id: str, body: Any):
     with Session(engine) as session:
         thread = require_thread_write_access(session, thread_id)
+        payload = _normalize_event_record_request(body)
+        run_id = (str(payload.get('run_id')).strip() if payload.get('run_id') else None)
         rows = record_memory_demand_events(
             session,
             thread=thread,
-            events=body.events or [],
-            run_id=(str(body.run_id).strip() if body.run_id else None),
-            source=(str(body.source).strip() if body.source else 'ddalggak'),
+            events=payload.get('events') or [],
+            run_id=run_id,
+            source=(str(payload.get('source')).strip() if payload.get('source') else 'ddalggak'),
         )
         session.commit()
         for row in rows:
             session.refresh(row)
         return {
             'thread_id': thread.id,
-            'run_id': (str(body.run_id).strip() if body.run_id else None),
+            'run_id': run_id,
             'count': len(rows),
-            'memory_demand': build_run_studio_memory_demand(session, thread=thread, run_id=body.run_id),
+            'memory_demand': build_run_studio_memory_demand(session, thread=thread, run_id=run_id),
         }
 
 

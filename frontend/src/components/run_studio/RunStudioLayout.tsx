@@ -22,6 +22,8 @@ import AdvancedToolsPanel from './AdvancedToolsPanel'
 import MemoryProjectionPanel from './MemoryProjectionPanel'
 import MemoryTopologyPanel from './MemoryTopologyPanel'
 import MemoryDemandPanel from './MemoryDemandPanel'
+import MemoryMaterializationPanel from './MemoryMaterializationPanel'
+import MemoryRuleSkillReviewPanel from './MemoryRuleSkillReviewPanel'
 import TeamRecommendationPanel from './TeamRecommendationPanel'
 import SelectionOutcomePanel from './SelectionOutcomePanel'
 import CrossReferencePanel from './CrossReferencePanel'
@@ -77,6 +79,7 @@ type DetailState = {
 }
 
 type Props = {
+  threadId?: string | null
   summary: RunStudioSummary | null
   team: RunStudioAgentTeam | null
   decisions: RunStudioContextDecisions | null
@@ -144,6 +147,7 @@ function compactTimelinePreview(items: RunStudioAuditTimelineEvent[] = []): RunS
 }
 
 export default function RunStudioLayout({
+  threadId,
   summary,
   team,
   decisions,
@@ -260,7 +264,7 @@ export default function RunStudioLayout({
           <div>
             <h2 style={{ margin: 0 }}>Run Studio</h2>
             <div className="muted">
-              Agency cockpit: agent 분담, handoff, review, synthesis를 먼저 보여줍니다. | {summary?.thread?.title || 'Untitled thread'} | context: {summary?.context_set?.name || 'default'}
+              Review cockpit: memory/rule/skill 후보, 근거 gap, pressure를 먼저 보여주고 legacy diagnostics는 접어둡니다. | {summary?.thread?.title || 'Untitled thread'} | context: {summary?.context_set?.name || 'default'}
             </div>
           </div>
           <div className="row" style={{ marginBottom: 0 }}>
@@ -301,6 +305,8 @@ export default function RunStudioLayout({
         />
       </div>
 
+      <MemoryRuleSkillReviewPanel threadId={threadId} />
+
       <div className="runStudioGrid runStudioGrid--bottom">
         <MemoryTopologyPanel
           topology={memoryTopology}
@@ -314,6 +320,7 @@ export default function RunStudioLayout({
           detailLoading={Boolean(detailLoading?.memoryDemand)}
           detailLoaded={Boolean(detailLoaded?.memoryDemand || memoryDemand)}
         />
+        <MemoryMaterializationPanel threadId={threadId} />
         <ScopeMapPanel scopeProjection={scopeProjection} />
       </div>
 
@@ -343,6 +350,7 @@ export default function RunStudioLayout({
       <div className="runStudioGrid runStudioGrid--top">
         {teamView || effectiveTeam ? (
           <AgentTeamPanel
+            threadId={threadId}
             teamView={teamView}
             legacyTeam={effectiveTeam}
             orchestration={orchestration}
@@ -514,7 +522,7 @@ export default function RunStudioLayout({
               ) : (
                 <section className="card runStudioPanel">
                   <div className="runStudioPanelHeader">
-                    <h3>Legacy Context Packs</h3>
+                    <h3>Legacy Context Packs (not primary)</h3>
                   </div>
                   <div className="muted">Scope-first runtime is active. Legacy context pack projection is not part of the main execution path.</div>
                 </section>
@@ -610,8 +618,8 @@ export default function RunStudioLayout({
       <section className="card runStudioPanel runStudioDisclosurePanel">
         <div className="runStudioPanelHeader">
           <div>
-            <h3>Diagnostics and legacy views</h3>
-            <div className="muted">Deep trace scope, cross references, projection retrieval, memory graphs, and power tools.</div>
+            <h3>Advanced legacy diagnostics</h3>
+            <div className="muted">Hidden by default to reduce distraction. Open only for raw traces, graph compression, legacy memory projection, and power tools.</div>
           </div>
           <button onClick={() => setShowDiagnostics((value) => !value)}>{showDiagnostics ? 'Hide' : 'Show'}</button>
         </div>

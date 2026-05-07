@@ -1,4 +1,5 @@
 import React from 'react'
+import { previewThreadTeamPublishCandidate } from '../../api'
 import {
   selectDominantSkills,
   selectTeamViewFlags,
@@ -20,6 +21,7 @@ import {
 } from './teamPresentation'
 
 type Props = {
+  threadId?: string | null
   teamView: TeamViewProjection | null
   legacyTeam: RunStudioAgentTeam | null
   orchestration: OrchestrationProjection | null
@@ -83,6 +85,84 @@ function summarizePublishReadiness(summary: Record<string, unknown>): string {
   return `owner=${owner} · ${finalState} · ${artifactState}`
 }
 
+type TeamPublishCandidatePreview = {
+  candidate?: Record<string, any>
+  review?: {
+    summary?: Record<string, any>
+    promote_to_rules?: Array<Record<string, any> | string>
+    promote_to_roles?: Array<Record<string, any>>
+    publish_as_knowledge_pack?: Array<Record<string, any>>
+    keep_private?: Array<Record<string, any>>
+    publish_schema_only?: Array<Record<string, any>>
+    warnings?: string[]
+  }
+}
+
+function candidateCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : Number(value || 0) || 0
+}
+
+function previewItemLabel(item: unknown): string {
+  const row = asObject(item)
+  return cleanText(row.text || row.label || row.title || row.name || row.surface_id || item)
+}
+
+function PublishCandidatePreviewCard({ preview }: { preview: TeamPublishCandidatePreview }) {
+  const review = preview.review || {}
+  const summary = review.summary || {}
+  const candidate = preview.candidate || {}
+  const rows: Array<{ label: string; count: number }> = [
+    { label: 'rules', count: candidateCount(summary.runtime_rules) },
+    { label: 'agents', count: candidateCount(summary.agents) },
+    { label: 'knowledge packs', count: candidateCount(summary.optional_knowledge_packs) },
+    { label: 'private exclusions', count: candidateCount(summary.private_exclusions) },
+    { label: 'schema-only surfaces', count: candidateCount(summary.schema_only_surfaces) },
+  ]
+  const sections: Array<{ title: string; items?: unknown[]; helper: string }> = [
+    { title: 'Promote to Rules', items: review.promote_to_rules, helper: 'Memory that affects behavior becomes explicit runtime guidance.' },
+    { title: 'Publish as Knowledge Pack', items: review.publish_as_knowledge_pack, helper: 'Public/reusable memory is install-optional and refreshable on clone.' },
+    { title: 'Keep Private', items: review.keep_private, helper: 'User, artifact, upload, credential, or chat-specific memory is not copied.' },
+    { title: 'Schema Only', items: review.publish_schema_only, helper: 'Only purpose/read-write contract is published; clone gets fresh memory.' },
+  ]
+
+  return (
+    <section className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>
+      <div className="row" style={{ marginBottom: 6 }}>
+        <b>Publish / Clone Preview</b>
+        <span className="pill">fresh private memory on clone</span>
+        <span className="pill">credentials never copied</span>
+      </div>
+      <div className="muted" style={{ marginBottom: 8 }}>
+        {cleanText(candidate.title) || 'Configured Team'} · public publish candidate review. Raw memory is not copied by default.
+      </div>
+      <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+        {rows.map((row) => <span className="pill" key={row.label}>{row.label}: {row.count}</span>)}
+      </div>
+      <div className="runStudioGrid runStudioGrid--bottom" style={{ gap: 8 }}>
+        {sections.map((section) => {
+          const items = Array.isArray(section.items) ? section.items.slice(0, 5) : []
+          return (
+            <div key={section.title} className="runStudioPanelSubcard" style={{ margin: 0 }}>
+              <b>{section.title}</b>
+              <div className="muted">{section.helper}</div>
+              {items.length > 0 ? (
+                <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                  {items.map((item, index) => <li key={`${section.title}-${index}`}>{previewItemLabel(item)}</li>)}
+                </ul>
+              ) : <div className="muted" style={{ marginTop: 6 }}>No items detected.</div>}
+            </div>
+          )
+        })}
+      </div>
+      {(review.warnings || []).length > 0 && (
+        <div className="runStudioWarning" style={{ marginTop: 8 }}>
+          {(review.warnings || []).slice(0, 3).map((warning, index) => <div key={`pub-warning-${index}`}>{warning}</div>)}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function summarizeTeamContracts(teamConfig: RunStudioAgentTeam['team_config'] | undefined): TeamContractSummary[] {
   const summaries: TeamContractSummary[] = []
   ;(['active', 'pending'] as const).forEach((state) => {
@@ -118,6 +198,7 @@ function summarizeTeamContracts(teamConfig: RunStudioAgentTeam['team_config'] | 
 }
 
 export default function AgentTeamPanel({
+  threadId,
   teamView,
   legacyTeam,
   orchestration,
@@ -144,6 +225,26 @@ export default function AgentTeamPanel({
   const fallbackReason = String(authority?.fallback_reason || legacyTeam?.fallback_reason || '').trim()
   const teamContracts = summarizeTeamContracts(legacyTeam?.team_config)
   const blueprintSummary = teamView?.blueprint_summary || null
+  const [publishPreview, setPublishPreview] = React.useState<TeamPublishCandidatePreview | null>(null)
+  const [publishPreviewLoading, setPublishPreviewLoading] = React.useState(false)
+  const [publishPreviewError, setPublishPreviewError] = React.useState('')
+  const loadPublishPreview = React.useCallback(async () => {
+    const cleanThreadId = cleanText(threadId)
+    if (!cleanThreadId) {
+      setPublishPreviewError('Select a GoC thread before previewing publish/clone.')
+      return
+    }
+    setPublishPreviewLoading(true)
+    setPublishPreviewError('')
+    try {
+      const response = await previewThreadTeamPublishCandidate(cleanThreadId, { visibility: 'private_review' })
+      setPublishPreview(response as TeamPublishCandidatePreview)
+    } catch (error: any) {
+      setPublishPreviewError(error?.message || String(error))
+    } finally {
+      setPublishPreviewLoading(false)
+    }
+  }, [threadId])
 
   const grouped = new Map<string, RuntimeAgentInstanceV2[]>()
   items.forEach((item) => {
@@ -182,6 +283,22 @@ export default function AgentTeamPanel({
         </div>
       )}
 
+      <section className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>
+        <div className="row" style={{ marginBottom: 6 }}>
+          <b>Team Publish Usability</b>
+          <span className="pill">behavior blueprint</span>
+          <span className="pill">optional knowledge packs</span>
+        </div>
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Preview what would be published before making it public: roles/rules/team contract are copied, public reusable memory becomes optional knowledge packs, private memory stays private.
+        </div>
+        <button onClick={loadPublishPreview} disabled={publishPreviewLoading || !threadId}>
+          {publishPreviewLoading ? 'Building preview…' : 'Preview publish / clone package'}
+        </button>
+        {publishPreviewError && <div className="runStudioWarning" style={{ marginTop: 8 }}>{publishPreviewError}</div>}
+      </section>
+
+      {publishPreview && <PublishCandidatePreviewCard preview={publishPreview} />}
 
       {blueprintSummary && (
         <section className="runStudioPanelSubcard" style={{ marginBottom: 12 }}>

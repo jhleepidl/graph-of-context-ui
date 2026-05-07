@@ -5,7 +5,7 @@ import logging
 import zipfile
 from datetime import datetime, timezone
 from typing import Any
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
 from sqlalchemy import or_
@@ -51,6 +51,9 @@ from app.services.scope_registry import get_scope_spec
 from app.services.conversation_team_config import get_team_config_payload, save_team_config_payload, patch_team_config_agent_context_policy
 from app.services.team_manifest import export_thread_team_manifest, install_thread_team_manifest, validate_team_manifest_payload, diff_team_manifest_payload
 from app.services.team_blueprint import export_thread_team_blueprint, install_thread_team_blueprint, validate_team_blueprint_payload, diff_team_blueprint_payload
+from app.services.team_publish_candidate import build_thread_team_publish_candidate
+from app.services.memory_materialization import build_memory_materialization_preview, create_shadow_memory_module, list_memory_materialization_candidates, list_memory_modules, save_memory_materialization_candidates
+from app.services.memory_review import build_memory_review_overview
 from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
 from app.services.harness_package import build_harness_package_payload
 from app.auth import get_current_principal
@@ -945,6 +948,55 @@ def export_thread_trace(
         )
 
 
+@router.get("/{thread_id}/nodes")
+def list_thread_nodes(
+    thread_id: str,
+    context_set_id: str | None = Query(default=None),
+    type: str | None = Query(default=None),
+    node_type: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+):
+    """List thread-scoped graph nodes using the canonical create-node route family."""
+    clean_context_set_id = _clean_optional_text(context_set_id)
+    requested_type = _clean_optional_text(node_type) or _clean_optional_text(type)
+    with Session(engine) as s:
+        require_thread_access(s, thread_id)
+        statement = select(Node).where(Node.thread_id == thread_id)
+        if requested_type:
+            statement = statement.where(Node.type == requested_type)
+        rows = s.exec(statement.order_by(Node.created_at.asc(), Node.id.asc()).limit(limit)).all()
+        active_ids: list[str] | None = None
+        if clean_context_set_id:
+            scoped_context_set = s.get(ContextSet, clean_context_set_id)
+            if not scoped_context_set or scoped_context_set.thread_id != thread_id:
+                raise HTTPException(404, "context set not found in thread")
+            parsed_active = jload(scoped_context_set.active_node_ids_json or "[]", [])
+            active_ids = [str(value).strip() for value in parsed_active if str(value).strip()] if isinstance(parsed_active, list) else []
+            active_set = set(active_ids)
+            rows = [row for row in rows if row.id in active_set]
+            order = {node_id: index for index, node_id in enumerate(active_ids)}
+            rows.sort(key=lambda row: (order.get(row.id, len(order)), row.created_at, row.id))
+        items = [row.model_dump() for row in rows]
+        return {"ok": True, "thread_id": thread_id, "context_set_id": clean_context_set_id, "context_set_active_node_ids": active_ids, "count": len(items), "items": items, "nodes": items}
+
+
+@router.get("/{thread_id}/edges")
+def list_thread_edges(
+    thread_id: str,
+    type: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+):
+    requested_type = _clean_optional_text(type)
+    with Session(engine) as s:
+        require_thread_access(s, thread_id)
+        statement = select(Edge).where(Edge.thread_id == thread_id)
+        if requested_type:
+            statement = statement.where(Edge.type == requested_type)
+        rows = s.exec(statement.order_by(Edge.created_at.asc(), Edge.id.asc()).limit(limit)).all()
+        items = [row.model_dump() for row in rows]
+        return {"ok": True, "thread_id": thread_id, "count": len(items), "items": items, "edges": items}
+
+
 @router.post("/{thread_id}/layout")
 def save_layout(thread_id: str, body: NodeLayoutUpdate):
     with Session(engine) as s:
@@ -1236,6 +1288,95 @@ def install_team_blueprint(thread_id: str, body: TeamManifestInstallRequest):
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return {"ok": True, "manifest": manifest, "team_config": manifest.get("team_config") or {}}
+
+
+
+
+@router.get("/{thread_id}/memory/review/overview")
+def get_thread_memory_review_overview(thread_id: str):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return build_memory_review_overview(session, thread)
+
+
+@router.post("/{thread_id}/memory/materialization/preview")
+def preview_thread_memory_materialization(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        min_score = 0.28
+        max_candidates = 6
+        if isinstance(body, dict):
+            try:
+                min_score = float(body.get("min_score", min_score))
+            except Exception:
+                min_score = 0.28
+            try:
+                max_candidates = int(body.get("max_candidates", max_candidates))
+            except Exception:
+                max_candidates = 6
+        return build_memory_materialization_preview(session, thread, min_score=min_score, max_candidates=max_candidates)
+
+
+
+
+@router.post("/{thread_id}/memory/materialization/candidates")
+def save_thread_memory_materialization_candidates(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        min_score = 0.28
+        max_candidates = 6
+        if isinstance(body, dict):
+            try:
+                min_score = float(body.get("min_score", min_score))
+            except Exception:
+                min_score = 0.28
+            try:
+                max_candidates = int(body.get("max_candidates", max_candidates))
+            except Exception:
+                max_candidates = 6
+        return save_memory_materialization_candidates(session, thread, min_score=min_score, max_candidates=max_candidates)
+
+
+@router.get("/{thread_id}/memory/materialization/candidates")
+def get_thread_memory_materialization_candidates(thread_id: str, limit: int = 20):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return list_memory_materialization_candidates(session, thread, limit=limit)
+
+
+@router.post("/{thread_id}/memory/materialization/modules/shadow")
+def create_thread_shadow_memory_module(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        try:
+            return create_shadow_memory_module(session, thread, body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/{thread_id}/memory/materialization/modules")
+def get_thread_memory_modules(thread_id: str, include_rows: bool = False):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        thread = session.get(Thread, thread_id)
+        if not thread:
+            raise HTTPException(404, "thread not found")
+        return list_memory_modules(session, thread, include_rows=include_rows)
 
 
 @router.get("/{thread_id}/team/manifest")
