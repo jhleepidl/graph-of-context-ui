@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import UniqueConstraint, Column, Text
 from sqlmodel import SQLModel, Field
 
 
@@ -417,7 +417,8 @@ class MemoryModule(SQLModel, table=True):
     title: str = Field(default="")
     status: str = Field(default="shadow", index=True)  # shadow | active | archived
     table_name: str = Field(default="", index=True)
-    schema_json: str = Field(default="{}")
+    # Avoid shadowing SQLModel/Pydantic .schema_json() while keeping the persisted column name.
+    schema_data_json: str = Field(default="{}", sa_column=Column("schema_json", Text, default="{}"))
     operations_json: str = Field(default="[]")
     manifest_json: str = Field(default="{}")
     row_count: int = Field(default=0, index=True)

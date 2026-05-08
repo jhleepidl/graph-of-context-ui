@@ -508,7 +508,7 @@ def create_shadow_memory_module(session: Session, thread: Thread, body: dict[str
     module.title = manifest["title"]
     module.status = "shadow"
     module.table_name = schema.get("table") or ""
-    module.schema_json = json.dumps(schema, ensure_ascii=False)
+    module.schema_data_json = json.dumps(schema, ensure_ascii=False)
     module.operations_json = json.dumps(operations, ensure_ascii=False)
     module.manifest_json = json.dumps(manifest, ensure_ascii=False)
     module.row_count = len(shadow_rows)
@@ -555,7 +555,7 @@ def _module_payload(session: Session, module: MemoryModule, *, include_rows: boo
         "title": module.title,
         "status": module.status,
         "table_name": module.table_name,
-        "schema": _loads(module.schema_json, {}),
+        "schema": _loads(module.schema_data_json, {}),
         "operations": _loads(module.operations_json, []),
         "manifest": _loads(module.manifest_json, {}),
         "row_count": module.row_count,
