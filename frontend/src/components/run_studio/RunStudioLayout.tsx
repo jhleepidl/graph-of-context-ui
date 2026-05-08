@@ -26,6 +26,7 @@ import MemoryMaterializationPanel from './MemoryMaterializationPanel'
 import MemoryRuleSkillReviewPanel from './MemoryRuleSkillReviewPanel'
 import ReviewInboxPanel from './ReviewInboxPanel'
 import WatchTasksPanel from './WatchTasksPanel'
+import AgentRoomPanel from './AgentRoomPanel'
 import TeamRecommendationPanel from './TeamRecommendationPanel'
 import SelectionOutcomePanel from './SelectionOutcomePanel'
 import CrossReferencePanel from './CrossReferencePanel'
@@ -307,8 +308,11 @@ export default function RunStudioLayout({
         />
       </div>
 
+      <div className="runStudioGrid runStudioGrid--bottom">
+        <AgentRoomPanel summary={summary} teamView={teamView} legacyTeam={effectiveTeam} />
+        <WatchTasksPanel threadId={threadId} />
+      </div>
       <ReviewInboxPanel threadId={threadId} />
-      <WatchTasksPanel threadId={threadId} />
       <MemoryRuleSkillReviewPanel threadId={threadId} />
 
       <div className="runStudioGrid runStudioGrid--bottom">

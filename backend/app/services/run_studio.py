@@ -726,6 +726,20 @@ def build_run_studio_summary(
     collaboration = dict(run_skill_summary.get("collaboration") or {})
     authority_projection = dict(run_skill_summary.get("authority") or {})
     checkpoints = dict(run_skill_summary.get("checkpoints") or {})
+    team_items = team_view.get("items") if isinstance(team_view.get("items"), list) else []
+    agent_room = {
+        "kind": "agent_room_profile_projection_v1",
+        "status": "active" if team_items else "unconfigured",
+        "default_agents": [str((row or {}).get("role") or (row or {}).get("id") or (row or {}).get("agent_id") or "").strip() for row in team_items if str((row or {}).get("role") or (row or {}).get("id") or (row or {}).get("agent_id") or "").strip()],
+        "default_workflow": orchestration.get("workflow_kind") or why_this_team.get("workflow_kind") or "task-adaptive",
+        "autonomy_policy": {
+            "small_safe_changes": "auto_or_review_by_task",
+            "risky_or_large_changes": "approval_required",
+            "deployment": "forbidden_without_explicit_approval",
+        },
+        "memory_scope": "room",
+        "growth_surfaces": ["memory", "skill", "rule", "role", "team_blueprint"],
+    }
 
     out = {
         "thread": {
@@ -740,6 +754,7 @@ def build_run_studio_summary(
         },
         "now": now_panel,
         "agent_team": agent_team,
+        "agent_room": agent_room,
         "projections": projections,
         "context_decisions_counts": context_decisions.get("counts", {}),
         "evidence_counts": evidence.get("counts", {}),
