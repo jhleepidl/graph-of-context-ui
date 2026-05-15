@@ -58,6 +58,13 @@ from app.services.proposals import apply_runtime_proposal_action, build_review_i
 from app.services.canonical_projection_worker import process_runtime_proposal_projections
 from app.services.semantic_memory_index import search_thread_semantic_items
 from app.services.watch_tasks import list_thread_watch_tasks, upsert_thread_watch_task, apply_watch_task_action
+from app.services.agent_activity import ingest_agent_activity, list_agent_activity
+from app.services.agent_packages import list_agent_packages, upsert_agent_package
+from app.services.model_catalog import ingest_model_usage, list_model_usage
+from app.services.semantic_board import list_semantic_board, upsert_semantic_board
+from app.services.decision_trace import build_decision_trace
+from app.services.context_substrate import list_context_substrate, upsert_context_substrate
+from app.services.context_runtime import list_context_runtime, upsert_context_runtime
 from app.services.harness_spec import get_thread_harness_spec, save_thread_harness_spec, build_harness_summary
 from app.services.harness_package import build_harness_package_payload
 from app.auth import get_current_principal
@@ -1294,6 +1301,105 @@ def install_team_blueprint(thread_id: str, body: TeamManifestInstallRequest):
         return {"ok": True, "manifest": manifest, "team_config": manifest.get("team_config") or {}}
 
 
+
+
+
+
+
+
+@router.get("/{thread_id}/semantic-board")
+def get_thread_semantic_board(thread_id: str, card_type: str | None = Query(default=None), limit: int = 200):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return list_semantic_board(session, thread, limit=limit, card_type=_clean_optional_text(card_type))
+
+
+@router.post("/{thread_id}/semantic-board")
+def post_thread_semantic_board(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        return upsert_semantic_board(session, thread, body or {}, source=str((body or {}).get("source") or "ddalggak"))
+
+
+
+
+@router.get("/{thread_id}/context-substrate")
+def get_thread_context_substrate(thread_id: str, run_id: str | None = Query(default=None), limit: int = 100):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return list_context_substrate(session, thread, run_id=_clean_optional_text(run_id), limit=limit)
+
+
+@router.post("/{thread_id}/context-substrate")
+def post_thread_context_substrate(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        return upsert_context_substrate(session, thread, body or {}, source=str((body or {}).get("source") or "ddalggak"))
+
+
+@router.get("/{thread_id}/context-runtime")
+def get_thread_context_runtime(thread_id: str, run_id: str | None = Query(default=None), limit: int = 100):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return list_context_runtime(session, thread, run_id=_clean_optional_text(run_id), limit=limit)
+
+
+@router.post("/{thread_id}/context-runtime")
+def post_thread_context_runtime(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        return upsert_context_runtime(session, thread, body or {}, source=str((body or {}).get("source") or "ddalggak"))
+
+
+@router.get("/{thread_id}/decision-trace")
+def get_thread_decision_trace(thread_id: str, run_id: str | None = Query(default=None), limit: int = 80):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return build_decision_trace(session, thread, run_id=_clean_optional_text(run_id), limit=limit)
+
+@router.get("/{thread_id}/agent-activity")
+def get_thread_agent_activity(thread_id: str, run_id: str | None = Query(default=None), limit: int = 100):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return list_agent_activity(session, thread, run_id=_clean_optional_text(run_id), limit=limit)
+
+
+@router.post("/{thread_id}/agent-activity")
+def post_thread_agent_activity(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        return ingest_agent_activity(session, thread, body or {}, source=str((body or {}).get("source") or "ddalggak"))
+
+
+@router.get("/{thread_id}/agent-packages")
+def get_thread_agent_packages(thread_id: str, limit: int = 100):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return list_agent_packages(session, thread, limit=limit)
+
+
+@router.post("/{thread_id}/agent-packages")
+def post_thread_agent_package(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        thread = require_thread_write_access(session, thread_id)
+        try:
+            return upsert_agent_package(session, thread, body or {}, source=str((body or {}).get("source") or "ddalggak"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/{thread_id}/model-usage")
+def get_thread_model_usage(thread_id: str, run_id: str | None = Query(default=None), limit: int = 100):
+    with Session(engine) as session:
+        require_thread_access(session, thread_id)
+        return list_model_usage(session, thread_id=thread_id, run_id=_clean_optional_text(run_id), limit=limit)
+
+
+@router.post("/{thread_id}/model-usage")
+def post_thread_model_usage(thread_id: str, body: dict[str, Any] = Body(default_factory=dict)):
+    with Session(engine) as session:
+        require_thread_write_access(session, thread_id)
+        return ingest_model_usage(session, body or {}, thread_id=thread_id, source=str((body or {}).get("source") or "ddalggak"))
 
 
 @router.get("/{thread_id}/memory/review/overview")

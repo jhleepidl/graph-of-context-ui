@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.models import ContextSet, Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, MemoryTopologySnapshot, MemoryTopologyEvent, MemoryDemandEvent, Node, TeamSelectionEvent, Thread
+from app.models import AgentActivityEvent, AgentPackageRecord, ContextSet, ContextProjectionEvent, ContextSubstrateOperation, ContextSubstrateSnapshot, ContextWriteMetricEvent, HandoffDeltaEvent, Edge, MemoryConflict, MemoryEdge, MemoryLifecycleEvent, MemoryNode, MemoryProjection, MemoryTopologySnapshot, MemoryTopologyEvent, MemoryDemandEvent, ModelNodeRecord, ModelNodeUsageEvent, SemanticBoardCard, SemanticBoardLink, Node, TeamSelectionEvent, Thread
 from app.services.conversation_team import build_conversation_team_projection
 from app.services.context_decisions import build_context_decisions
 from app.services.graph import compile_active_context_explain, load_thread_graph
@@ -182,6 +182,243 @@ def _count_entries(value: Any) -> int:
         return 0
     return 1
 
+
+
+
+def _latest_rows(session: Session, model: Any, filters: list[Any], *, limit: int = 100, order_field: Any | None = None) -> list[Any]:
+    stmt = select(model)
+    for condition in filters:
+        stmt = stmt.where(condition)
+    field = order_field or getattr(model, 'updated_at', None) or getattr(model, 'created_at', None)
+    if field is not None:
+        stmt = stmt.order_by(field.desc())
+    return list(session.exec(stmt.limit(max(1, min(int(limit or 100), 500)))))
+
+
+def _runtime_policy_summary(session: Session, *, thread_id: str, run_id: str | None = None) -> dict[str, Any]:
+    filters = [AgentActivityEvent.thread_id == thread_id, AgentActivityEvent.event_kind == 'policy']
+    if run_id:
+        filters.append(AgentActivityEvent.run_id == run_id)
+    rows = _latest_rows(session, AgentActivityEvent, filters, limit=50, order_field=AgentActivityEvent.created_at)
+    allowed = sum(1 for row in rows if row.workspace_write == 'allowed_in_workspace')
+    fallback_disabled = sum(1 for row in rows if row.legacy_manual_fallback == 'disabled')
+    latest = rows[0] if rows else None
+    return {
+        'policy_event_count': len(rows),
+        'workspace_write_allowed_count': allowed,
+        'legacy_manual_fallback_disabled_count': fallback_disabled,
+        'latest': {
+            'execution_mode': getattr(latest, 'execution_mode', '') or None,
+            'workspace_write': getattr(latest, 'workspace_write', '') or None,
+            'artifact_delivery': getattr(latest, 'artifact_delivery', '') or None,
+            'legacy_manual_fallback': getattr(latest, 'legacy_manual_fallback', '') or None,
+            'decision': getattr(latest, 'decision', '') or None,
+            'created_at': _iso_or_none(getattr(latest, 'created_at', None)),
+        } if latest else None,
+    }
+
+
+def _agent_activity_summary(session: Session, *, thread_id: str, run_id: str | None = None) -> dict[str, Any]:
+    filters = [AgentActivityEvent.thread_id == thread_id]
+    if run_id:
+        filters.append(AgentActivityEvent.run_id == run_id)
+    rows = _latest_rows(session, AgentActivityEvent, filters, limit=100, order_field=AgentActivityEvent.created_at)
+    by_kind: dict[str, int] = {}
+    for row in rows:
+        by_kind[row.event_kind] = by_kind.get(row.event_kind, 0) + 1
+    return {
+        'event_count': len(rows),
+        'by_kind': by_kind,
+        'recent': [{
+            'id': row.id,
+            'event_kind': row.event_kind,
+            'event_type': row.event_type,
+            'agent_id': row.agent_id,
+            'role_id': row.role_id,
+            'from_agent': row.from_agent,
+            'to_agent': row.to_agent,
+            'provider': row.provider,
+            'model': row.model,
+            'summary': _short_text(row.summary, 180),
+            'created_at': _iso_or_none(row.created_at),
+        } for row in rows[:8]],
+    }
+
+
+
+
+
+
+def _context_runtime_summary(session: Session, *, thread_id: str, run_id: str | None = None) -> dict[str, Any]:
+    projection_filters = [ContextProjectionEvent.thread_id == thread_id]
+    write_filters = [ContextWriteMetricEvent.thread_id == thread_id]
+    handoff_filters = [HandoffDeltaEvent.thread_id == thread_id]
+    if run_id:
+        projection_filters.append(ContextProjectionEvent.run_id == run_id)
+        write_filters.append(ContextWriteMetricEvent.run_id == run_id)
+        handoff_filters.append(HandoffDeltaEvent.run_id == run_id)
+    projections = _latest_rows(session, ContextProjectionEvent, projection_filters, limit=200, order_field=ContextProjectionEvent.created_at)
+    writes = _latest_rows(session, ContextWriteMetricEvent, write_filters, limit=100, order_field=ContextWriteMetricEvent.created_at)
+    handoffs = _latest_rows(session, HandoffDeltaEvent, handoff_filters, limit=100, order_field=HandoffDeltaEvent.created_at)
+    projection_count = len(projections)
+    cache_hits = sum(1 for row in projections if row.cache_hit)
+    total_compile = sum(int(row.compile_ms or 0) for row in projections)
+    total_tokens = sum(int(row.context_tokens or 0) for row in projections)
+    total_delta_tokens = sum(int(row.delta_tokens or 0) for row in handoffs)
+    total_committed = sum(int(row.committed or 0) for row in writes)
+    total_proposals = sum(int(row.proposals or 0) for row in writes)
+    total_conflicts = sum(int(row.conflicts or 0) for row in writes)
+    return {
+        'projection_count': projection_count,
+        'projection_cache_hit_rate': round(cache_hits / projection_count, 4) if projection_count else 0.0,
+        'avg_compile_ms': round(total_compile / projection_count, 2) if projection_count else 0.0,
+        'total_context_tokens': total_tokens,
+        'avg_context_tokens': round(total_tokens / projection_count, 2) if projection_count else 0.0,
+        'handoff_count': len(handoffs),
+        'total_handoff_delta_tokens': total_delta_tokens,
+        'write_batch_count': len(writes),
+        'committed_writes': total_committed,
+        'proposal_writes': total_proposals,
+        'conflict_writes': total_conflicts,
+        'recent_projections': [{
+            'projection_id': row.projection_id,
+            'snapshot_id': row.snapshot_id,
+            'role_id': row.role_id,
+            'task_type': row.task_type,
+            'model_node': row.model_node,
+            'cache_hit': row.cache_hit,
+            'compile_ms': row.compile_ms,
+            'context_tokens': row.context_tokens,
+            'created_at': _iso_or_none(row.created_at),
+        } for row in projections[:6]],
+        'recent_handoffs': [{
+            'handoff_id': row.handoff_id,
+            'from_agent': row.from_agent,
+            'to_agent': row.to_agent,
+            'handoff_type': row.handoff_type,
+            'delta_tokens': row.delta_tokens,
+            'created_at': _iso_or_none(row.created_at),
+        } for row in handoffs[:6]],
+    }
+
+def _context_substrate_summary(session: Session, *, thread_id: str, run_id: str | None = None) -> dict[str, Any]:
+    filters = [ContextSubstrateOperation.thread_id == thread_id]
+    snap_filters = [ContextSubstrateSnapshot.thread_id == thread_id]
+    if run_id:
+        filters.append(ContextSubstrateOperation.run_id == run_id)
+        snap_filters.append(ContextSubstrateSnapshot.run_id == run_id)
+    ops = _latest_rows(session, ContextSubstrateOperation, filters, limit=200, order_field=ContextSubstrateOperation.created_at)
+    snaps = _latest_rows(session, ContextSubstrateSnapshot, snap_filters, limit=20, order_field=ContextSubstrateSnapshot.version)
+    by_lane: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    for row in ops:
+        by_lane[row.lane] = by_lane.get(row.lane, 0) + 1
+        by_status[row.status] = by_status.get(row.status, 0) + 1
+    latest = snaps[0] if snaps else None
+    return {
+        'snapshot_count': len(snaps),
+        'operation_count': len(ops),
+        'latest_snapshot_id': latest.snapshot_id if latest else None,
+        'latest_version': latest.version if latest else 0,
+        'atom_count': latest.atom_count if latest else 0,
+        'link_count': latest.link_count if latest else 0,
+        'by_lane': by_lane,
+        'by_status': by_status,
+        'recent': [{
+            'operation_id': row.operation_id,
+            'op': row.op,
+            'status': row.status,
+            'lane': row.lane,
+            'actor': row.actor,
+            'version': row.version,
+            'created_at': _iso_or_none(row.created_at),
+        } for row in ops[:8]],
+    }
+
+def _semantic_board_summary(session: Session, *, thread_id: str) -> dict[str, Any]:
+    cards = _latest_rows(session, SemanticBoardCard, [SemanticBoardCard.thread_id == thread_id], limit=200, order_field=SemanticBoardCard.updated_at)
+    links = _latest_rows(session, SemanticBoardLink, [SemanticBoardLink.thread_id == thread_id], limit=500, order_field=SemanticBoardLink.updated_at)
+    by_type: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    for row in cards:
+        by_type[row.card_type] = by_type.get(row.card_type, 0) + 1
+        by_status[row.status] = by_status.get(row.status, 0) + 1
+    top = sorted(cards, key=lambda row: float(row.reuse_score or 0.0), reverse=True)[:8]
+    return {
+        'card_count': len(cards),
+        'link_count': len(links),
+        'by_type': by_type,
+        'by_status': by_status,
+        'top_reusable': [{
+            'id': row.card_id,
+            'title': row.title,
+            'type': row.card_type,
+            'reuse_score': row.reuse_score,
+            'status': row.status,
+        } for row in top if row.reuse_score],
+        'recent': [{
+            'id': row.card_id,
+            'title': row.title,
+            'type': row.card_type,
+            'status': row.status,
+            'reuse_score': row.reuse_score,
+            'updated_at': _iso_or_none(row.updated_at),
+        } for row in cards[:8]],
+    }
+
+def _agent_package_summary(session: Session, *, thread_id: str) -> dict[str, Any]:
+    rows = _latest_rows(session, AgentPackageRecord, [AgentPackageRecord.thread_id == thread_id], limit=50, order_field=AgentPackageRecord.updated_at)
+    return {
+        'package_count': len(rows),
+        'clone_safe_count': sum(1 for row in rows if not row.copies_private_memory),
+        'recent': [{
+            'package_id': row.package_id,
+            'title': row.title,
+            'status': row.status,
+            'visibility': row.visibility,
+            'agent_count': row.agent_count,
+            'copies_private_memory': row.copies_private_memory,
+            'updated_at': _iso_or_none(row.updated_at),
+        } for row in rows[:6]],
+    }
+
+
+def _model_catalog_summary(session: Session, *, thread_id: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+    model_rows = _latest_rows(session, ModelNodeRecord, [], limit=200, order_field=ModelNodeRecord.updated_at)
+    usage_filters: list[Any] = []
+    if thread_id:
+        usage_filters.append(ModelNodeUsageEvent.thread_id == thread_id)
+    if run_id:
+        usage_filters.append(ModelNodeUsageEvent.run_id == run_id)
+    usage_rows = _latest_rows(session, ModelNodeUsageEvent, usage_filters, limit=200, order_field=ModelNodeUsageEvent.created_at)
+    by_provider: dict[str, int] = {}
+    for row in model_rows:
+        provider = row.provider or 'unknown'
+        by_provider[provider] = by_provider.get(provider, 0) + 1
+    tokens_by_provider: dict[str, int] = {}
+    for row in usage_rows:
+        provider = row.provider or 'unknown'
+        tokens_by_provider[provider] = tokens_by_provider.get(provider, 0) + int(row.total_tokens or 0)
+    return {
+        'node_count': len(model_rows),
+        'private_context_allowed_count': sum(1 for row in model_rows if row.allow_private_context),
+        'by_provider': by_provider,
+        'usage_event_count': len(usage_rows),
+        'total_tokens': sum(int(row.total_tokens or 0) for row in usage_rows),
+        'tokens_by_provider': tokens_by_provider,
+        'recent_nodes': [{
+            'node_id': row.node_id,
+            'provider': row.provider,
+            'model': row.model,
+            'cost_tier': row.cost_tier,
+            'latency_tier': row.latency_tier,
+            'quality_tier': row.quality_tier,
+            'privacy_tier': row.privacy_tier,
+            'allow_private_context': row.allow_private_context,
+            'context_tokens': row.context_tokens,
+            'updated_at': _iso_or_none(row.updated_at),
+        } for row in model_rows[:8]],
+    }
 
 def _graph_or_load(
     session: Session,
@@ -769,6 +1006,13 @@ def build_run_studio_summary(
         "authority": authority_projection,
         "checkpoints": checkpoints,
         "planning_boundary": planning_boundary,
+        "runtime_policy_summary": _runtime_policy_summary(session, thread_id=thread.id, run_id=current_run_id),
+        "agent_activity_summary": _agent_activity_summary(session, thread_id=thread.id, run_id=current_run_id),
+        "agent_package_summary": _agent_package_summary(session, thread_id=thread.id),
+        "semantic_board_summary": _semantic_board_summary(session, thread_id=thread.id),
+        "context_substrate_summary": _context_substrate_summary(session, thread_id=thread.id, run_id=current_run_id),
+        "context_runtime_summary": _context_runtime_summary(session, thread_id=thread.id, run_id=current_run_id),
+        "model_catalog_summary": _model_catalog_summary(session, thread_id=thread.id, run_id=current_run_id),
         "graph_counts": {
             "nodes": len(nodes),
             "edges": len(edges),
@@ -1741,6 +1985,12 @@ def build_run_studio_run_bundle(
             'semantics': 'append_only',
         },
         'runtime_policy': dict(harness_package.get('runtime_policy') or {}),
+        'runtime_policy_summary': _runtime_policy_summary(session, thread_id=thread.id, run_id=clean_run_id),
+        'agent_activity_summary': _agent_activity_summary(session, thread_id=thread.id, run_id=clean_run_id),
+        'agent_package_summary': _agent_package_summary(session, thread_id=thread.id),
+        'model_catalog_summary': _model_catalog_summary(session, thread_id=thread.id, run_id=clean_run_id),
+        'context_substrate_summary': _context_substrate_summary(session, thread_id=thread.id, run_id=clean_run_id),
+        'context_runtime_summary': _context_runtime_summary(session, thread_id=thread.id, run_id=clean_run_id),
         'context_cache': {
             'graph_version': graph_version,
             'graph_version_payload': graph_version_payload,

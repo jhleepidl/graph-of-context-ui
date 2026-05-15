@@ -530,6 +530,103 @@ class WatchIteration(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+
+
+class AgentActivityEvent(SQLModel, table=True):
+    __tablename__ = "agent_activity_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    event_kind: str = Field(default="activity", index=True)  # activity | handoff | policy
+    event_type: str = Field(default="agent_event", index=True)
+    agent_id: Optional[str] = Field(default=None, index=True)
+    role_id: Optional[str] = Field(default=None, index=True)
+    from_agent: Optional[str] = Field(default=None, index=True)
+    to_agent: Optional[str] = Field(default=None, index=True)
+    provider: Optional[str] = Field(default=None, index=True)
+    model: Optional[str] = Field(default=None, index=True)
+    summary: str = Field(default="")
+    decision: str = Field(default="", index=True)
+    execution_mode: str = Field(default="", index=True)
+    workspace_write: str = Field(default="", index=True)
+    artifact_delivery: str = Field(default="", index=True)
+    legacy_manual_fallback: str = Field(default="", index=True)
+    source: str = Field(default="ddalggak", index=True)
+    source_event_id: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class AgentPackageRecord(SQLModel, table=True):
+    __tablename__ = "agent_package_records"
+    __table_args__ = (UniqueConstraint("thread_id", "package_id", name="uq_agent_package_records_thread_package"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    package_id: str = Field(index=True)
+    title: str = Field(default="")
+    description: str = Field(default="")
+    visibility: str = Field(default="private_review", index=True)
+    status: str = Field(default="candidate", index=True)
+    source: str = Field(default="ddalggak", index=True)
+    source_thread_id: str = Field(default="", index=True)
+    source_chat_id: str = Field(default="", index=True)
+    agent_count: int = Field(default=0, index=True)
+    skill_count: int = Field(default=0, index=True)
+    rule_count: int = Field(default=0, index=True)
+    copies_private_memory: bool = Field(default=False, index=True)
+    package_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ModelNodeRecord(SQLModel, table=True):
+    __tablename__ = "model_node_records"
+    __table_args__ = (UniqueConstraint("node_id", name="uq_model_node_records_node"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    node_id: str = Field(index=True)
+    provider: str = Field(default="", index=True)
+    runtime: str = Field(default="", index=True)
+    model: str = Field(default="", index=True)
+    status: str = Field(default="available", index=True)
+    cost_tier: str = Field(default="unknown", index=True)
+    latency_tier: str = Field(default="unknown", index=True)
+    quality_tier: str = Field(default="standard", index=True)
+    privacy_tier: str = Field(default="unknown", index=True)
+    data_boundary: str = Field(default="", index=True)
+    allow_private_context: bool = Field(default=False, index=True)
+    context_tokens: int = Field(default=0, index=True)
+    source: str = Field(default="ddalggak", index=True)
+    node_json: str = Field(default="{}")
+    last_seen_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ModelNodeUsageEvent(SQLModel, table=True):
+    __tablename__ = "model_node_usage_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: Optional[str] = Field(default=None, index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    node_id: str = Field(default="", index=True)
+    provider: str = Field(default="", index=True)
+    model: str = Field(default="", index=True)
+    agent_id: Optional[str] = Field(default=None, index=True)
+    role_id: Optional[str] = Field(default=None, index=True)
+    task_kind: str = Field(default="", index=True)
+    prompt_tokens: int = Field(default=0, index=True)
+    completion_tokens: int = Field(default=0, index=True)
+    total_tokens: int = Field(default=0, index=True)
+    latency_ms: int = Field(default=0, index=True)
+    cost_estimate: float = Field(default=0.0, index=True)
+    event_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class TeamSelectionEvent(SQLModel, table=True):
     __tablename__ = "team_selection_events"
 
@@ -541,3 +638,163 @@ class TeamSelectionEvent(SQLModel, table=True):
     recommendation_json: str = Field(default="{}")
     outcome_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class SemanticBoardCard(SQLModel, table=True):
+    __tablename__ = "semantic_board_cards"
+    __table_args__ = (UniqueConstraint("thread_id", "card_id", name="uq_semantic_board_cards_thread_card"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    card_id: str = Field(index=True)
+    card_type: str = Field(default="memory_card", index=True)
+    title: str = Field(default="", index=True)
+    status: str = Field(default="candidate", index=True)
+    source: str = Field(default="ddalggak", index=True)
+    source_ref: str = Field(default="")
+    confidence: float = Field(default=0.0, index=True)
+    reuse_score: float = Field(default=0.0, index=True)
+    tags_json: str = Field(default="[]")
+    content_json: str = Field(default="{}")
+    scope_json: str = Field(default="{}")
+    performance_json: str = Field(default="{}")
+    card_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class SemanticBoardLink(SQLModel, table=True):
+    __tablename__ = "semantic_board_links"
+    __table_args__ = (UniqueConstraint("thread_id", "link_id", name="uq_semantic_board_links_thread_link"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    link_id: str = Field(index=True)
+    from_card_id: str = Field(index=True)
+    to_card_id: str = Field(index=True)
+    link_type: str = Field(default="related_to", index=True)
+    status: str = Field(default="active", index=True)
+    weight: float = Field(default=0.0, index=True)
+    reason: str = Field(default="")
+    link_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class SemanticBoardEvent(SQLModel, table=True):
+    __tablename__ = "semantic_board_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    event_id: str = Field(default="", index=True)
+    event_type: str = Field(default="event", index=True)
+    source: str = Field(default="ddalggak", index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContextSubstrateSnapshot(SQLModel, table=True):
+    __tablename__ = "context_substrate_snapshots"
+    __table_args__ = (UniqueConstraint("thread_id", "snapshot_id", name="uq_context_substrate_snapshots_thread_snapshot"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    snapshot_id: str = Field(index=True)
+    version: int = Field(default=0, index=True)
+    atom_count: int = Field(default=0, index=True)
+    link_count: int = Field(default=0, index=True)
+    manifest_json: str = Field(default="{}")
+    snapshot_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContextSubstrateOperation(SQLModel, table=True):
+    __tablename__ = "context_substrate_operations"
+    __table_args__ = (UniqueConstraint("thread_id", "operation_id", name="uq_context_substrate_operations_thread_operation"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    operation_id: str = Field(index=True)
+    op: str = Field(default="operation", index=True)
+    version: int = Field(default=0, index=True)
+    status: str = Field(default="committed", index=True)
+    lane: str = Field(default="normal", index=True)
+    commit_mode: str = Field(default="auto", index=True)
+    actor: str = Field(default="runtime", index=True)
+    operation_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContextProjectionEvent(SQLModel, table=True):
+    __tablename__ = "context_projection_events"
+    __table_args__ = (UniqueConstraint("thread_id", "projection_id", name="uq_context_projection_events_thread_projection"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    projection_id: str = Field(index=True)
+    snapshot_id: str = Field(default="", index=True)
+    agent_id: str = Field(default="", index=True)
+    role_id: str = Field(default="", index=True)
+    task_type: str = Field(default="", index=True)
+    model_node: str = Field(default="", index=True)
+    cache_hit: bool = Field(default=False, index=True)
+    compile_ms: int = Field(default=0, index=True)
+    context_tokens: int = Field(default=0, index=True)
+    selected_atom_count: int = Field(default=0, index=True)
+    selected_link_count: int = Field(default=0, index=True)
+    handoff_count: int = Field(default=0, index=True)
+    goal_hash: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class ContextWriteMetricEvent(SQLModel, table=True):
+    __tablename__ = "context_write_metric_events"
+    __table_args__ = (UniqueConstraint("thread_id", "event_id", name="uq_context_write_metric_events_thread_event"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    event_id: str = Field(index=True)
+    projection_id: str = Field(default="", index=True)
+    snapshot_id: str = Field(default="", index=True)
+    status: str = Field(default="", index=True)
+    batch_size: int = Field(default=0, index=True)
+    committed: int = Field(default=0, index=True)
+    proposals: int = Field(default=0, index=True)
+    conflicts: int = Field(default=0, index=True)
+    operation_append_ms: int = Field(default=0, index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class HandoffDeltaEvent(SQLModel, table=True):
+    __tablename__ = "handoff_delta_events"
+    __table_args__ = (UniqueConstraint("thread_id", "handoff_id", name="uq_handoff_delta_events_thread_handoff"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    handoff_id: str = Field(index=True)
+    from_agent: str = Field(default="", index=True)
+    to_agent: str = Field(default="", index=True)
+    handoff_type: str = Field(default="agent_delta", index=True)
+    snapshot_id: str = Field(default="", index=True)
+    projection_id: str = Field(default="", index=True)
+    delta_tokens: int = Field(default=0, index=True)
+    summary: str = Field(default="")
+    delta_json: str = Field(default="{}")
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)

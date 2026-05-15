@@ -756,6 +756,71 @@ export const api = {
     }
     return j<any>(apiFetch(`/api/threads/${threadId}/team-selection-events/export${suffix}`))
   },
+
+  semanticBoard: (threadId: string, cardType?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanType = (cardType || '').trim()
+    if (cleanType) q.set('card_type', cleanType)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/semantic-board${suffix}`))
+  },
+  decisionTrace: (threadId: string, runId?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/decision-trace${suffix}`))
+  },
+  contextSubstrate: (threadId: string, runId?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/context-substrate${suffix}`))
+  },
+  contextRuntime: (threadId: string, runId?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/context-runtime${suffix}`))
+  },
+  agentActivity: (threadId: string, runId?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanRunId = (runId || '').trim()
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/agent-activity${suffix}`))
+  },
+  agentPackages: (threadId: string, limit?: number | null) => {
+    const q = new URLSearchParams()
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/agent-packages${suffix}`))
+  },
+  modelNodes: (provider?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanProvider = (provider || '').trim()
+    if (cleanProvider) q.set('provider', cleanProvider)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/model-nodes${suffix}`))
+  },
+  modelUsage: (threadId?: string | null, runId?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanThreadId = (threadId || '').trim()
+    const cleanRunId = (runId || '').trim()
+    if (cleanThreadId) q.set('thread_id', cleanThreadId)
+    if (cleanRunId) q.set('run_id', cleanRunId)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/model-nodes/usage${suffix}`))
+  },
   runStudioSkillUsage: (threadId: string, runId?: string | null) => {
     const q = new URLSearchParams()
     const cleanRunId = (runId || '').trim()
