@@ -757,6 +757,55 @@ export const api = {
     return j<any>(apiFetch(`/api/threads/${threadId}/team-selection-events/export${suffix}`))
   },
 
+  createTaskAttempt: (body: Record<string, unknown>) =>
+    j<any>(apiFetch('/api/task-attempts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  listTaskAttempts: (threadId: string, options: { task_id?: string | null; limit?: number | null } = {}) => {
+    const q = new URLSearchParams()
+    if (options.task_id) q.set('task_id', options.task_id)
+    if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/task-attempts${suffix}`))
+  },
+  compareTaskAttempts: (threadId: string, taskId: string) =>
+    j<any>(apiFetch(`/api/threads/${threadId}/task-attempts/compare?task_id=${encodeURIComponent(taskId)}`)),
+  readTaskAttempt: (attemptId: string) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}`)),
+  updateTaskAttempt: (attemptId: string, body: Record<string, unknown>) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  attachTaskAttemptMemoryPackage: (attemptId: string, body: Record<string, unknown>) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/memory-package`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  launchTaskAttempt: (attemptId: string, body: Record<string, unknown> = {}) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/launch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  promoteTaskAttempt: (attemptId: string, body: Record<string, unknown> = {}) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/promote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  archiveTaskAttempt: (attemptId: string, body: Record<string, unknown> = {}) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+
+
   semanticBoard: (threadId: string, cardType?: string | null, limit?: number | null) => {
     const q = new URLSearchParams()
     const cleanType = (cardType || '').trim()
@@ -803,6 +852,33 @@ export const api = {
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/threads/${threadId}/agent-packages${suffix}`))
   },
+  teamPackages: (threadId: string, limit?: number | null) => {
+    const q = new URLSearchParams()
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/threads/${threadId}/team-packages${suffix}`))
+  },
+  upsertTeamPackage: (threadId: string, teamPackage: any) =>
+    j<any>(apiFetch(`/api/threads/${threadId}/team-packages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ package: teamPackage, source: 'goc_ui' }),
+    })),
+  teamLibrary: (query?: string | null, limit?: number | null) => {
+    const q = new URLSearchParams()
+    const cleanQuery = (query || '').trim()
+    if (cleanQuery) q.set('q', cleanQuery)
+    if (typeof limit === 'number' && Number.isFinite(limit) && limit > 0) q.set('limit', String(limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/team-library${suffix}`))
+  },
+  teamLibraryPackage: (packageId: string) => j<any>(apiFetch(`/api/team-library/${encodeURIComponent(packageId)}`)),
+  forkTeamLibraryPackagePreview: (packageId: string, body?: any) =>
+    j<any>(apiFetch(`/api/team-library/${encodeURIComponent(packageId)}/fork-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    })),
   modelNodes: (provider?: string | null, limit?: number | null) => {
     const q = new URLSearchParams()
     const cleanProvider = (provider || '').trim()

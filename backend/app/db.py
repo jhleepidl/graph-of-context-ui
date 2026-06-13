@@ -30,6 +30,8 @@ from app.models import (
     ModelNodeRecord,
     ModelNodeUsageEvent,
     TeamSelectionEvent,
+    TaskAttempt,
+    TaskAttemptEvent,
 )
 from app.services.agent_defaults import ensure_default_agents
 
@@ -479,6 +481,47 @@ def _ensure_memory_runtime_columns() -> None:
         "outcome_json": text_col,
         "created_at": ts_col,
     }, indexed={"thread_id", "run_id", "selected_blueprint_id", "created_at"})
+
+    _ensure_table_columns(TaskAttempt, {
+        "thread_id": str_col,
+        "task_id": str_col,
+        "attempt_id": str_col,
+        "parent_attempt_id": str_col,
+        "run_id": str_col,
+        "run_mode": str_col,
+        "status": str_col,
+        "target_team": str_col,
+        "previous_result_policy": str_col,
+        "work_mode": str_col,
+        "review_policy": str_col,
+        "memory_projection_profile": str_col,
+        "memory_package_id": str_col,
+        "task_text": text_col,
+        "context_policy_json": text_col,
+        "memory_package_json": text_col,
+        "candidate_snapshot_json": text_col,
+        "result_json": text_col,
+        "lineage_json": text_col,
+        "launch_json": text_col,
+        "meta_json": text_col,
+        "created_by": str_col,
+        "promoted_at": ts_col,
+        "archived_at": ts_col,
+        "launched_at": ts_col,
+        "created_at": ts_col,
+        "updated_at": ts_col,
+    }, indexed={"thread_id", "task_id", "attempt_id", "parent_attempt_id", "run_id", "run_mode", "status", "target_team", "previous_result_policy", "work_mode", "review_policy", "memory_projection_profile", "memory_package_id", "created_by", "promoted_at", "archived_at", "launched_at", "created_at", "updated_at"})
+
+    _ensure_table_columns(TaskAttemptEvent, {
+        "thread_id": str_col,
+        "task_id": str_col,
+        "attempt_id": str_col,
+        "event_type": str_col,
+        "actor": str_col,
+        "summary": text_col,
+        "event_json": text_col,
+        "created_at": ts_col,
+    }, indexed={"thread_id", "task_id", "attempt_id", "event_type", "actor", "created_at"})
 
 def init_db() -> None:
     ensure_database_exists(DB_URL)

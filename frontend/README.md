@@ -54,4 +54,4 @@ You can override with `VITE_API_BASE`.
 - Deep-link behavior for `?thread=<id>` stays deterministic (no silent fallback).
 - No-skill or no-TeamPlan runs degrade gracefully: team/control panels show empty states or legacy fallbacks instead of failing.
 
-For operator interpretation, see [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md) and [`../SKILLS_IN_UI_GUIDE.md`](../SKILLS_IN_UI_GUIDE.md).
+For operator interpretation, see [`../docs/guides/UI_USAGE_GUIDE.md`](../docs/guides/UI_USAGE_GUIDE.md) and [`../docs/guides/SKILLS_IN_UI_GUIDE.md`](../docs/guides/SKILLS_IN_UI_GUIDE.md).

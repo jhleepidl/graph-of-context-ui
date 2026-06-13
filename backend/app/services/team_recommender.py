@@ -217,6 +217,110 @@ def recommend_team_blueprints(task_text: str, *, limit: int = 3) -> dict[str, An
 
 
 
+
+
+
+def _work_mode_view(value: Any) -> dict[str, Any] | None:
+    row = _as_dict(value)
+    if not row:
+        return None
+    return {
+        'work_mode': _clean_text(row.get('work_mode') or row.get('mode'), 64) or 'quick_answer',
+        'label': _clean_text(row.get('label'), 128) or None,
+        'agents_hint': _clean_text(row.get('agents_hint'), 128) or None,
+        'context_depth': _clean_text(row.get('context_depth'), 64) or None,
+        'team_skeleton': _clean_text(row.get('team_skeleton'), 128) or None,
+        'loop_budget': row.get('loop_budget'),
+        'stop_condition': _clean_text(row.get('stop_condition'), 128) or None,
+        'review_policy': _clean_text(row.get('review_policy'), 64) or None,
+        'memory_mode': _clean_text(row.get('memory_mode'), 64) or None,
+        'goc_mode': _clean_text(row.get('goc_mode'), 64) or None,
+        'explicit': row.get('explicit') is True,
+        'reason_codes': [str(v) for v in _as_list(row.get('reason_codes')) if str(v).strip()],
+    }
+
+def _memory_import_view(value: Any) -> dict[str, Any] | None:
+    row = _as_dict(value)
+    if not row:
+        return None
+    return {
+        'import_intent': _clean_text(row.get('import_intent'), 64) or 'none',
+        'topic': _clean_text(row.get('topic'), 160) or 'current_topic',
+        'target_team': _clean_text(row.get('target_team'), 64) or 'general',
+        'projection_profile': _clean_text(row.get('projection_profile'), 64) or 'general',
+        'mode': _clean_text(row.get('mode'), 64) or 'snapshot',
+        'scope': _clean_text(row.get('scope'), 64) or 'project',
+        'previous_result_policy': _clean_text(row.get('previous_result_policy'), 64) or 'optional',
+        'fork_policy': _clean_text(row.get('fork_policy'), 64) or 'none',
+        'permissions': _as_dict(row.get('permissions')) or {},
+        'reason_codes': [str(v) for v in _as_list(row.get('reason_codes')) if str(v).strip()],
+    }
+
+
+def _task_attempt_view(value: Any) -> dict[str, Any] | None:
+    row = _as_dict(value)
+    if not row:
+        return None
+    memory = _memory_import_view(row.get('memory_import'))
+    work_mode = _work_mode_view(row.get('work_mode'))
+    return {
+        'task_id': _clean_text(row.get('task_id'), 128) or None,
+        'attempt_id': _clean_text(row.get('attempt_id'), 128) or None,
+        'parent_attempt_id': _clean_text(row.get('parent_attempt_id'), 128) or None,
+        'run_mode': _clean_text(row.get('run_mode'), 64) or 'new',
+        'retry_reason': _clean_text(row.get('retry_reason'), 64) or None,
+        'reason_codes': [str(v) for v in _as_list(row.get('reason_codes')) if str(v).strip()],
+        'target_team': _clean_text(row.get('target_team'), 64) or (memory or {}).get('target_team') or 'general',
+        'previous_result_policy': _clean_text(row.get('previous_result_policy'), 64) or _clean_text(_as_dict(row.get('context_policy')).get('previous_result_policy'), 64) or None,
+        'context_policy': _as_dict(row.get('context_policy')) or {},
+        'work_mode': work_mode,
+        'cycle_policy': _as_dict(row.get('cycle_policy')) or {},
+        'memory_import': memory,
+        'goc': _as_dict(row.get('goc')) or {},
+    }
+
+def _user_intent_view(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    intent = _as_dict(candidate.get('user_orchestration_intent') or candidate.get('user_team_intent'))
+    if not intent:
+        return None
+    return {
+        'team_intent': _clean_text(intent.get('team_intent'), 64) or 'neutral',
+        'team_style': _clean_text(intent.get('team_style'), 64) or None,
+        'required_roles': [str(v) for v in _as_list(intent.get('required_roles')) if str(v).strip()],
+        'min_team_size': int(intent.get('min_team_size') or 1),
+        'debt_policy': _clean_text(intent.get('debt_policy'), 64) or None,
+        'reason_codes': [str(v) for v in _as_list(intent.get('reason_codes')) if str(v).strip()],
+    }
+
+
+def _advisory_view(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    advisory = _as_dict(candidate.get('skeleton_advisory') or candidate.get('learned_skeleton_advisory'))
+    if not advisory:
+        return None
+    labels = _as_dict(advisory.get('labels'))
+    score = _as_dict(candidate.get('score'))
+    return {
+        'status': _clean_text(advisory.get('status'), 64) or None,
+        'source': _clean_text(advisory.get('source'), 64) or None,
+        'utility_label': _clean_text(labels.get('Y_UTIL'), 32) or None,
+        'debt_label': _clean_text(labels.get('Y_DEBT'), 32) or None,
+        'frontier_needed': _clean_text(labels.get('Y_FRONTIER_NEEDED'), 32) or None,
+        'capacity_gaps': [str(v) for v in _as_list(advisory.get('capacity_gaps')) if str(v).strip()],
+        'warnings': [str(v) for v in _as_list(advisory.get('warnings')) if str(v).strip()],
+        'confidence': advisory.get('confidence') if isinstance(advisory.get('confidence'), (int, float)) else None,
+        'fused_utility': score.get('fused_utility') if isinstance(score.get('fused_utility'), (int, float)) else None,
+        'base_utility': score.get('base_utility') if isinstance(score.get('base_utility'), (int, float)) else None,
+        'learned_delta': score.get('learned_delta') if isinstance(score.get('learned_delta'), (int, float)) else None,
+        'advisory_mode': _clean_text(score.get('advisory_mode') or advisory.get('mode'), 64) or None,
+        'user_intent_match': score.get('user_intent_match') if isinstance(score.get('user_intent_match'), bool) else None,
+        'user_intent_bonus': score.get('user_intent_bonus') if isinstance(score.get('user_intent_bonus'), (int, float)) else None,
+        'user_requested_overhead_discount': score.get('user_requested_overhead_discount') if isinstance(score.get('user_requested_overhead_discount'), (int, float)) else None,
+        'user_team_intent': _clean_text(score.get('user_team_intent'), 64) or None,
+        'user_team_style': _clean_text(score.get('user_team_style'), 64) or None,
+        'missing_user_required_roles': [str(v) for v in _as_list(score.get('missing_user_required_roles')) if str(v).strip()],
+    }
+
+
 def _candidate_training_view(candidate: dict[str, Any]) -> dict[str, Any]:
     memory_fit = _as_dict(candidate.get('memory_fit'))
     topology = _as_dict(candidate.get('topology'))
@@ -246,6 +350,16 @@ def _candidate_training_view(candidate: dict[str, Any]) -> dict[str, Any]:
             for key, value in _as_dict(candidate.get('feature_score_breakdown')).items()
             if str(key).strip()
         },
+        'skeleton_advisory': _advisory_view(candidate),
+        'user_orchestration_intent': _user_intent_view(candidate),
+        'user_intent_satisfaction': _as_dict(candidate.get('user_intent_satisfaction')) or None,
+        'task_attempt_plan': _task_attempt_view(candidate.get('task_attempt_plan')),
+        'work_mode': _work_mode_view(candidate.get('work_mode') or _as_dict(candidate.get('task_attempt_plan')).get('work_mode')),
+        'work_mode_satisfaction': _as_dict(candidate.get('work_mode_satisfaction')) or None,
+        'task_attempt_satisfaction': _as_dict(candidate.get('task_attempt_satisfaction')) or None,
+        'memory_import_intent': _memory_import_view(candidate.get('memory_import_intent')),
+        'target_team': _clean_text(candidate.get('target_team'), 64) or None,
+        'previous_result_policy': _clean_text(candidate.get('previous_result_policy'), 64) or None,
         'rationale': [str(v) for v in _as_list(candidate.get('rationale')) if str(v).strip()],
     }
 
@@ -300,11 +414,32 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
     alignment_event_samples: dict[str, list[dict[str, Any]]] = {}
     human_override_count = 0
     memory_fit_failure_count = 0
+    advisory_status_counts: dict[str, int] = {}
+    advisory_debt_counts: dict[str, int] = {}
+    advisory_capacity_gap_counts: dict[str, int] = {}
+    attempt_run_mode_counts: dict[str, int] = {}
+    memory_import_profile_counts: dict[str, int] = {}
+    work_mode_counts: dict[str, int] = {}
+    work_mode_review_policy_counts: dict[str, int] = {}
     eligible_count = 0
     excluded_count = 0
     for item in _as_list(events):
         row = _as_dict(item)
         recommendation = _as_dict(row.get('recommendation'))
+        task_attempt = _task_attempt_view(row.get('task_attempt_plan') or recommendation.get('task_attempt_plan'))
+        work_mode = _work_mode_view(row.get('work_mode') or recommendation.get('work_mode') or (task_attempt or {}).get('work_mode'))
+        memory_import = _memory_import_view(row.get('memory_import_intent') or recommendation.get('memory_import_intent') or (task_attempt or {}).get('memory_import'))
+        if task_attempt:
+            mode_key = task_attempt.get('run_mode') or 'new'
+            attempt_run_mode_counts[mode_key] = attempt_run_mode_counts.get(mode_key, 0) + 1
+        if work_mode:
+            work_mode_key = work_mode.get('work_mode') or 'quick_answer'
+            work_mode_counts[work_mode_key] = work_mode_counts.get(work_mode_key, 0) + 1
+            review_key = work_mode.get('review_policy') or 'none'
+            work_mode_review_policy_counts[review_key] = work_mode_review_policy_counts.get(review_key, 0) + 1
+        if memory_import and memory_import.get('import_intent') != 'none':
+            profile_key = memory_import.get('projection_profile') or 'general'
+            memory_import_profile_counts[profile_key] = memory_import_profile_counts.get(profile_key, 0) + 1
         outcome = _as_dict(row.get('outcome'))
         candidates = [_as_dict(candidate) for candidate in _as_list(recommendation.get('candidates'))]
         selected_blueprint_id, selected_candidate, selected_candidate_found, selected_candidate_source = _selected_candidate_lookup(row, recommendation, candidates)
@@ -329,6 +464,16 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
                 exclusion_reason_counts[reason] = exclusion_reason_counts.get(reason, 0) + 1
         selected_features = _candidate_training_view(selected_candidate) if selected_candidate_found and selected_candidate else None
         candidate_features = [_candidate_training_view(candidate) for candidate in candidates[:8]]
+        for feature in candidate_features:
+            advisory = _as_dict(feature.get('skeleton_advisory'))
+            if advisory:
+                status_key = _clean_text(advisory.get('status'), 64) or 'unknown'
+                advisory_status_counts[status_key] = advisory_status_counts.get(status_key, 0) + 1
+                debt_key = _clean_text(advisory.get('debt_label'), 32) or 'unknown'
+                advisory_debt_counts[debt_key] = advisory_debt_counts.get(debt_key, 0) + 1
+                for gap in _as_list(advisory.get('capacity_gaps')):
+                    gap_key = _clean_text(gap, 64) or 'unknown'
+                    advisory_capacity_gap_counts[gap_key] = advisory_capacity_gap_counts.get(gap_key, 0) + 1
         selected_rank = next(
             (
                 index + 1
@@ -388,6 +533,9 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
             'recommended_candidates': recommended_candidates,
             'top_recommended_candidate': top_recommended_candidate,
             'recommendation_gap': recommendation_gap,
+            'task_attempt_plan': task_attempt,
+            'work_mode': work_mode,
+            'memory_import_intent': memory_import,
             'selected_score': selected_features.get('score') if selected_features else None,
             'selected_topology_pattern': selected_features.get('topology_pattern') if selected_features else None,
             'selected_memory_surface_count': selected_features.get('surface_count') if selected_features else None,
@@ -460,11 +608,18 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
         },
         'human_override_count': human_override_count,
         'memory_fit_failure_count': memory_fit_failure_count,
+        'advisory_status_counts': advisory_status_counts,
+        'advisory_debt_counts': advisory_debt_counts,
+        'advisory_capacity_gap_counts': advisory_capacity_gap_counts,
+        'attempt_run_mode_counts': attempt_run_mode_counts,
+        'memory_import_profile_counts': memory_import_profile_counts,
+        'work_mode_counts': work_mode_counts,
+        'work_mode_review_policy_counts': work_mode_review_policy_counts,
         'alignment_event_samples': alignment_event_samples,
     }
     return {
         'kind': 'team_selection_dataset_v1',
-        'schema_version': 5,
+        'schema_version': 7,
         'count': len(rows),
         'eligible_count': eligible_count,
         'excluded_count': excluded_count,

@@ -61,8 +61,8 @@ This is still projection-oriented over the existing graph backend; no new graph 
 - Project overview: this file.
 - Backend/API/service notes: [`backend/README.md`](backend/README.md)
 - Frontend architecture notes: [`frontend/README.md`](frontend/README.md)
-- Operator usage: [`UI_USAGE_GUIDE.md`](UI_USAGE_GUIDE.md)
-- Skill UI supplement: [`SKILLS_IN_UI_GUIDE.md`](SKILLS_IN_UI_GUIDE.md)
+- Operator usage: [`docs/guides/UI_USAGE_GUIDE.md`](docs/guides/UI_USAGE_GUIDE.md)
+- Skill UI supplement: [`docs/guides/SKILLS_IN_UI_GUIDE.md`](docs/guides/SKILLS_IN_UI_GUIDE.md)
 
 ## Quick Start
 ```bash

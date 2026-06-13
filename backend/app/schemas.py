@@ -644,3 +644,85 @@ class TeamSelectionRecordRequest(SQLModel):
     selected_blueprint_id: str | None = None
     recommendation: dict[str, Any] | None = None
     outcome: dict[str, Any] | None = None
+
+
+class TaskAttemptCreateRequest(SQLModel):
+    thread_id: str
+    task_id: str | None = None
+    attempt_id: str | None = None
+    parent_attempt_id: str | None = None
+    run_id: str | None = None
+    run_mode: str | None = "new"
+    status: str | None = "draft"
+    target_team: str | None = "general"
+    previous_result_policy: str | None = "optional"
+    work_mode: str | dict[str, Any] | None = None
+    review_policy: str | None = None
+    memory_projection_profile: str | None = None
+    memory_package_id: str | None = None
+    task_text: str | None = None
+    objective: str | None = None
+    context_policy: dict[str, Any] | None = None
+    memory_package: dict[str, Any] | None = None
+    memory_import: dict[str, Any] | None = None
+    candidate_snapshot: dict[str, Any] | None = None
+    candidate: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    lineage: dict[str, Any] | None = None
+    launch: dict[str, Any] | None = None
+    meta: dict[str, Any] | None = None
+    created_by: str | None = "goc"
+    source_run_id: str | None = None
+    recommendation_event_id: str | None = None
+    selected_blueprint_id: str | None = None
+
+
+class TaskAttemptUpdateRequest(SQLModel):
+    run_id: str | None = None
+    run_mode: str | None = None
+    status: str | None = None
+    target_team: str | None = None
+    previous_result_policy: str | None = None
+    work_mode: str | dict[str, Any] | None = None
+    review_policy: str | None = None
+    memory_projection_profile: str | None = None
+    memory_package_id: str | None = None
+    task_text: str | None = None
+    context_policy: dict[str, Any] | None = None
+    candidate_snapshot: dict[str, Any] | None = None
+    candidate: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    meta: dict[str, Any] | None = None
+    actor: str | None = "goc"
+
+
+class TaskAttemptLaunchRequest(SQLModel):
+    actor: str | None = "goc"
+    overrides: dict[str, Any] | None = None
+
+
+class TaskAttemptPromoteRequest(SQLModel):
+    actor: str | None = "goc"
+    summary: str | None = None
+    result: dict[str, Any] | None = None
+    supersede_siblings: bool | None = False
+    archive_siblings: bool | None = False
+
+
+class TaskAttemptArchiveRequest(SQLModel):
+    actor: str | None = "goc"
+    reason: str | None = None
+
+
+class TaskAttemptMemoryPackageRequest(SQLModel):
+    actor: str | None = "goc"
+    memory_package_id: str | None = None
+    package_id: str | None = None
+    memory_projection_profile: str | None = None
+    projection_profile: str | None = None
+    memory_package: dict[str, Any] | None = None
+    package: dict[str, Any] | None = None
+    topic: str | None = None
+    mode: str | None = None
+    scope: str | None = None
+    permissions: dict[str, Any] | None = None

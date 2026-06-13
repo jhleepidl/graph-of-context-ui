@@ -38,6 +38,7 @@ import HarnessSpecPanel from './HarnessSpecPanel'
 import RuntimePolicyPanel from './RuntimePolicyPanel'
 import AgentActivityPanel from './AgentActivityPanel'
 import AgentPackagesPanel from './AgentPackagesPanel'
+import TeamPackagesPanel from './TeamPackagesPanel'
 import ModelCatalogPanel from './ModelCatalogPanel'
 import SemanticBoardPanel from './SemanticBoardPanel'
 import DecisionTracePanel from './DecisionTracePanel'
@@ -385,6 +386,7 @@ export default function RunStudioLayout({
           <div className="runStudioGrid runStudioGrid--bottom">
             <AgentRoomPanel summary={summary} teamView={teamView} legacyTeam={effectiveTeam} />
             <AgentPackagesPanel threadId={threadId} summary={summary} />
+            <TeamPackagesPanel threadId={threadId} />
           </div>
           <div className="runStudioGrid runStudioGrid--top">
             {teamView || effectiveTeam ? (
@@ -602,8 +604,10 @@ export default function RunStudioLayout({
           </div>
           <div className="runStudioGrid runStudioGrid--bottom">
             <TeamRecommendationPanel
+              threadId={threadId}
               teamSelection={teamSelection}
               onLoadDetail={onLoadTeamSelection}
+              onActionComplete={onLoadTeamSelection}
               detailLoading={Boolean(detailLoading?.teamSelection)}
               detailLoaded={Boolean(detailLoaded?.teamSelection)}
             />

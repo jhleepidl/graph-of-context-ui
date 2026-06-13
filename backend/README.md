@@ -176,4 +176,4 @@ Logical agent lineage for integration consumers:
 - GoC is authoritative for graph-backed context and structured agent/team management once connected.
 - Skill package execution/content authority remains mostly runtime-side; GoC currently focuses on skill observability/projection.
 - TeamPlan v2 and legacy runtime payloads are both first-class supported inputs.
-- See operator behavior details in [`../UI_USAGE_GUIDE.md`](../UI_USAGE_GUIDE.md).
+- See operator behavior details in [`../docs/guides/UI_USAGE_GUIDE.md`](../docs/guides/UI_USAGE_GUIDE.md).

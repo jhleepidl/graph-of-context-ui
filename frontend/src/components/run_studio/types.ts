@@ -335,6 +335,99 @@ export type ScopeProjection = {
 
 
 
+
+export type MemoryImportIntentFeature = {
+  import_intent?: string | null
+  topic?: string | null
+  target_team?: string | null
+  projection_profile?: string | null
+  mode?: string | null
+  scope?: string | null
+  previous_result_policy?: string | null
+  fork_policy?: string | null
+  permissions?: Record<string, unknown> | null
+  reason_codes?: string[]
+}
+
+
+export type WorkModeFeature = {
+  work_mode?: string | null
+  label?: string | null
+  agents_hint?: string | null
+  context_depth?: string | null
+  team_skeleton?: string | null
+  loop_budget?: string | number | null
+  stop_condition?: string | null
+  review_policy?: string | null
+  memory_mode?: string | null
+  goc_mode?: string | null
+  explicit?: boolean | null
+  reason_codes?: string[]
+}
+
+export type TaskAttemptPlanFeature = {
+  task_id?: string | null
+  attempt_id?: string | null
+  parent_attempt_id?: string | null
+  run_mode?: string | null
+  retry_reason?: string | null
+  reason_codes?: string[]
+  target_team?: string | null
+  previous_result_policy?: string | null
+  context_policy?: Record<string, unknown> | null
+  work_mode?: WorkModeFeature | null
+  cycle_policy?: Record<string, unknown> | null
+  memory_import?: MemoryImportIntentFeature | null
+  goc?: Record<string, unknown> | null
+}
+
+export type UserOrchestrationIntentFeature = {
+  team_intent?: string | null
+  team_style?: string | null
+  required_roles?: string[]
+  min_team_size?: number | null
+  debt_policy?: string | null
+  reason_codes?: string[]
+}
+
+export type SkeletonAdvisoryFeature = {
+  status?: string | null
+  source?: string | null
+  utility_label?: string | null
+  debt_label?: string | null
+  frontier_needed?: string | null
+  capacity_gaps?: string[]
+  warnings?: string[]
+  confidence?: number | null
+  fused_utility?: number | null
+  base_utility?: number | null
+  learned_delta?: number | null
+  advisory_mode?: string | null
+  user_intent_match?: boolean | null
+  user_intent_bonus?: number | null
+  user_requested_overhead_discount?: number | null
+  user_team_intent?: string | null
+  user_team_style?: string | null
+  missing_user_required_roles?: string[]
+  task_attempt_match?: boolean | null
+  attempt_intent_bonus?: number | null
+  run_mode?: string | null
+  retry_reason?: string | null
+  target_team?: string | null
+  previous_result_policy?: string | null
+  memory_import_intent?: string | null
+  memory_import_profile?: string | null
+  work_mode?: string | null
+  work_mode_match?: boolean | null
+  work_mode_reason?: string | null
+  work_mode_bonus?: number | null
+  loop_budget?: string | number | null
+  stop_condition?: string | null
+  review_policy?: string | null
+  memory_mode?: string | null
+  goc_mode?: string | null
+}
+
 export type TeamSelectionCandidateFeature = {
   template_id?: string | null
   title?: string | null
@@ -356,6 +449,16 @@ export type TeamSelectionCandidateFeature = {
   blocking_reason_codes?: string[]
   degrade_reason_codes?: string[]
   feature_score_breakdown?: Record<string, number>
+  skeleton_advisory?: SkeletonAdvisoryFeature | null
+  user_orchestration_intent?: UserOrchestrationIntentFeature | null
+  user_intent_satisfaction?: Record<string, unknown> | null
+  task_attempt_plan?: TaskAttemptPlanFeature | null
+  work_mode?: WorkModeFeature | null
+  work_mode_satisfaction?: Record<string, unknown> | null
+  task_attempt_satisfaction?: Record<string, unknown> | null
+  memory_import_intent?: MemoryImportIntentFeature | null
+  target_team?: string | null
+  previous_result_policy?: string | null
   rationale?: string[]
 }
 
@@ -387,6 +490,9 @@ export type TeamSelectionDatasetRow = {
   recommended_candidates?: TeamSelectionCandidateFeature[]
   top_recommended_candidate?: TeamSelectionCandidateFeature | null
   recommendation_gap?: number | null
+  task_attempt_plan?: TaskAttemptPlanFeature | null
+  work_mode?: WorkModeFeature | null
+  memory_import_intent?: MemoryImportIntentFeature | null
   input_features?: Record<string, unknown>
   selected_features?: TeamSelectionCandidateFeature | null
   outcome_labels?: {
@@ -443,9 +549,47 @@ export type TeamSelectionDataset = {
     average_recommendation_gap_by_alignment?: Record<string, number | null>
     human_override_count?: number
     memory_fit_failure_count?: number
+    advisory_status_counts?: Record<string, number>
+    advisory_debt_counts?: Record<string, number>
+    advisory_capacity_gap_counts?: Record<string, number>
+    attempt_run_mode_counts?: Record<string, number>
+    memory_import_profile_counts?: Record<string, number>
+    work_mode_counts?: Record<string, number>
+    work_mode_review_policy_counts?: Record<string, number>
     alignment_event_samples?: Record<string, TeamSelectionOutcomeSample[]>
   } | null
   rows?: TeamSelectionDatasetRow[]
+}
+
+export type TaskAttemptRecord = {
+  id?: string | null
+  thread_id?: string | null
+  task_id?: string | null
+  attempt_id?: string | null
+  parent_attempt_id?: string | null
+  run_id?: string | null
+  run_mode?: string | null
+  status?: string | null
+  target_team?: string | null
+  previous_result_policy?: string | null
+  work_mode?: string | null
+  review_policy?: string | null
+  memory_projection_profile?: string | null
+  memory_package_id?: string | null
+  task_text?: string | null
+  context_policy?: Record<string, unknown> | null
+  memory_package?: Record<string, unknown> | null
+  candidate_snapshot?: Record<string, unknown> | null
+  result?: Record<string, unknown> | null
+  lineage?: Record<string, unknown> | null
+  launch?: Record<string, unknown> | null
+  meta?: Record<string, unknown> | null
+  events?: Array<Record<string, unknown>>
+  promoted_at?: string | null
+  archived_at?: string | null
+  launched_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export type MemoryLifecycleEvent = {

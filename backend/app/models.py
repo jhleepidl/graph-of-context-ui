@@ -640,6 +640,55 @@ class TeamSelectionEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+
+class TaskAttempt(SQLModel, table=True):
+    __tablename__ = "task_attempts"
+    __table_args__ = (UniqueConstraint("thread_id", "attempt_id", name="uq_task_attempts_thread_attempt"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    task_id: str = Field(index=True)
+    attempt_id: str = Field(index=True)
+    parent_attempt_id: Optional[str] = Field(default=None, index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    run_mode: str = Field(default="new", index=True)
+    status: str = Field(default="draft", index=True)
+    target_team: str = Field(default="general", index=True)
+    previous_result_policy: str = Field(default="optional", index=True)
+    work_mode: str = Field(default="assisted_task", index=True)
+    review_policy: str = Field(default="optional", index=True)
+    memory_projection_profile: str = Field(default="general", index=True)
+    memory_package_id: Optional[str] = Field(default=None, index=True)
+    task_text: str = Field(default="")
+    context_policy_json: str = Field(default="{}")
+    memory_package_json: str = Field(default="{}")
+    candidate_snapshot_json: str = Field(default="{}")
+    result_json: str = Field(default="{}")
+    lineage_json: str = Field(default="{}")
+    launch_json: str = Field(default="{}")
+    meta_json: str = Field(default="{}")
+    created_by: str = Field(default="goc", index=True)
+    promoted_at: Optional[datetime] = Field(default=None, index=True)
+    archived_at: Optional[datetime] = Field(default=None, index=True)
+    launched_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class TaskAttemptEvent(SQLModel, table=True):
+    __tablename__ = "task_attempt_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    task_id: str = Field(index=True)
+    attempt_id: str = Field(index=True)
+    event_type: str = Field(default="created", index=True)
+    actor: str = Field(default="goc", index=True)
+    summary: str = Field(default="")
+    event_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class SemanticBoardCard(SQLModel, table=True):
     __tablename__ = "semantic_board_cards"
     __table_args__ = (UniqueConstraint("thread_id", "card_id", name="uq_semantic_board_cards_thread_card"),)
