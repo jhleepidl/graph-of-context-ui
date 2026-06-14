@@ -224,8 +224,19 @@ def _work_mode_view(value: Any) -> dict[str, Any] | None:
     row = _as_dict(value)
     if not row:
         return None
+    mode = _clean_text(row.get('work_mode') or row.get('mode'), 64) or 'quick_answer'
+    depth = _clean_text(row.get('work_depth') or row.get('depth'), 64)
+    if not depth:
+        if mode in {'quick_answer', 'assisted_task'}:
+            depth = 'instant'
+        elif mode == 'team_review':
+            depth = 'team'
+        else:
+            depth = 'loop'
     return {
-        'work_mode': _clean_text(row.get('work_mode') or row.get('mode'), 64) or 'quick_answer',
+        'work_depth': depth,
+        'work_depth_label': _clean_text(row.get('work_depth_label') or row.get('depth_label'), 128) or None,
+        'work_mode': mode,
         'label': _clean_text(row.get('label'), 128) or None,
         'agents_hint': _clean_text(row.get('agents_hint'), 128) or None,
         'context_depth': _clean_text(row.get('context_depth'), 64) or None,
@@ -420,6 +431,7 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
     attempt_run_mode_counts: dict[str, int] = {}
     memory_import_profile_counts: dict[str, int] = {}
     work_mode_counts: dict[str, int] = {}
+    work_depth_counts: dict[str, int] = {}
     work_mode_review_policy_counts: dict[str, int] = {}
     eligible_count = 0
     excluded_count = 0
@@ -435,6 +447,8 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
         if work_mode:
             work_mode_key = work_mode.get('work_mode') or 'quick_answer'
             work_mode_counts[work_mode_key] = work_mode_counts.get(work_mode_key, 0) + 1
+            depth_key = work_mode.get('work_depth') or 'instant'
+            work_depth_counts[depth_key] = work_depth_counts.get(depth_key, 0) + 1
             review_key = work_mode.get('review_policy') or 'none'
             work_mode_review_policy_counts[review_key] = work_mode_review_policy_counts.get(review_key, 0) + 1
         if memory_import and memory_import.get('import_intent') != 'none':
@@ -614,6 +628,7 @@ def build_team_selection_dataset(events: Any) -> dict[str, Any]:
         'attempt_run_mode_counts': attempt_run_mode_counts,
         'memory_import_profile_counts': memory_import_profile_counts,
         'work_mode_counts': work_mode_counts,
+        'work_depth_counts': work_depth_counts,
         'work_mode_review_policy_counts': work_mode_review_policy_counts,
         'alignment_event_samples': alignment_event_samples,
     }

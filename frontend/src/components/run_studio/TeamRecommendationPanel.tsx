@@ -42,6 +42,80 @@ function alignmentLabel(value: string): string {
   return clean || 'alignment unknown'
 }
 
+const WORK_DEPTH_PRESETS: Record<string, Record<string, unknown>> = {
+  instant: {
+    work_depth: 'instant',
+    work_depth_label: 'Single Agent',
+    work_mode: 'quick_answer',
+    label: 'Quick Answer',
+    context_depth: 'minimal',
+    loop_budget: 0,
+    stop_condition: 'answer_ready',
+    review_policy: 'none',
+    memory_mode: 'none',
+    goc_mode: 'optional',
+  },
+  team: {
+    work_depth: 'team',
+    work_depth_label: 'Agent Team',
+    work_mode: 'team_review',
+    label: 'Team Review',
+    context_depth: 'projected',
+    loop_budget: 1,
+    stop_condition: 'review_complete',
+    review_policy: 'required',
+    memory_mode: 'package',
+    goc_mode: 'recommended',
+  },
+  loop: {
+    work_depth: 'loop',
+    work_depth_label: 'Agent Loop',
+    work_mode: 'project_task',
+    label: 'Project Task',
+    context_depth: 'workspace',
+    loop_budget: 3,
+    stop_condition: 'stage_complete_or_approval_required',
+    review_policy: 'required',
+    memory_mode: 'package',
+    goc_mode: 'required',
+  },
+}
+
+function depthForWorkMode(mode: unknown): string {
+  const clean = cleanText(mode).toLowerCase()
+  if (clean === 'quick_answer' || clean === 'assisted_task' || clean === 'instant' || clean === 'single_agent') return 'instant'
+  if (clean === 'team_review' || clean === 'team' || clean === 'agent_team') return 'team'
+  if (clean === 'project_task' || clean === 'research_campaign' || clean === 'customize' || clean === 'loop' || clean === 'agent_loop') return 'loop'
+  return ''
+}
+
+function normalizeWorkMode(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const row = value as Record<string, unknown>
+    const depth = cleanText(row.work_depth || row.depth || depthForWorkMode(row.work_mode || row.mode) || 'team') || 'team'
+    const preset = WORK_DEPTH_PRESETS[depth] || WORK_DEPTH_PRESETS.team
+    const mode = cleanText(row.work_mode || row.mode || preset.work_mode) || cleanText(preset.work_mode)
+    return { ...preset, ...row, work_depth: depth, work_mode: mode }
+  }
+  const depth = cleanText(depthForWorkMode(value) || value || 'team') || 'team'
+  const preset = WORK_DEPTH_PRESETS[depth] || WORK_DEPTH_PRESETS.team
+  return { ...preset }
+}
+
+function workModeContextPolicy(workMode: Record<string, unknown>, base: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...base,
+    work_depth: workMode.work_depth,
+    work_mode: workMode.work_mode,
+    context_depth: workMode.context_depth,
+    loop_budget: workMode.loop_budget,
+    stop_condition: workMode.stop_condition,
+    review_policy: workMode.review_policy,
+    memory_mode: workMode.memory_mode,
+    goc_mode: workMode.goc_mode,
+  }
+}
+
 function renderBreakdown(candidate: TeamSelectionCandidateFeature | null | undefined) {
   const entries = Object.entries(candidate?.feature_score_breakdown || {})
     .filter(([, value]) => Number(value || 0) !== 0)
@@ -86,9 +160,10 @@ function renderWorkMode(workMode: any) {
   if (!mode) return null
   return (
     <div className="runStudioWarning" style={{ marginTop: 8 }}>
-      <div><b>Work Mode</b> <span className="muted">user-governed depth and bounded work-cycle policy.</span></div>
+      <div><b>Task Depth</b> <span className="muted">3 entry points: single agent, agent team, or bounded loop.</span></div>
       <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
-        <span className="pill">mode: {mode}</span>
+        {workMode.work_depth && <span className="pill">depth: {cleanText(workMode.work_depth)}</span>}
+        <span className="pill">preset: {mode}</span>
         {workMode.context_depth && <span className="pill">context: {cleanText(workMode.context_depth)}</span>}
         {workMode.loop_budget !== undefined && workMode.loop_budget !== null && <span className="pill">loop: {cleanText(workMode.loop_budget)}</span>}
         {workMode.stop_condition && <span className="pill">stop: {cleanText(workMode.stop_condition)}</span>}
@@ -244,15 +319,17 @@ function buildAttemptBody({
   row,
   candidate,
   runMode,
+  workModeOverride,
 }: {
   threadId: string
   row: TeamSelectionDatasetRow
   candidate: TeamSelectionCandidateFeature | null | undefined
   runMode: 'retry' | 'branch' | 'parallel_branch' | 'new'
+  workModeOverride?: Record<string, unknown> | null
 }): Record<string, unknown> {
   const plan: any = row.task_attempt_plan || {}
   const memory = candidate?.memory_import_intent || row.memory_import_intent || plan.memory_import || null
-  const workMode = candidate?.work_mode || row.work_mode || plan.work_mode || null
+  const workMode = normalizeWorkMode(workModeOverride || candidate?.work_mode || row.work_mode || plan.work_mode || null)
   const taskId = taskIdForRow(row) || undefined
   const parentAttemptId = cleanText(plan.attempt_id || row.run_id || '') || undefined
   return {
@@ -264,16 +341,17 @@ function buildAttemptBody({
     target_team: candidateTargetTeam(candidate, cleanText(plan.target_team || 'general')),
     previous_result_policy: cleanText(plan.previous_result_policy || (runMode === 'new' ? 'optional' : 'exclude')),
     work_mode: workMode || undefined,
+    review_policy: cleanText(workMode.review_policy || ''),
     task_text: row.task_text || undefined,
-    context_policy: plan.context_policy || {
+    context_policy: workModeContextPolicy(workMode, plan.context_policy || {
       include_original_user_request: true,
       include_user_feedback: true,
       include_previous_result: runMode === 'new',
       include_full_chat_tail: false,
       include_memory_package: Boolean(memory && (memory as any).import_intent !== 'none'),
-    },
+    }),
     memory_import: memory || undefined,
-    memory_projection_profile: cleanText((memory as any)?.projection_profile || (workMode as any)?.memory_projection_profile || candidate?.memory_import_intent?.projection_profile || 'general'),
+    memory_projection_profile: cleanText((memory as any)?.projection_profile || workMode.memory_projection_profile || candidate?.memory_import_intent?.projection_profile || 'general'),
     selected_blueprint_id: cleanText(candidate?.template_id || row.selected_blueprint_id || ''),
     candidate_snapshot: candidate || undefined,
     recommendation_event_id: row.event_id || undefined,
@@ -284,6 +362,60 @@ function buildAttemptBody({
       selected_candidate_rank: row.selected_candidate_rank || null,
     },
   }
+}
+
+function WorkModeSelector({
+  value,
+  onChange,
+}: {
+  value: Record<string, unknown>
+  onChange: (next: Record<string, unknown>) => void
+}) {
+  const depth = cleanText(value.work_depth || depthForWorkMode(value.work_mode) || 'team') || 'team'
+  const setMode = (nextDepth: string) => onChange(normalizeWorkMode({ ...WORK_DEPTH_PRESETS[nextDepth], explicit: true, reason_codes: ['goc_work_depth_selector'] }))
+  const patch = (key: string, nextValue: unknown) => onChange(normalizeWorkMode({ ...value, [key]: nextValue, explicit: true, reason_codes: ['goc_work_depth_selector'] }))
+  return (
+    <div className="runStudioWarning" style={{ marginTop: 8 }}>
+      <div><b>Task Depth selector</b> <span className="muted">Choose one of three user-facing depths; internal presets stay available as templates.</span></div>
+      <div className="runStudioMetaRow" style={{ marginTop: 8 }}>
+        <label className="muted">
+          depth{' '}
+          <select value={depth} onChange={(event) => setMode(event.target.value)}>
+            {Object.keys(WORK_DEPTH_PRESETS).map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label className="muted">
+          loop{' '}
+          <input
+            style={{ width: 90 }}
+            value={cleanText(value.loop_budget ?? '')}
+            onChange={(event) => patch('loop_budget', /^\d+$/.test(event.target.value) ? Number(event.target.value) : event.target.value)}
+          />
+        </label>
+        <label className="muted">
+          stop{' '}
+          <input style={{ width: 180 }} value={cleanText(value.stop_condition || '')} onChange={(event) => patch('stop_condition', event.target.value)} />
+        </label>
+        <label className="muted">
+          review{' '}
+          <select value={cleanText(value.review_policy || 'optional')} onChange={(event) => patch('review_policy', event.target.value)}>
+            {['none', 'optional', 'required', 'stage_gate'].map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label className="muted">
+          memory{' '}
+          <select value={cleanText(value.memory_mode || 'light')} onChange={(event) => patch('memory_mode', event.target.value)}>
+            {['none', 'light', 'package', 'structured'].map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
+        <span className="pill">context: {cleanText(value.context_depth || '-')}</span>
+        <span className="pill">GoC: {cleanText(value.goc_mode || '-')}</span>
+        <span className="pill">bounded cycles only</span>
+      </div>
+    </div>
+  )
 }
 
 function TaskAttemptActionPanel({
@@ -302,6 +434,7 @@ function TaskAttemptActionPanel({
   const [busyAction, setBusyAction] = useState('')
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [selectedWorkMode, setSelectedWorkMode] = useState<Record<string, unknown>>(() => normalizeWorkMode(selected?.work_mode || row?.work_mode || row?.task_attempt_plan?.work_mode || null))
 
   const run = async (label: string, work: () => Promise<any>) => {
     setBusyAction(label)
@@ -328,29 +461,43 @@ function TaskAttemptActionPanel({
   return (
     <div className="runStudioWarning" style={{ marginBottom: 10 }}>
       <div><b>Task Attempt write actions</b> <span className="muted">Record branch/retry/launch/promote decisions as structured GoC control-plane state.</span></div>
+      <WorkModeSelector value={selectedWorkMode} onChange={setSelectedWorkMode} />
       <div className="runStudioMetaRow" style={{ marginTop: 8 }}>
         <button
           disabled={Boolean(busyAction)}
-          onClick={() => run('Retry attempt', () => api.createTaskAttempt(buildAttemptBody({ threadId: cleanThreadId, row, candidate: selected, runMode: 'retry' })))}
+          onClick={() => run('Retry attempt', () => api.createTaskAttempt(buildAttemptBody({ threadId: cleanThreadId, row, candidate: selected, runMode: 'retry', workModeOverride: selectedWorkMode })))}
         >
           Create retry
         </button>
         <button
           disabled={Boolean(busyAction)}
-          onClick={() => run('Branch attempt', () => api.createTaskAttempt(buildAttemptBody({ threadId: cleanThreadId, row, candidate: topRecommended || selected, runMode: 'branch' })))}
+          onClick={() => run('Branch attempt', () => api.createTaskAttempt(buildAttemptBody({ threadId: cleanThreadId, row, candidate: topRecommended || selected, runMode: 'branch', workModeOverride: selectedWorkMode })))}
         >
           Create branch from top team
         </button>
         <button
           disabled={Boolean(busyAction)}
           onClick={() => run('Create + launch branch', async () => {
-            const created = await api.createTaskAttempt(buildAttemptBody({ threadId: cleanThreadId, row, candidate: topRecommended || selected, runMode: 'branch' }))
+            const created = await api.createTaskAttempt(buildAttemptBody({ threadId: cleanThreadId, row, candidate: topRecommended || selected, runMode: 'branch', workModeOverride: selectedWorkMode }))
             const attemptId = cleanText(created?.attempt?.attempt_id)
             if (!attemptId) return created
             return api.launchTaskAttempt(attemptId, { actor: 'goc', overrides: { source: 'team_recommendation_panel' } })
           })}
         >
           Create + launch
+        </button>
+        <button
+          disabled={Boolean(busyAction) || !canUseExistingAttempt}
+          title={canUseExistingAttempt ? 'Save the selected Work Mode/depth onto the current attempt.' : 'No attempt_id was recorded in the latest trace.'}
+          onClick={() => currentAttemptId && run('Save work mode', () => api.updateTaskAttempt(currentAttemptId, {
+            actor: 'goc',
+            work_mode: selectedWorkMode,
+            review_policy: cleanText(selectedWorkMode.review_policy || ''),
+            context_policy: workModeContextPolicy(selectedWorkMode, (row.task_attempt_plan as any)?.context_policy || {}),
+            meta: { source: 'goc_work_mode_selector' },
+          }))}
+        >
+          Save work mode
         </button>
         <button
           disabled={Boolean(busyAction) || !canUseExistingAttempt}
@@ -376,6 +523,7 @@ function TaskAttemptActionPanel({
       <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
         {taskId && <span className="pill">task: {taskId}</span>}
         {currentAttemptId ? <span className="pill">current attempt: {currentAttemptId}</span> : <span className="pill">current attempt: not recorded</span>}
+        <span className="pill">selected depth: {cleanText(selectedWorkMode.work_depth || '-')}</span>
         {busyAction && <span className="pill">working: {busyAction}</span>}
       </div>
       {message && <div className="muted" style={{ marginTop: 6 }}>{message}</div>}

@@ -103,12 +103,16 @@ def _memory_projection_from_payload(payload: dict[str, Any]) -> str:
 
 def _work_mode_from_payload(payload: dict[str, Any]) -> tuple[str, str]:
     work_mode = _as_dict(payload.get('work_mode'))
-    mode = _enum(payload.get('work_mode') or work_mode.get('work_mode') or work_mode.get('mode'), WORK_MODES, 'assisted_task')
+    depth = _enum(payload.get('work_depth') or work_mode.get('work_depth') or work_mode.get('depth'), {'instant', 'team', 'loop'}, '')
+    default_for_depth = {'instant': 'quick_answer', 'team': 'team_review', 'loop': 'project_task'}.get(depth, 'assisted_task')
+    mode = _enum(payload.get('work_mode') or work_mode.get('work_mode') or work_mode.get('mode'), WORK_MODES, default_for_depth)
     review = _enum(payload.get('review_policy') or work_mode.get('review_policy'), REVIEW_POLICIES, 'optional')
     if mode == 'quick_answer':
         review = _enum(review, REVIEW_POLICIES, 'none')
     if mode == 'research_campaign' and review == 'optional':
         review = 'stage_gate'
+    if depth == 'loop' and review == 'optional':
+        review = 'required'
     return mode, review
 
 
