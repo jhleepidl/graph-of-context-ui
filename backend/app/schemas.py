@@ -726,3 +726,43 @@ class TaskAttemptMemoryPackageRequest(SQLModel):
     mode: str | None = None
     scope: str | None = None
     permissions: dict[str, Any] | None = None
+
+
+class TaskAttemptDecisionRequest(SQLModel):
+    actor: str | None = "goc"
+    decision: str
+    summary: str | None = None
+    preferred_attempt_id: str | None = None
+    rejected_attempt_id: str | None = None
+    compared_attempt_ids: list[str] | None = None
+    reason_tags: list[str] | None = None
+    ratings: dict[str, Any] | None = None
+    payload: dict[str, Any] | None = None
+
+
+class TaskAttemptEvaluationRequest(SQLModel):
+    actor: str | None = "goc"
+    evaluator: str | None = None
+    quality: float | None = None
+    success: bool | None = None
+    cost: float | None = None
+    latency_ms: int | None = None
+    token_cost: int | None = None
+    contradiction: bool | None = None
+    stale_context_failure: bool | None = None
+    context_pollution: bool | None = None
+    leakage_detected: bool | None = None
+    policy_violation: bool | None = None
+    role_sufficiency: float | None = None
+    notes: str | None = None
+    metrics: dict[str, Any] | None = None
+
+
+class TaskAttemptVariantRequest(SQLModel):
+    actor: str | None = "goc"
+    axes: list[str] | None = None
+    max_variants: int | None = 12
+    create: bool | None = True
+    include_recipe_variants: bool | None = True
+    include_memory_treatments: bool | None = True
+    include_context_boundaries: bool | None = True

@@ -102,17 +102,15 @@ def _memory_projection_from_payload(payload: dict[str, Any]) -> str:
 
 
 def _work_mode_from_payload(payload: dict[str, Any]) -> tuple[str, str]:
-    work_mode = _as_dict(payload.get('work_mode'))
-    depth = _enum(payload.get('work_depth') or work_mode.get('work_depth') or work_mode.get('depth'), {'instant', 'team', 'loop'}, '')
-    default_for_depth = {'instant': 'quick_answer', 'team': 'team_review', 'loop': 'project_task'}.get(depth, 'assisted_task')
-    mode = _enum(payload.get('work_mode') or work_mode.get('work_mode') or work_mode.get('mode'), WORK_MODES, default_for_depth)
+    raw_work_mode = payload.get('work_mode')
+    work_mode = _as_dict(raw_work_mode)
+    mode_source = raw_work_mode if isinstance(raw_work_mode, str) else None
+    mode = _enum(mode_source or work_mode.get('work_mode') or work_mode.get('mode'), WORK_MODES, 'assisted_task')
     review = _enum(payload.get('review_policy') or work_mode.get('review_policy'), REVIEW_POLICIES, 'optional')
     if mode == 'quick_answer':
         review = _enum(review, REVIEW_POLICIES, 'none')
     if mode == 'research_campaign' and review == 'optional':
         review = 'stage_gate'
-    if depth == 'loop' and review == 'optional':
-        review = 'required'
     return mode, review
 
 
@@ -171,6 +169,7 @@ def serialize_task_attempt(row: TaskAttempt, *, include_events: bool = False, ev
         'lineage': _jload(row.lineage_json, {}),
         'launch': _jload(row.launch_json, {}),
         'meta': _jload(row.meta_json, {}),
+        'research': build_research_attempt_row(row, events=events or [] if include_events else None),
         'created_by': row.created_by,
         'promoted_at': row.promoted_at.isoformat() if row.promoted_at else None,
         'archived_at': row.archived_at.isoformat() if row.archived_at else None,
@@ -439,6 +438,414 @@ def archive_task_attempt(session: Session, row: TaskAttempt, body: Any) -> TaskA
     return row
 
 
+
+def _list_events_by_attempt(events: list[TaskAttemptEvent]) -> dict[str, list[TaskAttemptEvent]]:
+    grouped: dict[str, list[TaskAttemptEvent]] = {}
+    for event in events or []:
+        grouped.setdefault(event.attempt_id, []).append(event)
+    return grouped
+
+
+def _status_decision(row: TaskAttempt) -> str:
+    if row.status == 'promoted':
+        return 'promote'
+    if row.status in {'archived', 'superseded', 'failed'}:
+        return 'reject'
+    if row.run_mode in {'branch', 'parallel_branch'}:
+        return 'branch_candidate'
+    if row.run_mode == 'retry':
+        return 'retry_candidate'
+    return ''
+
+
+def _latest_event_payload(events: list[TaskAttemptEvent], event_type: str) -> dict[str, Any]:
+    for event in reversed(events or []):
+        if event.event_type == event_type:
+            return _jload(event.event_json, {})
+    return {}
+
+
+def _normalize_recipe_depth(row: TaskAttempt, recipe: dict[str, Any]) -> str:
+    clean = _clean_text(recipe.get('depth') or recipe.get('work_depth') or recipe.get('mode'), 64).lower()
+    if clean in {'ask', 'single', 'single_pass', 'quick_answer'}:
+        return 'ask'
+    if clean in {'team', 'team_review'}:
+        return 'team'
+    if clean in {'loop', 'bounded_loop', 'project_task', 'research_campaign', 'customize'}:
+        return 'loop'
+    if row.work_mode == 'quick_answer':
+        return 'ask'
+    if row.work_mode == 'team_review':
+        return 'team'
+    if row.work_mode in {'project_task', 'research_campaign', 'customize'}:
+        return 'loop'
+    if row.run_mode in {'retry', 'branch', 'parallel_branch'}:
+        return 'loop'
+    return 'team' if row.target_team != 'general' else 'ask'
+
+
+def build_loop_recipe_snapshot(row: TaskAttempt) -> dict[str, Any]:
+    candidate = _jload(row.candidate_snapshot_json, {})
+    meta = _jload(row.meta_json, {})
+    context_policy = _jload(row.context_policy_json, {})
+    recipe = _as_dict(meta.get('loop_recipe') or candidate.get('loop_recipe') or candidate.get('recipe') or candidate.get('task_attempt_plan'))
+    skills = recipe.get('skills') or candidate.get('skills') or candidate.get('skill_requirements') or []
+    team_skeleton = (
+        recipe.get('team_skeleton')
+        or recipe.get('skeleton')
+        or recipe.get('skeleton_motif')
+        or candidate.get('skeleton_motif')
+        or candidate.get('motif_id')
+        or row.target_team
+    )
+    gates = recipe.get('gates') or recipe.get('approval_gates') or []
+    if not gates and row.review_policy not in {'none', ''}:
+        gates = [row.review_policy]
+    return {
+        'kind': 'loop_recipe_v1',
+        'depth': _normalize_recipe_depth(row, recipe),
+        'run_mode': row.run_mode,
+        'work_mode': row.work_mode,
+        'target_team': row.target_team,
+        'team_skeleton': team_skeleton,
+        'skills': _as_list(skills),
+        'memory_policy': {
+            'projection_profile': row.memory_projection_profile,
+            'package_id': row.memory_package_id,
+            'include_memory_package': bool(context_policy.get('include_memory_package')),
+            'include_full_chat_tail': bool(context_policy.get('include_full_chat_tail')),
+            'previous_result_policy': row.previous_result_policy,
+        },
+        'gates': _as_list(gates),
+        'approval_policy': row.review_policy,
+        'bounded_attempt_policy': _as_dict(meta.get('bounded_attempt_policy') or recipe.get('cycle_policy') or {}),
+        'config_hash_inputs': {
+            'attempt_id': row.attempt_id,
+            'candidate_snapshot': candidate,
+            'context_policy': context_policy,
+        },
+    }
+
+
+def build_memory_treatment_snapshot(row: TaskAttempt) -> dict[str, Any]:
+    meta = _jload(row.meta_json, {})
+    package = _jload(row.memory_package_json, {})
+    context_policy = _jload(row.context_policy_json, {})
+    explicit = _as_dict(meta.get('memory_treatment'))
+    treatment_type = _clean_text(explicit.get('type') or explicit.get('treatment_type'), 96).lower()
+    if not treatment_type:
+        if package.get('ablation_of') or package.get('minus_object_id'):
+            treatment_type = 'ablation'
+        elif package.get('stale') is True or package.get('conflicting') is True or package.get('risk') in {'stale', 'conflicting', 'poison'}:
+            treatment_type = 'stale_conflicting'
+        elif context_policy.get('include_full_chat_tail') is True:
+            treatment_type = 'full_chat_tail'
+        elif package or context_policy.get('include_memory_package') is True:
+            treatment_type = 'role_specific_package'
+        else:
+            treatment_type = 'control_no_memory'
+    included = package.get('memory_object_ids') or package.get('included_memory_object_ids') or package.get('object_ids') or []
+    excluded = package.get('excluded_memory_object_ids') or package.get('blocked_memory_object_ids') or []
+    return {
+        'kind': 'memory_treatment_v1',
+        'type': treatment_type,
+        'package_id': row.memory_package_id or package.get('package_id') or package.get('id'),
+        'projection_profile': row.memory_projection_profile,
+        'included_memory_object_ids': _as_list(included),
+        'excluded_memory_object_ids': _as_list(excluded),
+        'ablation_of': package.get('ablation_of') or package.get('minus_object_id') or explicit.get('ablation_of'),
+        'risk_labels': _as_list(package.get('risk_labels') or explicit.get('risk_labels')),
+        'read_only': _as_dict(package.get('permissions')).get('direct_write') is not True,
+    }
+
+
+def build_context_boundary_snapshot(row: TaskAttempt) -> dict[str, Any]:
+    meta = _jload(row.meta_json, {})
+    context_policy = _jload(row.context_policy_json, {})
+    boundary = _as_dict(meta.get('context_boundary') or meta.get('context_firewall') or {})
+    return {
+        'kind': 'context_boundary_v1',
+        'mode': _clean_text(boundary.get('mode') or context_policy.get('visibility_mode') or 'role_filtered', 64) or 'role_filtered',
+        'role_id': _clean_text(boundary.get('role_id') or context_policy.get('role_id'), 128) or None,
+        'allowed_memory_object_ids': _as_list(boundary.get('allowed_memory_object_ids') or boundary.get('allowed') or []),
+        'blocked_memory_object_ids': _as_list(boundary.get('blocked_memory_object_ids') or boundary.get('blocked') or []),
+        'policy_reasons': _as_list(boundary.get('policy_reasons') or []),
+        'privacy_filter': boundary.get('privacy_filter') is not False,
+        'stale_filter': boundary.get('stale_filter') is not False,
+        'sufficiency_check': boundary.get('sufficiency_check') is not False,
+        'context_policy': context_policy,
+    }
+
+
+def build_outcome_snapshot(row: TaskAttempt) -> dict[str, Any]:
+    result = _jload(row.result_json, {})
+    evaluation = _as_dict(result.get('evaluation') or result.get('metrics') or result.get('outcome') or {})
+    return {
+        'kind': 'attempt_outcome_v1',
+        'status': row.status,
+        'success': evaluation.get('success', result.get('success')),
+        'quality': evaluation.get('quality') or evaluation.get('quality_score'),
+        'cost': evaluation.get('cost') or evaluation.get('cost_estimate'),
+        'latency_ms': evaluation.get('latency_ms'),
+        'token_cost': evaluation.get('token_cost') or evaluation.get('total_tokens'),
+        'contradiction': bool(evaluation.get('contradiction', False)),
+        'stale_context_failure': bool(evaluation.get('stale_context_failure', False)),
+        'context_pollution': bool(evaluation.get('context_pollution', False)),
+        'leakage_detected': bool(evaluation.get('leakage_detected', False)),
+        'policy_violation': bool(evaluation.get('policy_violation', False)),
+        'role_sufficiency': evaluation.get('role_sufficiency'),
+        'raw': evaluation,
+    }
+
+
+def build_research_attempt_row(row: TaskAttempt, *, events: list[TaskAttemptEvent] | None = None) -> dict[str, Any]:
+    event_list = events or []
+    latest_decision = _latest_event_payload(event_list, 'user_decision_recorded')
+    return {
+        'kind': 'research_attempt_row_v1',
+        'task_id': row.task_id,
+        'attempt_id': row.attempt_id,
+        'parent_attempt_id': row.parent_attempt_id,
+        'run_id': row.run_id,
+        'loop_recipe': build_loop_recipe_snapshot(row),
+        'memory_treatment': build_memory_treatment_snapshot(row),
+        'context_boundary': build_context_boundary_snapshot(row),
+        'outcome': build_outcome_snapshot(row),
+        'user_decision': latest_decision or ({'decision': _status_decision(row)} if _status_decision(row) else {}),
+    }
+
+
+def record_task_attempt_decision(session: Session, row: TaskAttempt, body: Any) -> TaskAttempt:
+    payload = _as_dict(body)
+    decision = _enum(payload.get('decision'), {'promote', 'reject', 'retry', 'branch', 'edit_memory', 'approve_checkpoint', 'exclude_previous_result', 'neutral', 'prefer'}, 'neutral')
+    record = {
+        'kind': 'user_decision_v1',
+        'decision': decision,
+        'preferred_attempt_id': _clean_text(payload.get('preferred_attempt_id') or (row.attempt_id if decision == 'promote' else ''), 128) or None,
+        'rejected_attempt_id': _clean_text(payload.get('rejected_attempt_id') or (row.attempt_id if decision == 'reject' else ''), 128) or None,
+        'compared_attempt_ids': _as_list(payload.get('compared_attempt_ids')),
+        'reason_tags': _as_list(payload.get('reason_tags')),
+        'ratings': _as_dict(payload.get('ratings')),
+        'payload': _as_dict(payload.get('payload')),
+    }
+    summary = _clean_text(payload.get('summary') or f'user decision: {decision}', 512)
+    if decision == 'promote':
+        row.status = 'promoted'
+        row.promoted_at = utcnow()
+    elif decision == 'reject':
+        row.status = 'archived'
+        row.archived_at = utcnow()
+    elif decision == 'exclude_previous_result':
+        row.previous_result_policy = 'exclude'
+        row.context_policy_json = _jdump(_normalize_context_policy(
+            _jload(row.context_policy_json, {}),
+            previous_result_policy=row.previous_result_policy,
+            memory_projection_profile=row.memory_projection_profile,
+            include_memory_package=bool(_jload(row.memory_package_json, {})),
+        ))
+    row.updated_at = utcnow()
+    _event(session, row, 'user_decision_recorded', actor=_actor_from_payload(payload), summary=summary, payload=record)
+    return row
+
+
+def record_task_attempt_evaluation(session: Session, row: TaskAttempt, body: Any) -> TaskAttempt:
+    payload = _as_dict(body)
+    metrics = _as_dict(payload.get('metrics'))
+    for key in ['quality', 'success', 'cost', 'latency_ms', 'token_cost', 'contradiction', 'stale_context_failure', 'context_pollution', 'leakage_detected', 'policy_violation', 'role_sufficiency', 'notes', 'evaluator']:
+        if key in payload and payload.get(key) is not None:
+            metrics[key] = payload.get(key)
+    result = _jload(row.result_json, {})
+    existing_eval = _as_dict(result.get('evaluation'))
+    existing_eval.update(metrics)
+    result['evaluation'] = existing_eval
+    row.result_json = _jdump(result)
+    row.updated_at = utcnow()
+    _event(session, row, 'evaluation_recorded', actor=_actor_from_payload(payload), summary=_clean_text(payload.get('notes') or 'evaluation recorded', 512), payload={'kind': 'evaluation_v1', 'metrics': existing_eval})
+    return row
+
+
+def _variant_attempt_payload(row: TaskAttempt, *, variant_id: str, axis: str, label: str, overrides: dict[str, Any]) -> dict[str, Any]:
+    base_meta = _jload(row.meta_json, {})
+    meta = dict(base_meta)
+    meta.setdefault('research_axis', {})
+    meta['research_axis'] = {**_as_dict(meta.get('research_axis')), 'axis': axis, 'label': label, 'base_attempt_id': row.attempt_id}
+    meta.update(_as_dict(overrides.pop('meta', {})))
+    return {
+        'thread_id': row.thread_id,
+        'task_id': row.task_id,
+        'parent_attempt_id': row.attempt_id,
+        'attempt_id': f'{row.attempt_id}_{variant_id}',
+        'run_mode': 'parallel_branch',
+        'target_team': row.target_team,
+        'previous_result_policy': row.previous_result_policy,
+        'work_mode': row.work_mode,
+        'review_policy': row.review_policy,
+        'memory_projection_profile': row.memory_projection_profile,
+        'memory_package_id': row.memory_package_id,
+        'task_text': row.task_text,
+        'context_policy': _jload(row.context_policy_json, {}),
+        'memory_package': _jload(row.memory_package_json, {}),
+        'candidate_snapshot': _jload(row.candidate_snapshot_json, {}),
+        'lineage': {**_jload(row.lineage_json, {}), 'base_attempt_id': row.attempt_id, 'variant_axis': axis, 'variant_label': label},
+        'meta': meta,
+        'created_by': 'goc-research-variant',
+        **overrides,
+    }
+
+
+def _research_variants_for_attempt(row: TaskAttempt, axes: set[str]) -> list[dict[str, Any]]:
+    variants: list[dict[str, Any]] = []
+    if 'recipe' in axes:
+        variants.extend([
+            _variant_attempt_payload(row, variant_id='recipe_single', axis='recipe', label='single_pass', overrides={'work_mode': 'quick_answer', 'review_policy': 'none', 'target_team': 'general', 'meta': {'loop_recipe': {'depth': 'ask', 'team_skeleton': 'single_agent', 'gates': []}}}),
+            _variant_attempt_payload(row, variant_id='recipe_team', axis='recipe', label='team_review', overrides={'work_mode': 'team_review', 'review_policy': 'optional', 'meta': {'loop_recipe': {'depth': 'team', 'team_skeleton': 'planner_producer_reviewer', 'gates': ['optional_review']}}}),
+            _variant_attempt_payload(row, variant_id='recipe_loop', axis='recipe', label='bounded_loop', overrides={'work_mode': 'project_task', 'review_policy': 'stage_gate', 'meta': {'loop_recipe': {'depth': 'loop', 'team_skeleton': 'curator_producer_reviewer', 'gates': ['checkpoint']}}}),
+        ])
+    if 'memory' in axes:
+        variants.extend([
+            _variant_attempt_payload(row, variant_id='mem_control', axis='memory', label='control_no_memory', overrides={'memory_package_id': None, 'memory_package': {}, 'context_policy': {**_jload(row.context_policy_json, {}), 'include_memory_package': False, 'include_full_chat_tail': False}, 'meta': {'memory_treatment': {'type': 'control_no_memory'}}}),
+            _variant_attempt_payload(row, variant_id='mem_full_tail', axis='memory', label='full_chat_tail', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'include_full_chat_tail': True, 'include_memory_package': False}, 'meta': {'memory_treatment': {'type': 'full_chat_tail'}}}),
+            _variant_attempt_payload(row, variant_id='mem_role', axis='memory', label='role_specific_package', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'include_memory_package': True, 'include_full_chat_tail': False}, 'meta': {'memory_treatment': {'type': 'role_specific_package'}}}),
+            _variant_attempt_payload(row, variant_id='mem_ablation', axis='memory', label='ablation_minus_one_object', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'include_memory_package': True}, 'memory_package': {**_jload(row.memory_package_json, {}), 'ablation_of': 'one_memory_object'}, 'meta': {'memory_treatment': {'type': 'ablation'}}}),
+            _variant_attempt_payload(row, variant_id='mem_poison', axis='memory', label='stale_conflicting_package', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'include_memory_package': True}, 'memory_package': {**_jload(row.memory_package_json, {}), 'stale': True, 'conflicting': True, 'risk_labels': ['stale', 'conflicting']}, 'meta': {'memory_treatment': {'type': 'stale_conflicting'}}}),
+        ])
+    if 'context' in axes:
+        variants.extend([
+            _variant_attempt_payload(row, variant_id='ctx_full', axis='context', label='full_shared_memory', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'visibility_mode': 'full_shared'}, 'meta': {'context_boundary': {'mode': 'full_shared'}}}),
+            _variant_attempt_payload(row, variant_id='ctx_role', axis='context', label='role_filtered', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'visibility_mode': 'role_filtered'}, 'meta': {'context_boundary': {'mode': 'role_filtered', 'privacy_filter': True, 'sufficiency_check': True}}}),
+            _variant_attempt_payload(row, variant_id='ctx_least', axis='context', label='least_privilege', overrides={'context_policy': {**_jload(row.context_policy_json, {}), 'visibility_mode': 'least_privilege'}, 'meta': {'context_boundary': {'mode': 'least_privilege', 'privacy_filter': True, 'stale_filter': True, 'sufficiency_check': True}}}),
+        ])
+    return variants
+
+
+def generate_task_attempt_variants(session: Session, row: TaskAttempt, body: Any) -> dict[str, Any]:
+    payload = _as_dict(body)
+    axes_raw = {str(x).strip().lower() for x in _as_list(payload.get('axes')) if str(x).strip()}
+    axes = axes_raw or set()
+    if not axes:
+        if payload.get('include_recipe_variants') is not False:
+            axes.add('recipe')
+        if payload.get('include_memory_treatments') is not False:
+            axes.add('memory')
+        if payload.get('include_context_boundaries') is not False:
+            axes.add('context')
+    axes = axes.intersection({'recipe', 'memory', 'context'}) or {'recipe', 'memory', 'context'}
+    max_variants = max(1, min(int(payload.get('max_variants') or 12), 24))
+    variants = _research_variants_for_attempt(row, axes)[:max_variants]
+    created: list[TaskAttempt] = []
+    if payload.get('create') is not False:
+        thread = session.get(Thread, row.thread_id)
+        if not thread:
+            raise HTTPException(404, 'thread not found')
+        for variant_payload in variants:
+            existing = session.exec(select(TaskAttempt).where(TaskAttempt.thread_id == row.thread_id).where(TaskAttempt.attempt_id == variant_payload['attempt_id'])).first()
+            if existing:
+                created.append(existing)
+                continue
+            created.append(create_task_attempt(session, thread, variant_payload))
+    _event(session, row, 'research_variants_generated', actor=_actor_from_payload(payload), summary=f'{len(variants)} research variants generated', payload={'axes': sorted(axes), 'variant_attempt_ids': [v.get('attempt_id') for v in variants]})
+    return {
+        'kind': 'task_attempt_variant_generation_v1',
+        'base_attempt_id': row.attempt_id,
+        'axes': sorted(axes),
+        'count': len(variants),
+        'variants': variants,
+        'created_attempts': [serialize_task_attempt(item) for item in created],
+    }
+
+
+def _build_preference_rows(rows: list[TaskAttempt], events_by_attempt: dict[str, list[TaskAttemptEvent]]) -> list[dict[str, Any]]:
+    preferences: list[dict[str, Any]] = []
+    by_task: dict[str, list[TaskAttempt]] = {}
+    for row in rows:
+        by_task.setdefault(row.task_id, []).append(row)
+    for task_id, task_rows in by_task.items():
+        promoted = [row for row in task_rows if row.status == 'promoted']
+        for winner in promoted:
+            for loser in task_rows:
+                if loser.attempt_id == winner.attempt_id:
+                    continue
+                preferences.append({
+                    'kind': 'recipe_preference_row_v1',
+                    'task_id': task_id,
+                    'winner_attempt_id': winner.attempt_id,
+                    'loser_attempt_id': loser.attempt_id,
+                    'label_source': 'promoted_status',
+                    'winner_recipe': build_loop_recipe_snapshot(winner),
+                    'loser_recipe': build_loop_recipe_snapshot(loser),
+                })
+        for row in task_rows:
+            for event in events_by_attempt.get(row.attempt_id, []):
+                if event.event_type != 'user_decision_recorded':
+                    continue
+                payload = _jload(event.event_json, {})
+                winner = payload.get('preferred_attempt_id')
+                loser = payload.get('rejected_attempt_id')
+                if winner and loser and winner != loser:
+                    preferences.append({
+                        'kind': 'recipe_preference_row_v1',
+                        'task_id': task_id,
+                        'winner_attempt_id': winner,
+                        'loser_attempt_id': loser,
+                        'label_source': 'user_decision_event',
+                        'reason_tags': payload.get('reason_tags') or [],
+                    })
+            if row.parent_attempt_id and row.run_mode in {'branch', 'retry', 'parallel_branch'} and row.status in {'promoted', 'completed'}:
+                preferences.append({
+                    'kind': 'recipe_preference_row_v1',
+                    'task_id': task_id,
+                    'winner_attempt_id': row.attempt_id,
+                    'loser_attempt_id': row.parent_attempt_id,
+                    'label_source': f'{row.run_mode}_outcome',
+                    'winner_recipe': build_loop_recipe_snapshot(row),
+                })
+    return preferences
+
+
+def export_research_dataset(session: Session, *, thread_id: str, task_id: str | None = None, include_events: bool = True) -> dict[str, Any]:
+    rows = list_task_attempts(session, thread_id=thread_id, task_id=task_id, limit=200)
+    events = list_task_attempt_events(session, thread_id=thread_id, task_id=task_id, limit=1000) if include_events else []
+    events_by_attempt = _list_events_by_attempt(events)
+    attempt_rows = [build_research_attempt_row(row, events=events_by_attempt.get(row.attempt_id, [])) for row in rows]
+    preferences = _build_preference_rows(rows, events_by_attempt)
+    memory_trials = []
+    context_rows = []
+    for row in rows:
+        attempt = build_research_attempt_row(row, events=events_by_attempt.get(row.attempt_id, []))
+        if attempt['memory_treatment'].get('type'):
+            memory_trials.append({
+                'kind': 'memory_trial_row_v1',
+                'task_id': row.task_id,
+                'attempt_id': row.attempt_id,
+                'role_id': attempt['context_boundary'].get('role_id'),
+                'memory_treatment': attempt['memory_treatment'],
+                'outcome': attempt['outcome'],
+            })
+        context_rows.append({
+            'kind': 'context_firewall_row_v1',
+            'task_id': row.task_id,
+            'attempt_id': row.attempt_id,
+            'context_boundary': attempt['context_boundary'],
+            'outcome': attempt['outcome'],
+        })
+    return {
+        'kind': 'loop_research_dataset_v1',
+        'thread_id': thread_id,
+        'task_id': task_id,
+        'counts': {
+            'attempts': len(attempt_rows),
+            'recipe_preferences': len(preferences),
+            'memory_trials': len(memory_trials),
+            'context_firewall_rows': len(context_rows),
+            'events': len(events),
+        },
+        'attempts': attempt_rows,
+        'recipe_preferences': preferences,
+        'memory_trials': memory_trials,
+        'context_firewall_rows': context_rows,
+        'events': [serialize_task_attempt_event(event) for event in events] if include_events else [],
+    }
+
 def compare_task_attempts(session: Session, *, thread_id: str, task_id: str) -> dict[str, Any]:
     rows = list_task_attempts(session, thread_id=thread_id, task_id=task_id, limit=200)
     by_status: dict[str, int] = {}
@@ -451,6 +858,8 @@ def compare_task_attempts(session: Session, *, thread_id: str, task_id: str) -> 
         by_run_mode[row.run_mode] = by_run_mode.get(row.run_mode, 0) + 1
         if row.status == 'promoted' and promoted is None:
             promoted = row.attempt_id
+    events = list_task_attempt_events(session, thread_id=thread_id, task_id=task_id, limit=1000)
+    events_by_attempt = _list_events_by_attempt(events)
     return {
         'kind': 'task_attempt_compare_v1',
         'thread_id': thread_id,
@@ -461,4 +870,6 @@ def compare_task_attempts(session: Session, *, thread_id: str, task_id: str) -> 
         'target_team_counts': by_target_team,
         'run_mode_counts': by_run_mode,
         'attempts': [serialize_task_attempt(row) for row in rows],
+        'recipe_preferences': _build_preference_rows(rows, events_by_attempt),
+        'research_attempts': [build_research_attempt_row(row, events=events_by_attempt.get(row.attempt_id, [])) for row in rows],
     }

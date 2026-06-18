@@ -351,8 +351,6 @@ export type MemoryImportIntentFeature = {
 
 
 export type WorkModeFeature = {
-  work_depth?: string | null
-  work_depth_label?: string | null
   work_mode?: string | null
   label?: string | null
   agents_hint?: string | null
@@ -557,7 +555,6 @@ export type TeamSelectionDataset = {
     attempt_run_mode_counts?: Record<string, number>
     memory_import_profile_counts?: Record<string, number>
     work_mode_counts?: Record<string, number>
-    work_depth_counts?: Record<string, number>
     work_mode_review_policy_counts?: Record<string, number>
     alignment_event_samples?: Record<string, TeamSelectionOutcomeSample[]>
   } | null

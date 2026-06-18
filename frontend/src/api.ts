@@ -804,6 +804,38 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })),
+  recordTaskAttemptDecision: (attemptId: string, body: Record<string, unknown>) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/decision`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  recordTaskAttemptEvaluation: (attemptId: string, body: Record<string, unknown>) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/evaluation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  generateTaskAttemptVariants: (attemptId: string, body: Record<string, unknown> = {}) =>
+    j<any>(apiFetch(`/api/task-attempts/${encodeURIComponent(attemptId)}/variants`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  exportTaskAttemptResearchDataset: (threadId: string, options: { task_id?: string | null; include_events?: boolean | null; format?: 'json' | 'jsonl' | null } = {}) => {
+    const q = new URLSearchParams()
+    if (options.task_id) q.set('task_id', options.task_id)
+    if (typeof options.include_events === 'boolean') q.set('include_events', options.include_events ? 'true' : 'false')
+    if (options.format && options.format !== 'json') q.set('format', options.format)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    if (options.format === 'jsonl') {
+      return apiFetch(`/api/threads/${threadId}/task-attempts/research-dataset${suffix}`).then(async (res) => {
+        if (!res.ok) throw new Error(await readApiErrorResponse(res))
+        return res.text()
+      })
+    }
+    return j<any>(apiFetch(`/api/threads/${threadId}/task-attempts/research-dataset${suffix}`))
+  },
 
 
   semanticBoard: (threadId: string, cardType?: string | null, limit?: number | null) => {

@@ -11,9 +11,12 @@ try:
     from app.schemas import (
         TaskAttemptArchiveRequest,
         TaskAttemptCreateRequest,
+        TaskAttemptDecisionRequest,
+        TaskAttemptEvaluationRequest,
         TaskAttemptLaunchRequest,
         TaskAttemptMemoryPackageRequest,
         TaskAttemptPromoteRequest,
+        TaskAttemptVariantRequest,
     )
     from tests.db_test_utils import create_test_engine, dispose_tracked_engines
     _IMPORT_ERROR = None
@@ -22,7 +25,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment guard
     Principal = reset_current_principal = set_current_principal = None  # type: ignore[assignment]
     Thread = None  # type: ignore[assignment]
     task_attempts_router = None  # type: ignore[assignment]
-    TaskAttemptArchiveRequest = TaskAttemptCreateRequest = TaskAttemptLaunchRequest = TaskAttemptMemoryPackageRequest = TaskAttemptPromoteRequest = None  # type: ignore[assignment]
+    TaskAttemptArchiveRequest = TaskAttemptCreateRequest = TaskAttemptDecisionRequest = TaskAttemptEvaluationRequest = TaskAttemptLaunchRequest = TaskAttemptMemoryPackageRequest = TaskAttemptPromoteRequest = TaskAttemptVariantRequest = None  # type: ignore[assignment]
     create_test_engine = dispose_tracked_engines = None  # type: ignore[assignment]
     _IMPORT_ERROR = exc
 
@@ -97,6 +100,54 @@ class TaskAttemptRouteTests(unittest.TestCase):
 
         archived = task_attempts_router.archive_attempt(attempt_id, TaskAttemptArchiveRequest(reason='cleanup'))
         self.assertEqual(archived['attempt']['status'], 'archived')
+
+
+    def test_research_decision_evaluation_export_and_variants(self) -> None:
+        base = task_attempts_router.create_attempt(TaskAttemptCreateRequest(
+            thread_id=self.thread_id,
+            task_id='task-research',
+            attempt_id='attempt-base',
+            run_mode='new',
+            work_mode='team_review',
+            target_team='review',
+            task_text='review the evidence',
+            context_policy={'include_memory_package': True},
+            memory_package={'package_id': 'mem-role', 'memory_object_ids': ['m1', 'm2']},
+            meta={'loop_recipe': {'depth': 'team', 'team_skeleton': 'producer_reviewer', 'skills': ['review'], 'gates': ['checkpoint']}},
+        ))
+        self.assertEqual(base['attempt']['research']['loop_recipe']['depth'], 'team')
+        self.assertEqual(base['attempt']['research']['memory_treatment']['type'], 'role_specific_package')
+
+        variants = task_attempts_router.generate_attempt_variants('attempt-base', TaskAttemptVariantRequest(axes=['recipe', 'memory'], max_variants=4))
+        self.assertTrue(variants['ok'])
+        self.assertEqual(variants['result']['count'], 4)
+        self.assertGreaterEqual(len(variants['result']['created_attempts']), 4)
+
+        eval_result = task_attempts_router.record_attempt_evaluation('attempt-base', TaskAttemptEvaluationRequest(
+            quality=0.84,
+            success=True,
+            token_cost=1200,
+            context_pollution=False,
+            evaluator='unit-test',
+        ))
+        self.assertEqual(eval_result['attempt']['research']['outcome']['quality'], 0.84)
+        self.assertTrue(eval_result['attempt']['research']['outcome']['success'])
+
+        decision = task_attempts_router.record_attempt_decision('attempt-base', TaskAttemptDecisionRequest(
+            decision='promote',
+            compared_attempt_ids=['attempt-base', 'attempt-base_mem_control'],
+            rejected_attempt_id='attempt-base_mem_control',
+            reason_tags=['quality', 'memory'],
+        ))
+        self.assertEqual(decision['attempt']['status'], 'promoted')
+        self.assertGreaterEqual(len(decision['compare']['recipe_preferences']), 1)
+
+        exported = task_attempts_router.export_attempt_research_dataset(self.thread_id, task_id='task-research')
+        dataset = exported['dataset']
+        self.assertEqual(dataset['kind'], 'loop_research_dataset_v1')
+        self.assertGreaterEqual(dataset['counts']['attempts'], 5)
+        self.assertGreaterEqual(dataset['counts']['recipe_preferences'], 1)
+        self.assertTrue(any(row['attempt_id'] == 'attempt-base' for row in dataset['attempts']))
 
     def test_promote_can_supersede_siblings(self) -> None:
         first = task_attempts_router.create_attempt(TaskAttemptCreateRequest(
