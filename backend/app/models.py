@@ -583,6 +583,24 @@ class AgentPackageRecord(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow, index=True)
 
 
+
+class RoomUsageEventRecord(SQLModel, table=True):
+    __tablename__ = "room_usage_event_records"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    thread_id: str = Field(index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    chat_id: str = Field(default="", index=True)
+    user_id: str = Field(default="", index=True)
+    event_type: str = Field(default="room_event", index=True)
+    command: str = Field(default="", index=True)
+    domain_label: str = Field(default="general_workbench", index=True)
+    recommended_approach: str = Field(default="", index=True)
+    suggested_action: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class ModelNodeRecord(SQLModel, table=True):
     __tablename__ = "model_node_records"
     __table_args__ = (UniqueConstraint("node_id", name="uq_model_node_records_node"),)

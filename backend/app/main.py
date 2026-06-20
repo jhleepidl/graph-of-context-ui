@@ -34,6 +34,8 @@ from app.routers.improvement_jobs import router as improvement_jobs_router
 from app.routers.model_nodes import router as model_nodes_router
 from app.routers.task_attempts import router as task_attempts_router
 from app.routers.team_library import router as team_library_router
+from app.routers.room_library import router as room_library_router
+from app.routers.room_usage import router as room_usage_router
 from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
@@ -143,5 +145,7 @@ app.include_router(improvement_jobs_router)
 app.include_router(model_nodes_router)
 app.include_router(task_attempts_router)
 app.include_router(team_library_router)
+app.include_router(room_library_router)
+app.include_router(room_usage_router)
 
 app.include_router(hierarchy_router)
