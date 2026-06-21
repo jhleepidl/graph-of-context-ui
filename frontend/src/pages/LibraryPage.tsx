@@ -71,6 +71,32 @@ type SkillItem = {
   execution_adapter?: SkillExecutionAdapter
 }
 
+type RoomComponentItem = {
+  component_id: string
+  component_type: string
+  local_id?: string
+  title?: string
+  role?: string
+  domain_label?: string
+  package_id?: string
+  package_title?: string
+  package_visibility?: string
+  description?: string
+  tags?: string[]
+  memory_access?: {
+    read_private_source_room_memory?: boolean
+    read_target_room_projection?: boolean
+    write_memory_directly?: boolean
+    allow_propose_update?: boolean
+  }
+  install_policy?: {
+    can_borrow?: boolean
+    can_install_resident?: boolean
+    can_fork?: boolean
+    default_scope?: string
+  }
+}
+
 function normalizeTitle(title?: string | null): string {
   return (title || '').trim().toLowerCase()
 }
@@ -190,6 +216,7 @@ export default function LibraryPage({ onNavigate }: Props) {
   const [skillLibraryThreadId, setSkillLibraryThreadId] = useState<string | null>(null)
   const [items, setItems] = useState<BlueprintItem[]>([])
   const [skills, setSkills] = useState<SkillItem[]>([])
+  const [roomComponents, setRoomComponents] = useState<RoomComponentItem[]>([])
   const [loading, setLoading] = useState(false)
   const [installingNodeId, setInstallingNodeId] = useState<string | null>(null)
   const [skillBusyId, setSkillBusyId] = useState<string | null>(null)
@@ -220,6 +247,14 @@ export default function LibraryPage({ onNavigate }: Props) {
       return left.localeCompare(right)
     })
   }, [skills])
+
+  const sortedRoomComponents = useMemo(() => {
+    return [...roomComponents].sort((a, b) => {
+      const left = `${a.component_type}:${a.package_id}:${a.local_id || a.component_id}`.toLowerCase()
+      const right = `${b.component_type}:${b.package_id}:${b.local_id || b.component_id}`.toLowerCase()
+      return left.localeCompare(right)
+    })
+  }, [roomComponents])
 
   const countAgentProfilesInThread = useCallback(async (threadId: string): Promise<number> => {
     try {
@@ -307,6 +342,9 @@ export default function LibraryPage({ onNavigate }: Props) {
       const out = await api.threads()
       const list = Array.isArray(out) ? (out as ThreadSummary[]) : []
       setThreads(list)
+      const roomComponentRes = await api.listRoomComponents('', 200).catch(() => null)
+      const roomComponentItems = Array.isArray(roomComponentRes?.items) ? (roomComponentRes.items as RoomComponentItem[]) : []
+      setRoomComponents(roomComponentItems)
       const publicLibrary = list.find((thread) => {
         return asString(thread.service_id) === 'public' && normalizeTitle(thread.title) === PUBLIC_LIBRARY_TITLE
       }) || null
@@ -349,6 +387,7 @@ export default function LibraryPage({ onNavigate }: Props) {
       setError(message)
       setItems([])
       setSkills([])
+      setRoomComponents([])
     } finally {
       setLoading(false)
     }
@@ -499,6 +538,56 @@ export default function LibraryPage({ onNavigate }: Props) {
                 <tr>
                   <td colSpan={11}>
                     <span className="muted">등록된 `agent_blueprint`가 없습니다.</span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ marginTop: 24, marginBottom: 8 }}><b>AI Room Components</b></div>
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Room Packages are decomposed into reusable agent cards, memory schema cards, and policy cards. Borrowed agents receive projected target-room context only; private memory is not copied.
+        </div>
+        <div className="routeTableWrap">
+          <table className="routeTable">
+            <thead>
+              <tr>
+                <th>component</th>
+                <th>type</th>
+                <th>package</th>
+                <th>domain</th>
+                <th>reuse</th>
+                <th>memory access</th>
+                <th>tags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sortedRoomComponents.map((item) => (
+                <tr key={`${item.package_id}:${item.component_id}`}>
+                  <td>{item.local_id || item.title || item.component_id}</td>
+                  <td>{item.component_type || '-'}</td>
+                  <td>{item.package_title || item.package_id || '-'}</td>
+                  <td>{item.domain_label || '-'}</td>
+                  <td>
+                    {[
+                      item.install_policy?.can_borrow !== false ? 'borrow' : '',
+                      item.install_policy?.can_install_resident !== false ? 'install' : '',
+                      item.install_policy?.can_fork !== false ? 'fork' : '',
+                    ].filter(Boolean).join(' / ') || '-'}
+                  </td>
+                  <td>
+                    {item.component_type === 'agent_card'
+                      ? `source private: no · target projection: ${item.memory_access?.read_target_room_projection === false ? 'no' : 'yes'} · direct write: no`
+                      : '-'}
+                  </td>
+                  <td>{Array.isArray(item.tags) && item.tags.length ? item.tags.join(', ') : '-'}</td>
+                </tr>
+              ))}
+              {sortedRoomComponents.length === 0 && !loading && (
+                <tr>
+                  <td colSpan={7}>
+                    <span className="muted">등록된 public room component가 없습니다. Room Package publish/export 후 표시됩니다.</span>
                   </td>
                 </tr>
               )}

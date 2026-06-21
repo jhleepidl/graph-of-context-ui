@@ -7,6 +7,7 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.models import AgentPackageRecord, Thread, utcnow
+from app.services.room_components import augment_room_package_with_components
 
 
 def _clean(value: Any = '', max_len: int = 2000) -> str:
@@ -104,7 +105,7 @@ def sanitize_room_package(raw: dict[str, Any]) -> dict[str, Any]:
         room = _clean(row.get('room') or row.get('output') or row.get('response') or '', 700)
         if user or room:
             examples.append({'user': user, 'room': room})
-    return {
+    return augment_room_package_with_components({
         **pkg,
         'kind': 'shared_room_package_v1',
         'schema_version': 1,
@@ -148,7 +149,7 @@ def sanitize_room_package(raw: dict[str, Any]) -> dict[str, Any]:
             'credentials': 'never_copy',
             'user_must_approve_memory_import': True,
         },
-    }
+    })
 
 
 def room_package_to_row(row: AgentPackageRecord) -> dict[str, Any]:

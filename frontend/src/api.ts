@@ -1312,6 +1312,38 @@ export const api = {
         body: JSON.stringify({ text, model: model || null }),
       }),
     ),
+
+  listRoomLibrary: (q = '', limit = 100) =>
+    j<any>(apiFetch(`/api/room-library?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`)),
+
+  listRoomComponents: (q = '', limit = 200) =>
+    j<any>(apiFetch(`/api/room-library/components?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`)),
+
+  getRoomPackageComponents: (packageId: string) =>
+    j<any>(apiFetch(`/api/room-library/${encodeURIComponent(packageId)}/components`)),
+
+  previewBorrowedRoomAgent: (packageId: string, body: Record<string, any>) =>
+    j<any>(apiFetch(`/api/room-library/${encodeURIComponent(packageId)}/borrow-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    })),
+
+  listThreadRoomComponents: (threadId: string, q = '', limit = 200) =>
+    j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-components?q=${encodeURIComponent(q)}&limit=${encodeURIComponent(String(limit))}`)),
+
+  recommendBorrowedRoomAgents: (threadId: string, body: Record<string, any>) =>
+    j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-borrow-recommendations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    })),
+
+  getThreadRoomEvolution: (threadId: string, limit = 200) =>
+    j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-evolution?limit=${encodeURIComponent(String(limit))}`)),
+
+  getThreadRoomEvolutionPublicExport: (threadId: string, limit = 200) =>
+    j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-evolution/public-export?limit=${encodeURIComponent(String(limit))}`)),
 }
 
 export function listThreadWatchTasks(threadId: string, limit = 20) {
