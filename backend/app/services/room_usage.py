@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.models import RoomUsageEventRecord, Thread
 from app.services.room_learning import build_room_learning_snapshot
+from app.services.room_skill_discovery import build_room_skill_discovery_bundle
 
 
 def _clean(value: Any = '', max_len: int = 1000) -> str:
@@ -102,4 +103,7 @@ def summarize_room_usage_events(items: list[dict[str, Any]]) -> dict[str, Any]:
 def get_room_learning_snapshot(session: Session, thread: Thread, *, limit: int = 200) -> dict[str, Any]:
     events = list_room_usage_events(session, thread, limit=limit)
     snapshot = build_room_learning_snapshot(events.get('items') or [])
+    skill_discovery = build_room_skill_discovery_bundle(snapshot)
+    snapshot['skill_discovery'] = skill_discovery
+    snapshot['room_memory_trial_plan'] = skill_discovery.get('room_memory_schema_trial_plan')
     return {'ok': True, 'thread_id': thread.id, 'snapshot': snapshot}

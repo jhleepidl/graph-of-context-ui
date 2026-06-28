@@ -37,6 +37,10 @@ from app.routers.team_library import router as team_library_router
 from app.routers.room_library import router as room_library_router
 from app.routers.room_components import router as room_components_router
 from app.routers.room_usage import router as room_usage_router
+from app.routers.static_project_manifests import router as static_project_manifests_router
+from app.routers.runtime_telemetry import router as runtime_telemetry_router
+from app.routers.room_package_registry import router as room_package_registry_router
+from app.routers.claude_compatible_events import router as claude_compatible_events_router
 from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
@@ -149,5 +153,9 @@ app.include_router(team_library_router)
 app.include_router(room_library_router)
 app.include_router(room_components_router)
 app.include_router(room_usage_router)
+app.include_router(static_project_manifests_router)
+app.include_router(runtime_telemetry_router)
+app.include_router(room_package_registry_router)
+app.include_router(claude_compatible_events_router)
 
 app.include_router(hierarchy_router)

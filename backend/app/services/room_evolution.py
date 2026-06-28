@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.services.room_skill_discovery import build_room_skill_discovery_bundle
+
 
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -210,6 +212,7 @@ def propose_room_evolution(items: list[dict[str, Any]], *, room_package: dict[st
             },
         })
     room_package = room_package or {}
+    skill_discovery = build_room_skill_discovery_bundle({'aggregate': aggregate, 'proposals': proposals})
     top_domain = (aggregate.get('top_domains') or [{}])[0].get('id') if aggregate.get('top_domains') else ''
     return {
         'kind': 'room_evolution_snapshot_v1',
@@ -221,6 +224,8 @@ def propose_room_evolution(items: list[dict[str, Any]], *, room_package: dict[st
         'maturity': infer_room_maturity(counts),
         'aggregate': aggregate,
         'proposals': proposals,
+        'skill_discovery': skill_discovery,
+        'room_memory_trial_plan': skill_discovery.get('room_memory_schema_trial_plan'),
         'governance': {
             'ai_role': 'architect_advisor_proposer_not_controller',
             'auto_apply': False,
