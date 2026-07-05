@@ -1929,3 +1929,135 @@ button.tiny.isActive {
   font-size: 0.78rem;
   color: var(--muted, #64748b);
 }
+
+.companionHubStack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.companionHero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(240px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.companionHeroAside {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.companionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.companionList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.companionChoice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 112px;
+  text-align: left;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.companionChoice span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.companionChoice.isActive {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.companionSourceList,
+.companionCommandList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.companionActionRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid #eef2f7;
+}
+
+.companionActionRow:first-of-type {
+  border-top: 0;
+}
+
+.companionInlineDraft {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.companionInlineDraft input {
+  flex: 1 1 260px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+}
+
+.companionFlowGrid,
+.companionNotes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.companionNotes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.companionFlowCard {
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+}
+
+.companionCopyToast {
+  position: sticky;
+  bottom: 12px;
+  align-self: flex-end;
+  max-width: min(720px, 100%);
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #0f172a;
+  color: white;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+  z-index: 2;
+}
+
+.companionCopyToast code {
+  color: #bfdbfe;
+}
+
+@media (max-width: 900px) {
+  .companionHero,
+  .companionGrid,
+  .companionList,
+  .companionFlowGrid,
+  .companionNotes {
+    grid-template-columns: 1fr;
+  }
+}

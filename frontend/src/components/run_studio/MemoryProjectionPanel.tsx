@@ -1,6 +1,6 @@
 import React from 'react'
 import { api } from '../../api'
-import { type RunStudioMemoryGraph, type MemoryConflictDetail, type MemoryEdgeDetail, type MemoryNodeDrilldown, type ConflictHistoryEvent, type MemoryLifecycleEvent } from './types'
+import { type RunStudioMemoryGraph, type MemoryConflictDetail, type MemoryEdgeDetail, type MemoryNodeDrilldown, type ConflictHistoryEvent, type MemoryLifecycleEvent, type MemoryBrowserSurface } from './types'
 
 type Props = {
   memoryGraph: RunStudioMemoryGraph | null
@@ -40,6 +40,48 @@ async function resolveQuickly(conflict: MemoryConflictDetail, onRefresh?: () => 
 }
 
 
+
+
+function renderMemoryBrowserSurfaces(surfaces: MemoryBrowserSurface[] | undefined) {
+  const rows = Array.isArray(surfaces) ? surfaces.filter(Boolean) : []
+  if (!rows.length) return <div className="muted">No browsable memory nodes yet. Runtime writes will appear here after they are synced to GoC.</div>
+  return (
+    <div className="runStudioAgentCardGrid">
+      {rows.slice(0, 12).map((surface) => (
+        <article key={cleanText(surface.surface_id || surface.title || 'surface')} className="runStudioAgentCard" style={{ gridColumn: '1 / -1' }}>
+          <div className="runStudioAgentCardHeader">
+            <div>
+              <div className="runStudioAgentCardTitle">{cleanText(surface.title || surface.surface_id || 'Memory surface')}</div>
+              <div className="muted">{cleanText(surface.surface_id)} · {cleanText(surface.semantic_kind || 'generic')}</div>
+            </div>
+            <span className="runStudioStatusChip runStudioStatus--idle">{Number(surface.node_count || 0)} nodes</span>
+          </div>
+          <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+            {surface.visibility_scope && <span className="pill">visibility: {cleanText(surface.visibility_scope)}</span>}
+            {surface.write_mode && <span className="pill">write: {cleanText(surface.write_mode)}</span>}
+            {Object.entries(surface.status_counts || {}).slice(0, 5).map(([status, count]) => <span className="pill" key={`status-${status}`}>{status}: {count}</span>)}
+            {Object.entries(surface.owner_role_counts || {}).slice(0, 5).map(([role, count]) => <span className="pill" key={`role-${role}`}>role {role}: {count}</span>)}
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(surface.nodes || []).slice(0, 6).map((node) => (
+              <div key={cleanText(node.id || `${surface.surface_id}-${node.preview}`)} className="runStudioInlineList">
+                <div className="runStudioMetaRow" style={{ marginBottom: 4 }}>
+                  {node.node_type && <span className="pill">{cleanText(node.node_type)}</span>}
+                  {node.status && <span className="pill">status: {cleanText(node.status)}</span>}
+                  {node.owner_role_id && <span className="pill">role: {cleanText(node.owner_role_id)}</span>}
+                  {node.trust_tier && <span className="pill">trust: {cleanText(node.trust_tier)}</span>}
+                  {typeof node.confidence === 'number' && <span className="pill">conf: {Number(node.confidence).toFixed(2)}</span>}
+                </div>
+                <div className="muted">{cleanText(node.preview || '(empty memory node)')}</div>
+                <div className="muted" style={{ marginTop: 4 }}>id: {cleanText(node.id || '-')} {node.updated_at ? `· updated ${cleanText(node.updated_at)}` : ''}</div>
+              </div>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  )
+}
 
 function renderConflictHistory(events: ConflictHistoryEvent[] | undefined, title = 'History') {
   const items = Array.isArray(events) ? events.filter(Boolean).slice(-3).reverse() : []
@@ -197,6 +239,7 @@ export default function MemoryProjectionPanel({
   const edges = memoryGraph?.edges || []
   const conflicts = memoryGraph?.conflicts || []
   const lifecycleEvents = memoryGraph?.lifecycle_events || []
+  const browser = memoryGraph?.browser || null
 
   return (
     <section className="card runStudioPanel">
@@ -245,6 +288,23 @@ export default function MemoryProjectionPanel({
           </div>
 
           <div className="runStudioTeamGroupList">
+            <section className="runStudioTeamGroup">
+              <div className="runStudioTeamGroupHeader">
+                <div>
+                  <div className="runStudioExecutionLaneTitle">Memory Browser</div>
+                  <div className="muted">Browse saved memory by surface, status, owner role, and provenance. Telegram shows a compact text view; GoC is the richer browsing surface.</div>
+                </div>
+                <div className="muted">{browser?.summary?.node_count || 0}</div>
+              </div>
+              <div className="runStudioMetaRow" style={{ marginBottom: 8 }}>
+                <span className="pill">surfaces: {browser?.summary?.surface_count || 0}</span>
+                <span className="pill">nodes: {browser?.summary?.node_count || 0}</span>
+                {Object.entries(browser?.summary?.status_counts || {}).slice(0, 5).map(([status, count]) => <span className="pill" key={`browser-status-${status}`}>{status}: {count}</span>)}
+                {Object.entries(browser?.summary?.owner_role_counts || {}).slice(0, 5).map(([role, count]) => <span className="pill" key={`browser-role-${role}`}>role {role}: {count}</span>)}
+              </div>
+              {renderMemoryBrowserSurfaces(browser?.surfaces)}
+            </section>
+
             <section className="runStudioTeamGroup">
               <div className="runStudioTeamGroupHeader">
                 <div className="runStudioExecutionLaneTitle">Recent projections</div>

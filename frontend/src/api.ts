@@ -720,10 +720,11 @@ export const api = {
     const cleanRunId = (runId || '').trim()
     if (cleanRunId) q.set('run_id', cleanRunId)
     const suffix = q.toString() ? `?${q.toString()}` : ''
-    const [projections, edges, conflicts] = await Promise.all([
+    const [projections, edges, conflicts, browser] = await Promise.all([
       j<any>(apiFetch(`/api/threads/${threadId}/memory/projections${suffix}`)),
       j<any>(apiFetch(`/api/threads/${threadId}/memory/edges${suffix}`)),
       j<any>(apiFetch(`/api/threads/${threadId}/memory/conflicts`)),
+      j<any>(apiFetch(`/api/threads/${threadId}/memory/browse?limit=160`)),
     ])
     return {
       projections: Array.isArray(projections?.items) ? projections.items : [],
@@ -735,6 +736,7 @@ export const api = {
       conflict_count: Number(conflicts?.count || 0),
       conflict_status_counts: conflicts?.status_counts || {},
       conflict_reason_counts: conflicts?.reason_counts || {},
+      browser: browser || null,
     }
   },
   resolveMemoryConflict: (conflictId: string, body: { status?: string | null; winning_node_id?: string | null; losing_node_ids?: string[] | null; summary?: string | null; rationale_codes?: string[] | null; supporting_claim_node_ids?: string[] | null; supporting_evidence_node_ids?: string[] | null; supporting_memory_node_ids?: string[] | null; resolved_by?: string | null; resolution_source?: string | null; merge_note?: string | null }) =>
@@ -1344,6 +1346,9 @@ export const api = {
 
   getThreadRoomEvolutionPublicExport: (threadId: string, limit = 200) =>
     j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-evolution/public-export?limit=${encodeURIComponent(String(limit))}`)),
+
+  companionControlManifest: () =>
+    j<any>(apiFetch('/api/companion-control/manifest')),
 }
 
 export function listThreadWatchTasks(threadId: string, limit = 20) {

@@ -739,6 +739,53 @@ export type MemoryConflictDetail = {
   latest_merge_event?: ConflictHistoryEvent | null
 }
 
+
+export type MemoryBrowserNode = {
+  id?: string | null
+  surface_id?: string | null
+  node_type?: string | null
+  status?: string | null
+  owner_agent_id?: string | null
+  owner_role_id?: string | null
+  trust_tier?: string | null
+  created_run_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  preview?: string | null
+  content?: Record<string, unknown> | null
+  provenance?: Record<string, unknown> | null
+  confidence?: number | null
+}
+
+export type MemoryBrowserSurface = {
+  surface_id?: string | null
+  title?: string | null
+  semantic_kind?: string | null
+  visibility_scope?: string | null
+  write_mode?: string | null
+  policy?: Record<string, unknown> | null
+  node_count?: number
+  status_counts?: Record<string, number>
+  node_type_counts?: Record<string, number>
+  owner_role_counts?: Record<string, number>
+  nodes?: MemoryBrowserNode[]
+}
+
+export type MemoryBrowser = {
+  schema_version?: string | null
+  thread_id?: string | null
+  filters?: Record<string, unknown> | null
+  summary?: {
+    surface_count?: number
+    node_count?: number
+    status_counts?: Record<string, number>
+    node_type_counts?: Record<string, number>
+    owner_role_counts?: Record<string, number>
+    trust_tier_counts?: Record<string, number>
+  } | null
+  surfaces?: MemoryBrowserSurface[]
+}
+
 export type RunStudioMemoryGraph = {
   projections?: MemoryProjectionDetail[]
   projection_count?: number
@@ -749,6 +796,7 @@ export type RunStudioMemoryGraph = {
   lifecycle_event_count?: number
   lifecycle_event_type_counts?: Record<string, number>
   conflicts?: MemoryConflictDetail[]
+  browser?: MemoryBrowser | null
   conflict_count?: number
   conflict_status_counts?: Record<string, number>
   conflict_reason_counts?: Record<string, number>

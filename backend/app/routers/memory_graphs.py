@@ -172,6 +172,59 @@ def _extract_supporting_links(*payloads: dict | None) -> dict[str, list[str]]:
     }
 
 
+
+
+def _preview_memory_content(content: Any, max_len: int = 220) -> str:
+    if isinstance(content, dict):
+        for key in ('title', 'summary', 'claim', 'value', 'text', 'decision', 'answer', 'note'):
+            value = str(content.get(key) or '').strip()
+            if value:
+                return value[:max_len]
+        try:
+            return json.dumps(content, ensure_ascii=False, sort_keys=True)[:max_len]
+        except Exception:
+            return str(content)[:max_len]
+    return str(content or '').strip()[:max_len]
+
+
+def _summarize_memory_node_for_browser(row: MemoryNode) -> dict[str, Any]:
+    content = _jload(row.content_json, {})
+    provenance = _jload(row.provenance_json, {})
+    confidence = None
+    if isinstance(provenance, dict):
+        confidence = provenance.get('confidence') or provenance.get('confidence_score')
+    if confidence is None and isinstance(content, dict):
+        confidence = content.get('confidence') or content.get('confidence_score')
+    try:
+        confidence = float(confidence) if confidence is not None else None
+    except Exception:
+        confidence = None
+    return {
+        'id': row.id,
+        'surface_id': row.surface_id,
+        'node_type': row.node_type,
+        'status': row.status,
+        'owner_agent_id': row.owner_agent_id,
+        'owner_role_id': row.owner_role_id,
+        'trust_tier': row.trust_tier,
+        'created_run_id': row.created_run_id,
+        'created_at': row.created_at.isoformat() if row.created_at else None,
+        'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+        'preview': _preview_memory_content(content),
+        'content': content if isinstance(content, dict) else {'text': str(content or '')},
+        'provenance': provenance if isinstance(provenance, dict) else {},
+        'confidence': confidence,
+    }
+
+
+def _count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get(key) or '').strip() or '(none)'
+        out[value] = out.get(value, 0) + 1
+    return out
+
+
 def _active_conflict_node_ids(session: Session, thread_id: str) -> set[str]:
     rows = session.exec(
         select(MemoryConflict).where(
@@ -488,6 +541,84 @@ def create_memory_node(thread_id: str, body: Any):
             'conflicts': [summarize_memory_conflict({'id': conflict.id, 'surface_id': conflict.surface_id, 'left_node_id': conflict.left_node_id, 'right_node_id': conflict.right_node_id, 'status': conflict.status, 'reason': conflict.reason, 'resolution_json': _jload(conflict.resolution_json, {})}) for conflict in created_conflicts],
         }
 
+
+
+@router.get('/threads/{thread_id}/memory/browse')
+def browse_memory(
+    thread_id: str,
+    status: str | None = None,
+    surface_id: str | None = None,
+    owner_role_id: str | None = None,
+    q: str | None = None,
+    limit: int = 120,
+):
+    """Return a browsing-friendly memory view grouped by memory surface.
+
+    This endpoint is intentionally read-only. Telegram remains the compact
+    command surface, while GoC can show memory as browsable cards with filters,
+    provenance, lifecycle status, and surface grouping.
+    """
+    clean_limit = max(1, min(int(limit or 120), 500))
+    clean_status = str(status or '').strip().lower()
+    clean_surface = str(surface_id or '').strip()
+    clean_owner = str(owner_role_id or '').strip()
+    clean_query = str(q or '').strip().lower()
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        surfaces = session.exec(select(MemorySurface).where(MemorySurface.thread_id == thread.id)).all()
+        statement = select(MemoryNode).where(MemoryNode.thread_id == thread.id)
+        if clean_status:
+            statement = statement.where(MemoryNode.status == clean_status)
+        if clean_surface:
+            statement = statement.where(MemoryNode.surface_id == clean_surface)
+        if clean_owner:
+            statement = statement.where(MemoryNode.owner_role_id == clean_owner)
+        rows = session.exec(statement.order_by(MemoryNode.updated_at.desc()).limit(clean_limit)).all()
+        nodes = [_summarize_memory_node_for_browser(row) for row in rows]
+        if clean_query:
+            nodes = [row for row in nodes if clean_query in json.dumps({'preview': row.get('preview'), 'content': row.get('content'), 'provenance': row.get('provenance')}, ensure_ascii=False).lower()]
+
+        surface_lookup = {row.surface_id: row for row in surfaces}
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for node in nodes:
+            grouped.setdefault(str(node.get('surface_id') or '(none)'), []).append(node)
+        surface_cards = []
+        for sid, items in grouped.items():
+            surface = surface_lookup.get(sid)
+            surface_cards.append({
+                'surface_id': sid,
+                'title': surface.title if surface else sid,
+                'semantic_kind': surface.semantic_kind if surface else 'unknown',
+                'visibility_scope': surface.visibility_scope if surface else 'unknown',
+                'write_mode': surface.write_mode if surface else 'unknown',
+                'policy': _jload(surface.policy_json, {}) if surface else {},
+                'node_count': len(items),
+                'status_counts': _count_by(items, 'status'),
+                'node_type_counts': _count_by(items, 'node_type'),
+                'owner_role_counts': _count_by(items, 'owner_role_id'),
+                'nodes': items,
+            })
+        surface_cards.sort(key=lambda item: (-int(item.get('node_count') or 0), str(item.get('surface_id') or '')))
+        return {
+            'schema_version': 'goc.memory_browser/v1',
+            'thread_id': thread.id,
+            'filters': {
+                'status': clean_status or None,
+                'surface_id': clean_surface or None,
+                'owner_role_id': clean_owner or None,
+                'q': clean_query or None,
+                'limit': clean_limit,
+            },
+            'summary': {
+                'surface_count': len(surface_cards),
+                'node_count': len(nodes),
+                'status_counts': _count_by(nodes, 'status'),
+                'node_type_counts': _count_by(nodes, 'node_type'),
+                'owner_role_counts': _count_by(nodes, 'owner_role_id'),
+                'trust_tier_counts': _count_by(nodes, 'trust_tier'),
+            },
+            'surfaces': surface_cards,
+        }
 
 @router.post('/threads/{thread_id}/memory/edges')
 def create_memory_edge(thread_id: str, body: MemoryEdgeCreateRequest):

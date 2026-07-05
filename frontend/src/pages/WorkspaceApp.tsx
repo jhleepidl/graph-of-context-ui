@@ -11,6 +11,7 @@ const ContextInspector = lazy(() => import('../components/ContextInspector'))
 const JobSettingsPanel = lazy(() => import('../components/JobSettingsPanel'))
 const ExecutionPanel = lazy(() => import('../components/ExecutionPanel'))
 const ConversationAgentsPanel = lazy(() => import('../components/ConversationAgentsPanel'))
+const CompanionControlHub = lazy(() => import('../components/CompanionControlHub'))
 const RunStudioLayout = lazy(() => import('../components/run_studio/RunStudioLayout'))
 const ArtifactsPanel = lazy(() => import('../components/run_studio/ArtifactsPanel'))
 const BoardPanel = lazy(() => import('../components/BoardPanel'))
@@ -973,6 +974,12 @@ export default function WorkspaceApp() {
         workspaceMainTab={workspaceMainTab}
         setWorkspaceMainTab={setWorkspaceMainTab}
       />
+
+      {workspaceMainTab === 'companion' && (
+        <Suspense fallback={<WorkspacePanelFallback label="Companion Hub를 불러오는 중…" />}>
+          <CompanionControlHub threadId={threadId} />
+        </Suspense>
+      )}
 
       {workspaceMainTab === 'run_studio' && (
         <Suspense fallback={<WorkspacePanelFallback label="Run Studio를 불러오는 중…" />}>

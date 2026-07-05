@@ -81,6 +81,33 @@ class RuntimeCompatibilityRouteTests(unittest.TestCase):
         self.assertEqual([item['id'] for item in messages['items']], [first['id'], second['id']])
         self.assertEqual([item['text'] for item in messages['items']], ['hello', 'hi'])
 
+
+    def test_memory_browse_groups_nodes_for_ui(self) -> None:
+        memory_graphs_router.create_memory_surface(self.thread_id, {
+            'surfaceId': 'user_preferences',
+            'title': 'User Preferences',
+            'semanticKind': 'preference',
+            'visibilityScope': 'room',
+            'writeMode': 'reviewed_append',
+            'policy': {'owner': 'room'},
+        })
+        memory_graphs_router.create_memory_node(self.thread_id, {
+            'surfaceId': 'user_preferences',
+            'nodeType': 'preference',
+            'ownerRoleId': 'personal',
+            'contentJson': {'summary': '사용자는 서울대입구역 주변 추천을 선호한다.'},
+            'provenanceJson': {'source': 'memory_test', 'confidence': 0.9},
+            'trustTier': 'observed',
+            'status': 'active',
+        })
+
+        browse = memory_graphs_router.browse_memory(self.thread_id, status='active')
+        self.assertEqual(browse['schema_version'], 'goc.memory_browser/v1')
+        self.assertEqual(browse['summary']['node_count'], 1)
+        self.assertEqual(browse['surfaces'][0]['surface_id'], 'user_preferences')
+        self.assertIn('서울대입구역', browse['surfaces'][0]['nodes'][0]['preview'])
+        self.assertEqual(browse['surfaces'][0]['owner_role_counts']['personal'], 1)
+
     def test_memory_endpoints_accept_camel_case_runtime_payloads(self) -> None:
         surface = memory_graphs_router.create_memory_surface(self.thread_id, {
             'surfaceId': 'shared_core',
