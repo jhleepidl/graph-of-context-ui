@@ -44,6 +44,7 @@ import SemanticBoardPanel from './SemanticBoardPanel'
 import DecisionTracePanel from './DecisionTracePanel'
 import ContextSubstratePanel from './ContextSubstratePanel'
 import ContextRuntimePanel from './ContextRuntimePanel'
+import RoomDocsPanel from './RoomDocsPanel'
 import {
   type RunStudioAgentTeam,
   type RunStudioContextPacks,
@@ -388,6 +389,7 @@ export default function RunStudioLayout({
             <AgentPackagesPanel threadId={threadId} summary={summary} />
             <TeamPackagesPanel threadId={threadId} />
           </div>
+          <RoomDocsPanel threadId={threadId} />
           <div className="runStudioGrid runStudioGrid--top">
             {teamView || effectiveTeam ? (
               <AgentTeamPanel

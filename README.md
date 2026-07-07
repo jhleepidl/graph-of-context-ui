@@ -85,3 +85,7 @@ Open `http://127.0.0.1:5173`.
 ### Memory Browser
 
 GoC includes a read-only room memory browser at `GET /api/threads/{thread_id}/memory/browse`, surfaced in Run Studio above memory projections. It groups memory by surface and exposes status, owner role, trust tier, provenance, and preview text for easier browsing than Telegram.
+
+### Room Docs Browser
+
+Run Studio includes a Room Docs Browser backed by `GET /api/threads/{thread_id}/room-docs`, showing `AGENTS.md`, MOCs, living docs, and action notes derived from room usage events.

@@ -1341,6 +1341,9 @@ export const api = {
       body: JSON.stringify(body || {}),
     })),
 
+  getThreadRoomDocs: (threadId: string, limit = 200) =>
+    j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-docs?limit=${encodeURIComponent(String(limit))}`)),
+
   getThreadRoomEvolution: (threadId: string, limit = 200) =>
     j<any>(apiFetch(`/api/threads/${encodeURIComponent(threadId)}/room-evolution?limit=${encodeURIComponent(String(limit))}`)),
 

@@ -7,6 +7,7 @@ from sqlmodel import Session
 
 from app.db import engine
 from app.services.room_usage import get_room_learning_snapshot, list_room_usage_events, record_room_usage_event
+from app.services.room_docs import build_room_docs_browser
 from app.services.room_evolution import public_room_evolution_export
 from app.tenant import require_thread_access, require_thread_write_access
 
@@ -33,6 +34,15 @@ def get_thread_room_learning(thread_id: str, limit: int = 200):
     with Session(engine) as session:
         thread = require_thread_access(session, thread_id)
         return get_room_learning_snapshot(session, thread, limit=limit)
+
+
+
+
+@router.get('/threads/{thread_id}/room-docs')
+def get_thread_room_docs(thread_id: str, limit: int = 200):
+    with Session(engine) as session:
+        thread = require_thread_access(session, thread_id)
+        return build_room_docs_browser(session, thread, limit=limit)
 
 
 @router.get('/threads/{thread_id}/room-evolution')
