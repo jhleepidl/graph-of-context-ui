@@ -105,7 +105,7 @@ export default function ReviewInboxPanel({ threadId }: Props) {
     <div className="runStudioPanelHeader">
       <div>
         <h3 style={{ margin: 0 }}>Review Inbox</h3>
-        <div className="muted">First stop for proposals: memory commits, learned rules, evidence gaps, skills, and materialization candidates.</div>
+        <div className="muted">First stop for proposals: memory commits, package/recipe/agent/model-policy scorer outputs, topology trials, evidence gaps, skills, and materialization candidates.</div>
       </div>
       <div className="runStudioMetaRow">
         <button onClick={runProjectionWorker} disabled={Boolean(actingId) || !threadId}>{actingId === 'projection-worker' ? 'Projecting…' : 'Run projection worker'}</button>
@@ -141,6 +141,8 @@ export default function ReviewInboxPanel({ threadId }: Props) {
           <div className="muted">{kindOf(p)} · {clean(p.status) || 'pending'} · {clean(p.recommended_action)} · lang: {clean(p.source_original_language || p.user_surface_locale) || 'auto'} · canonical: {clean(p.canonical_projection_status) || 'unknown'}{clean(p.projection_method) ? ` via ${clean(p.projection_method)}` : ''} {p.ephemeral_detected ? '· detected only' : ''}</div>
           <div className="runStudioMetaRow" style={{ marginTop: 6 }}>
             <button disabled={!persisted || Boolean(actingId)} onClick={() => act(p, 'approve')}>{actingId === `${p.proposal_id}:approve` ? 'Approving…' : 'Approve'}</button>
+            <button disabled={!persisted || Boolean(actingId)} onClick={() => act(p, 'trial')}>{actingId === `${p.proposal_id}:trial` ? 'Requesting trial…' : 'Trial'}</button>
+            <button disabled={!persisted || Boolean(actingId)} onClick={() => act(p, 'rollback')}>{actingId === `${p.proposal_id}:rollback` ? 'Requesting rollback…' : 'Rollback'}</button>
             <button disabled={!persisted || Boolean(actingId)} onClick={() => act(p, 'reject')}>Reject</button>
             <button disabled={!persisted || Boolean(actingId)} onClick={() => act(p, 'needs_evidence')}>Needs evidence</button>
             <button disabled={!persisted || Boolean(actingId)} onClick={() => act(p, 'mark_stale')}>Mark stale</button>

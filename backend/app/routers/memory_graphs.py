@@ -144,6 +144,40 @@ def _normalize_event_record_request(body: Any) -> dict[str, Any]:
     }
 
 
+
+def _memory_node_upsert_keys(payload: dict[str, Any]) -> list[str]:
+    content = payload.get('content') if isinstance(payload.get('content'), dict) else {}
+    provenance = payload.get('provenance') if isinstance(payload.get('provenance'), dict) else {}
+    keys: list[str] = []
+    for source in (provenance, content, payload):
+        if not isinstance(source, dict):
+            continue
+        for key in ('source_memory_id', 'memory_id', 'source_candidate_id', 'source_id', 'provenance_fingerprint'):
+            value = str(source.get(key) or '').strip()
+            if value and value not in keys:
+                keys.append(value)
+    return keys[:8]
+
+
+def _find_existing_memory_node_for_upsert(session: Session, *, thread_id: str, surface_id: str, payload: dict[str, Any]) -> MemoryNode | None:
+    keys = set(_memory_node_upsert_keys(payload))
+    if not keys:
+        return None
+    rows = session.exec(
+        select(MemoryNode).where(
+            MemoryNode.thread_id == thread_id,
+            MemoryNode.surface_id == surface_id,
+        )
+    ).all()
+    for node in rows:
+        content = _jload(node.content_json, {})
+        provenance = _jload(node.provenance_json, {})
+        existing = set(_memory_node_upsert_keys({'content': content, 'provenance': provenance}))
+        if keys.intersection(existing):
+            return node
+    return None
+
+
 def _extract_supporting_links(*payloads: dict | None) -> dict[str, list[str]]:
     claim_ids: list[str] = []
     evidence_ids: list[str] = []
@@ -363,19 +397,34 @@ def create_memory_node(thread_id: str, body: Any):
         ).first()
         if surface is None:
             raise HTTPException(400, 'memory surface does not exist for thread')
-        row = MemoryNode(
-            thread_id=thread.id,
-            surface_id=surface_id,
-            node_type=str(payload.get('node_type') or 'note').strip() or 'note',
-            owner_agent_id=(str(payload.get('owner_agent_id')).strip() if payload.get('owner_agent_id') else None),
-            owner_role_id=(str(payload.get('owner_role_id')).strip() if payload.get('owner_role_id') else None),
-            content_json=_jdump(payload.get('content') or {}),
-            provenance_json=_jdump(payload.get('provenance') or {}),
-            trust_tier=str(payload.get('trust_tier') or 'derived').strip() or 'derived',
-            status=str(payload.get('status') or 'draft').strip() or 'draft',
-            created_run_id=(str(payload.get('created_run_id')).strip() if payload.get('created_run_id') else None),
-            updated_at=utcnow(),
-        )
+        existing_row = _find_existing_memory_node_for_upsert(session, thread_id=thread.id, surface_id=surface_id, payload=payload)
+        upserted = existing_row is not None
+        previous_status = str(existing_row.status or '').strip() if existing_row is not None else None
+        if existing_row is None:
+            row = MemoryNode(
+                thread_id=thread.id,
+                surface_id=surface_id,
+                node_type=str(payload.get('node_type') or 'note').strip() or 'note',
+                owner_agent_id=(str(payload.get('owner_agent_id')).strip() if payload.get('owner_agent_id') else None),
+                owner_role_id=(str(payload.get('owner_role_id')).strip() if payload.get('owner_role_id') else None),
+                content_json=_jdump(payload.get('content') or {}),
+                provenance_json=_jdump(payload.get('provenance') or {}),
+                trust_tier=str(payload.get('trust_tier') or 'derived').strip() or 'derived',
+                status=str(payload.get('status') or 'draft').strip() or 'draft',
+                created_run_id=(str(payload.get('created_run_id')).strip() if payload.get('created_run_id') else None),
+                updated_at=utcnow(),
+            )
+        else:
+            row = existing_row
+            row.node_type = str(payload.get('node_type') or row.node_type or 'note').strip() or 'note'
+            row.owner_agent_id = (str(payload.get('owner_agent_id')).strip() if payload.get('owner_agent_id') else row.owner_agent_id)
+            row.owner_role_id = (str(payload.get('owner_role_id')).strip() if payload.get('owner_role_id') else row.owner_role_id)
+            row.content_json = _jdump(payload.get('content') or {})
+            row.provenance_json = _jdump(payload.get('provenance') or {})
+            row.trust_tier = str(payload.get('trust_tier') or row.trust_tier or 'derived').strip() or 'derived'
+            row.status = str(payload.get('status') or row.status or 'draft').strip() or 'draft'
+            row.created_run_id = (str(payload.get('created_run_id')).strip() if payload.get('created_run_id') else row.created_run_id)
+            row.updated_at = utcnow()
         session.add(row)
         session.commit()
         session.refresh(row)
@@ -384,14 +433,17 @@ def create_memory_node(thread_id: str, body: Any):
             session,
             thread_id=thread.id,
             node=row,
-            event_type=lifecycle_event_type_for_status(row.status),
+            event_type='node_upserted' if upserted else lifecycle_event_type_for_status(row.status),
+            from_status=previous_status if upserted and previous_status != row.status else None,
             to_status=row.status,
             actor=row.owner_role_id or row.owner_agent_id or 'runtime',
-            source='memory_node_create',
-            summary=f"Node {row.id} created on surface {row.surface_id} as {row.status}",
+            source='memory_node_upsert' if upserted else 'memory_node_create',
+            summary=f"Node {row.id} {'upserted' if upserted else 'created'} on surface {row.surface_id} as {row.status}",
             metadata={
                 **_extract_supporting_links(payload.get('provenance') if isinstance(payload.get('provenance'), dict) else {}),
                 'supporting_memory_node_ids': [row.id],
+                'upserted': upserted,
+                'upsert_keys': _memory_node_upsert_keys(payload),
             },
             created_run_id=row.created_run_id,
         )
@@ -537,7 +589,8 @@ def create_memory_node(thread_id: str, body: Any):
             session.refresh(conflict)
         session.refresh(row)
         return {
-            'node': {'id': row.id, 'surface_id': row.surface_id, 'node_type': row.node_type, 'status': row.status},
+            'node': {'id': row.id, 'surface_id': row.surface_id, 'node_type': row.node_type, 'status': row.status, 'upserted': upserted},
+            'upserted': upserted,
             'conflicts': [summarize_memory_conflict({'id': conflict.id, 'surface_id': conflict.surface_id, 'left_node_id': conflict.left_node_id, 'right_node_id': conflict.right_node_id, 'status': conflict.status, 'reason': conflict.reason, 'resolution_json': _jload(conflict.resolution_json, {})}) for conflict in created_conflicts],
         }
 

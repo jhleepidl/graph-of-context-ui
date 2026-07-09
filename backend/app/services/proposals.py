@@ -17,6 +17,11 @@ ACTION_STATUS = {
     "stale": "stale",
     "needs_evidence": "needs_evidence",
     "request_evidence": "needs_evidence",
+    "trial": "trial_requested",
+    "start_trial": "trial_requested",
+    "request_trial": "trial_requested",
+    "rollback": "rollback_requested",
+    "request_rollback": "rollback_requested",
     "commit": "committed",
     "auto_commit": "auto_committed",
     "promote": "approved",
@@ -72,7 +77,7 @@ def _risk(value: Any = "") -> str:
 
 def _status(value: Any = "") -> str:
     status = _clean(value).lower()
-    return status if status in {"pending_review", "review_required", "needs_evidence", "candidate", "approved", "rejected", "stale", "committed", "auto_committed", "superseded", "blocked"} else "pending_review"
+    return status if status in {"pending_review", "review_required", "needs_evidence", "candidate", "trial_requested", "rollback_requested", "approved", "rejected", "stale", "committed", "auto_committed", "superseded", "blocked"} else "pending_review"
 
 def _normalize_proposal(raw: dict[str, Any], *, source: str = "runtime", run_id: str | None = None) -> dict[str, Any]:
     row = raw if isinstance(raw, dict) else {}
@@ -310,7 +315,7 @@ def build_review_inbox(session: Session, thread: Thread, *, include_detected: bo
         "proposals": rows,
         "policy": {
             "principle": "Agent proposes. Runtime commits. GoC reviews.",
-            "actions": ["approve", "reject", "mark_stale", "needs_evidence", "commit", "promote", "merge", "reopen"],
-            "safe_defaults": ["learned rules remain candidates", "unsupported claims need evidence", "shadow modules are not canonical", "write skills require approval"],
+            "actions": ["approve", "reject", "trial", "rollback", "mark_stale", "needs_evidence", "commit", "promote", "merge", "reopen"],
+            "safe_defaults": ["learned rules remain candidates", "unsupported claims need evidence", "shadow modules are not canonical", "trials are reversible", "write skills require approval"],
         },
     }
