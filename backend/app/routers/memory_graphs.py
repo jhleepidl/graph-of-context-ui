@@ -589,7 +589,7 @@ def create_memory_node(thread_id: str, body: Any):
             session.refresh(conflict)
         session.refresh(row)
         return {
-            'node': {'id': row.id, 'surface_id': row.surface_id, 'node_type': row.node_type, 'status': row.status, 'upserted': upserted},
+            'node': {'id': row.id, 'surface_id': row.surface_id, 'node_type': row.node_type, 'status': row.status, 'created_run_id': row.created_run_id, 'upserted': upserted},
             'upserted': upserted,
             'conflicts': [summarize_memory_conflict({'id': conflict.id, 'surface_id': conflict.surface_id, 'left_node_id': conflict.left_node_id, 'right_node_id': conflict.right_node_id, 'status': conflict.status, 'reason': conflict.reason, 'resolution_json': _jload(conflict.resolution_json, {})}) for conflict in created_conflicts],
         }

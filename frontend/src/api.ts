@@ -338,6 +338,28 @@ export function createMemoryMaterializationShadowModule(threadId: string, body: 
 }
 
 export const api = {
+  harnessEvaluationRuns: (options: { limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/evaluations/harness/runs${suffix}`))
+  },
+  harnessEvaluationVariants: (options: { limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/evaluations/harness/variants${suffix}`))
+  },
+  runtimeRunProjection: (runId: string) =>
+    j<any>(apiFetch(`/api/runtime/runs/${encodeURIComponent(runId)}/projection`)),
+  runtimeEvents: (options: { run_id?: string; thread_id?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (options.run_id) q.set('run_id', options.run_id)
+    if (options.thread_id) q.set('thread_id', options.thread_id)
+    if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/runtime/events${suffix}`))
+  },
   telegramWebAppLogin: (body: { init_data: string; max_age_sec?: number; ttl_sec?: number }) =>
     j<any>(apiFetch('/api/auth/telegram/webapp', {
       method: 'POST',

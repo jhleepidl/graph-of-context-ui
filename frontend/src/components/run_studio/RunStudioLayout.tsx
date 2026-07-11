@@ -36,6 +36,8 @@ import ProjectionRetrievalPanel from './ProjectionRetrievalPanel'
 import GraphCompressionPanel from './GraphCompressionPanel'
 import HarnessSpecPanel from './HarnessSpecPanel'
 import RuntimePolicyPanel from './RuntimePolicyPanel'
+import RuntimeEventProjectionPanel from './RuntimeEventProjectionPanel'
+import HarnessEvaluationPanel from './HarnessEvaluationPanel'
 import AgentActivityPanel from './AgentActivityPanel'
 import AgentPackagesPanel from './AgentPackagesPanel'
 import TeamPackagesPanel from './TeamPackagesPanel'
@@ -426,6 +428,11 @@ export default function RunStudioLayout({
             <RuntimePolicyPanel summary={summary} />
             <AgentActivityPanel threadId={threadId} runId={summary?.now?.state?.current_run_id || null} summary={summary} />
           </div>
+          <RuntimeEventProjectionPanel
+            runId={summary?.now?.state?.current_run_id || null}
+            threadId={threadId}
+          />
+          <HarnessEvaluationPanel />
           <ContextRuntimePanel threadId={threadId} runId={summary?.now?.state?.current_run_id || null} summary={summary} />
           <DecisionTracePanel threadId={threadId} runId={summary?.now?.state?.current_run_id || null} summary={summary} />
           <ContextSubstratePanel threadId={threadId} runId={summary?.now?.state?.current_run_id || null} summary={summary} />

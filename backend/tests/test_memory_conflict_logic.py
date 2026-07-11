@@ -171,7 +171,7 @@ class MemoryConflictLogicTests(unittest.TestCase):
             }
         ])
         self.assertEqual(dataset['kind'], 'team_selection_dataset_v1')
-        self.assertEqual(dataset['schema_version'], 5)
+        self.assertEqual(dataset['schema_version'], 7)
         self.assertEqual(dataset['count'], 1)
         self.assertEqual(dataset['rows'][0]['selected_topology_pattern'], 'review_loop')
         self.assertEqual(dataset['rows'][0]['selected_role_ids'], ['builder', 'reviewer'])

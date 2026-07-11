@@ -865,3 +865,132 @@ class HandoffDeltaEvent(SQLModel, table=True):
     payload_json: str = Field(default="{}")
     created_at: datetime = Field(default_factory=utcnow, index=True)
     ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class RuntimeEvent(SQLModel, table=True):
+    __tablename__ = "runtime_events"
+    __table_args__ = (UniqueConstraint("event_id", name="uq_runtime_events_event_id"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    event_id: str = Field(index=True)
+    idempotency_key: str = Field(default="", index=True)
+    thread_id: Optional[str] = Field(default=None, index=True)
+    run_id: Optional[str] = Field(default=None, index=True)
+    job_id: Optional[str] = Field(default=None, index=True)
+    event_sequence: int = Field(default=0, index=True)
+    event_type: str = Field(default="event", index=True)
+    source: str = Field(default="ddalggak", index=True)
+    target: str = Field(default="goc", index=True)
+    correlation_id: str = Field(default="", index=True)
+    causation_id: Optional[str] = Field(default=None, index=True)
+    command_id: Optional[str] = Field(default=None, index=True)
+    aggregate_type: str = Field(default="run", index=True)
+    aggregate_id: str = Field(default="", index=True)
+    aggregate_revision: int = Field(default=0, index=True)
+    privacy_class: str = Field(default="internal_runtime", index=True)
+    payload_digest: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}", sa_column=Column(Text))
+    event_json: str = Field(default="{}", sa_column=Column(Text))
+    occurred_at: datetime = Field(default_factory=utcnow, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class RuntimeRunProjection(SQLModel, table=True):
+    __tablename__ = "runtime_run_projections"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_runtime_run_projections_run_id"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    run_id: str = Field(index=True)
+    thread_id: Optional[str] = Field(default=None, index=True)
+    job_id: Optional[str] = Field(default=None, index=True)
+    status: str = Field(default="unknown", index=True)
+    last_event_type: str = Field(default="", index=True)
+    last_sequence: int = Field(default=0, index=True)
+    event_count: int = Field(default=0, index=True)
+    agent_event_count: int = Field(default=0, index=True)
+    error_count: int = Field(default=0, index=True)
+    command_count: int = Field(default=0, index=True)
+    projection_json: str = Field(default="{}", sa_column=Column(Text))
+    started_at: Optional[datetime] = Field(default=None, index=True)
+    finished_at: Optional[datetime] = Field(default=None, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class RuntimeCommand(SQLModel, table=True):
+    __tablename__ = "runtime_commands"
+    __table_args__ = (UniqueConstraint("command_id", name="uq_runtime_commands_command_id"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    command_id: str = Field(index=True)
+    command_type: str = Field(index=True)
+    thread_id: Optional[str] = Field(default=None, index=True)
+    aggregate_type: str = Field(default="room", index=True)
+    aggregate_id: str = Field(default="", index=True)
+    expected_revision: int = Field(default=0, index=True)
+    status: str = Field(default="queued", index=True)
+    actor_type: str = Field(default="user", index=True)
+    actor_id: str = Field(default="", index=True)
+    worker_id: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}", sa_column=Column(Text))
+    result_json: str = Field(default="{}", sa_column=Column(Text))
+    error_message: str = Field(default="", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    accepted_at: Optional[datetime] = Field(default=None, index=True)
+    completed_at: Optional[datetime] = Field(default=None, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class RuntimeCommandEvent(SQLModel, table=True):
+    __tablename__ = "runtime_command_events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    command_id: str = Field(index=True)
+    event_type: str = Field(default="created", index=True)
+    status: str = Field(default="queued", index=True)
+    worker_id: str = Field(default="", index=True)
+    event_json: str = Field(default="{}", sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class HarnessEvaluationRun(SQLModel, table=True):
+    __tablename__ = "harness_evaluation_runs"
+    __table_args__ = (UniqueConstraint("evaluation_id", name="uq_harness_evaluation_runs_evaluation_id"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    evaluation_id: str = Field(index=True)
+    suite: str = Field(default="live", index=True)
+    status: str = Field(default="completed", index=True)
+    scenario_count: int = Field(default=0, index=True)
+    total_run_count: int = Field(default=0, index=True)
+    passed_run_count: int = Field(default=0, index=True)
+    failed_run_count: int = Field(default=0, index=True)
+    recommendation_variant_id: str = Field(default="", index=True)
+    recommendation_runtime_signature: str = Field(default="", index=True)
+    payload_json: str = Field(default="{}", sa_column=Column(Text))
+    started_at: Optional[datetime] = Field(default=None, index=True)
+    finished_at: Optional[datetime] = Field(default=None, index=True)
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class HarnessEvaluationVariantResult(SQLModel, table=True):
+    __tablename__ = "harness_evaluation_variant_results"
+    __table_args__ = (UniqueConstraint("evaluation_id", "runtime_signature", name="uq_harness_eval_variant_result"),)
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    evaluation_id: str = Field(index=True)
+    runtime_signature: str = Field(default="", index=True)
+    harness_variant_id: str = Field(index=True)
+    harness_variant_hash: str = Field(default="", index=True)
+    provider: str = Field(default="", index=True)
+    model: str = Field(default="", index=True)
+    reasoning_effort: str = Field(default="", index=True)
+    cli_version: str = Field(default="", index=True)
+    run_count: int = Field(default=0, index=True)
+    passed_run_count: int = Field(default=0, index=True)
+    failed_run_count: int = Field(default=0, index=True)
+    success_rate: float = Field(default=0.0, index=True)
+    average_score: float = Field(default=0.0, index=True)
+    average_duration_ms: float = Field(default=0.0, index=True)
+    payload_json: str = Field(default="{}", sa_column=Column(Text))
+    ingested_at: datetime = Field(default_factory=utcnow, index=True)

@@ -32,6 +32,10 @@ from app.models import (
     TeamSelectionEvent,
     TaskAttempt,
     TaskAttemptEvent,
+    RuntimeEvent,
+    RuntimeRunProjection,
+    RuntimeCommand,
+    RuntimeCommandEvent,
 )
 from app.services.agent_defaults import ensure_default_agents
 

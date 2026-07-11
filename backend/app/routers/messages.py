@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import logging
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.params import Param
 from sqlmodel import Session, select
 
 from app.db import engine
@@ -46,13 +47,16 @@ def add_message(thread_id: str, body: MessageCreate):
 
 @router.get("/threads/{thread_id}/messages")
 def list_messages(thread_id: str, limit: int = Query(default=200, ge=1, le=1000)):
+    if isinstance(limit, Param):
+        limit = limit.default
+    clean_limit = max(1, min(int(limit or 200), 1000))
     with Session(engine) as s:
         require_thread_access(s, thread_id)
         rows = s.exec(
             select(Node)
             .where(Node.thread_id == thread_id, Node.type == 'Message')
             .order_by(Node.created_at.desc(), Node.id.desc())
-            .limit(limit)
+            .limit(clean_limit)
         ).all()
         rows = list(reversed(rows))
         items = [row.model_dump() for row in rows]

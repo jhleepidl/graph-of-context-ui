@@ -6,6 +6,7 @@ import zipfile
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi.params import Param
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
 from sqlalchemy import or_
@@ -105,8 +106,19 @@ def _has_value(value: Any) -> bool:
 
 
 def _clean_optional_text(value: Any) -> str | None:
+    if isinstance(value, Param):
+        value = value.default
     clean = str(value or '').strip()
     return clean or None
+
+
+def _clean_query_limit(value: Any, default: int, maximum: int) -> int:
+    if isinstance(value, Param):
+        value = value.default
+    try:
+        return max(1, min(int(value or default), maximum))
+    except (TypeError, ValueError):
+        return default
 
 
 def _merge_meta(existing: dict[str, Any], incoming: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -970,12 +982,13 @@ def list_thread_nodes(
     """List thread-scoped graph nodes using the canonical create-node route family."""
     clean_context_set_id = _clean_optional_text(context_set_id)
     requested_type = _clean_optional_text(node_type) or _clean_optional_text(type)
+    clean_limit = _clean_query_limit(limit, 500, 5000)
     with Session(engine) as s:
         require_thread_access(s, thread_id)
         statement = select(Node).where(Node.thread_id == thread_id)
         if requested_type:
             statement = statement.where(Node.type == requested_type)
-        rows = s.exec(statement.order_by(Node.created_at.asc(), Node.id.asc()).limit(limit)).all()
+        rows = s.exec(statement.order_by(Node.created_at.asc(), Node.id.asc()).limit(clean_limit)).all()
         active_ids: list[str] | None = None
         if clean_context_set_id:
             scoped_context_set = s.get(ContextSet, clean_context_set_id)
@@ -998,12 +1011,13 @@ def list_thread_edges(
     limit: int = Query(default=500, ge=1, le=5000),
 ):
     requested_type = _clean_optional_text(type)
+    clean_limit = _clean_query_limit(limit, 500, 5000)
     with Session(engine) as s:
         require_thread_access(s, thread_id)
         statement = select(Edge).where(Edge.thread_id == thread_id)
         if requested_type:
             statement = statement.where(Edge.type == requested_type)
-        rows = s.exec(statement.order_by(Edge.created_at.asc(), Edge.id.asc()).limit(limit)).all()
+        rows = s.exec(statement.order_by(Edge.created_at.asc(), Edge.id.asc()).limit(clean_limit)).all()
         items = [row.model_dump() for row in rows]
         return {"ok": True, "thread_id": thread_id, "count": len(items), "items": items, "edges": items}
 
