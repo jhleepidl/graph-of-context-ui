@@ -1,3 +1,9 @@
+# Room continuity projection boundary
+
+GoC projects and governs durable Room state while ddalggak executes provider work. Product-facing projections should prioritize goal, stage, next action, evidence boundaries, rules/corrections, active artifacts, and continuation. Model/agent metadata is advanced runtime information. Continuation telemetry is operational evidence and must not be treated as semantic success without evaluation.
+
+---
+
 # Backend Notes
 
 ## Setup

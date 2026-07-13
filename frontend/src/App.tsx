@@ -132,26 +132,33 @@ export default function App() {
 
   return (
     <div className="routeShell">
-      <header className="topNav">
-        <div className="topNavLeft">
-          <button className={route === 'workspace' ? 'primary' : ''} onClick={() => navigate('/')}>GoC Studio</button>
-          <button className={route === 'guest_request_service' ? 'primary' : ''} onClick={() => navigate('/guest/request-service')}>Request Service Key</button>
-          <button className={route === 'admin_login' ? 'primary' : ''} onClick={() => navigate('/admin/login')}>Admin Login</button>
-          {hasAdminKey && (
-            <button className={route === 'admin_service_requests' ? 'primary' : ''} onClick={() => navigate('/admin/service-requests')}>Admin Requests</button>
-          )}
-          {hasAdminKey && (
-            <button className={route === 'admin_publish_requests' ? 'primary' : ''} onClick={() => navigate('/admin/publish-requests')}>Admin Publish</button>
-          )}
+      <header className="topNav topNav--workspace">
+        <div className="topNavBrand" onClick={() => navigate('/')} role="button" tabIndex={0}>
+          <span className="topNavBrandMark">G</span>
+          <span><b>GoC</b><small>작업방 관리</small></span>
         </div>
+        <nav className="topNavPrimary" aria-label="주요 메뉴">
+          <button className={route === 'workspace' ? 'isActive' : ''} onClick={() => navigate('/')}>작업방</button>
+          <button className={route === 'library' ? 'isActive' : ''} onClick={() => navigate('/library')}>자료함</button>
+          <button className={route === 'agents' ? 'isActive' : ''} onClick={() => navigate('/agents')}>Agent</button>
+          <button className={route === 'tools' ? 'isActive' : ''} onClick={() => navigate('/tools')}>도구</button>
+        </nav>
         <div className="topNavRight">
-          {hasAdminKey ? <span className="pill">Admin ON</span> : <span className="pill">Admin OFF</span>}
-          {hasAdminKey && <button onClick={handleAdminLogout}>Admin Logout</button>}
+          <button className={route === 'guest_request_service' ? 'isActive' : ''} onClick={() => navigate('/guest/request-service')}>서비스 이용</button>
+          <details className="topNavAdminMenu">
+            <summary>{hasAdminKey ? '관리자 연결됨' : '관리자'}</summary>
+            <div className="topNavAdminPopover">
+              {!hasAdminKey && <button onClick={() => navigate('/admin/login')}>관리자 로그인</button>}
+              {hasAdminKey && <button onClick={() => navigate('/admin/service-requests')}>서비스 요청</button>}
+              {hasAdminKey && <button onClick={() => navigate('/admin/publish-requests')}>게시 요청</button>}
+              {hasAdminKey && <button onClick={handleAdminLogout}>로그아웃</button>}
+            </div>
+          </details>
         </div>
       </header>
 
       <main className={route === 'workspace' ? 'routeMain routeMainWorkspace' : 'routeMain'}>
-        <Suspense fallback={<RouteFallback label="Loading view…" />}>
+        <Suspense fallback={<RouteFallback label="화면을 불러오는 중…" />}>
           {route === 'workspace' && <WorkspaceApp />}
           {route === 'agents' && <AgentsPage onNavigate={navigate} />}
           {route === 'tools' && <ToolsPage onNavigate={navigate} />}

@@ -6,25 +6,20 @@ type Props = {
   setWorkspaceMainTab: (tab: WorkspaceMainTab) => void
 }
 
+const TABS: Array<{ id: WorkspaceMainTab; label: string }> = [
+  { id: 'run_studio', label: '작업방' },
+  { id: 'graph', label: '관계 보기' },
+  { id: 'artifacts', label: '결과물' },
+  { id: 'advanced', label: '고급 도구' },
+]
+
 export default function WorkspaceRouteState({ workspaceMainTab, setWorkspaceMainTab }: Props) {
+  const active = TABS.some((item) => item.id === workspaceMainTab) ? workspaceMainTab : 'advanced'
   return (
-    <div className="card">
-      <div className="row" style={{ marginBottom: 6 }}>
-        <button className={workspaceMainTab === 'companion' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('companion')}>Companion</button>
-        <button className={workspaceMainTab === 'run_studio' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('run_studio')}>Studio</button>
-        <button className={workspaceMainTab === 'board' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('board')}>Board</button>
-        <button className={workspaceMainTab === 'graph' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('graph')}>Graph</button>
-        <button className={workspaceMainTab === 'advanced' ? 'primary' : ''} onClick={() => setWorkspaceMainTab('advanced')}>More</button>
-      </div>
-      <div className="muted">
-        {workspaceMainTab === 'companion' && 'Start here: choose the right AI Companion, context controls, agent mode, and correction flow.'}
-        {workspaceMainTab === 'run_studio' && 'Execution-focused status, active team, recent activity, and the next action.'}
-        {workspaceMainTab === 'board' && 'Board view for raw history, promotion candidates, and reusable thread assets.'}
-        {workspaceMainTab === 'graph' && 'Graph editing and manual fold/unfold controls.'}
-        {workspaceMainTab === 'advanced' && 'Expanded diagnostics, raw trace, artifacts, and power-user controls.'}
-        {workspaceMainTab === 'raw_trace' && 'Detailed execution graph + timeline + node inspector.'}
-        {workspaceMainTab === 'artifacts' && 'Artifact/resource inventory and selection state.'}
-      </div>
+    <div className="workspaceViewSwitch" role="tablist" aria-label="Workspace view">
+      {TABS.map((item) => (
+        <button key={item.id} className={active === item.id ? 'isActive' : ''} onClick={() => setWorkspaceMainTab(item.id)}>{item.label}</button>
+      ))}
     </div>
   )
 }

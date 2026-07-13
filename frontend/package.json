@@ -7,7 +7,10 @@
     "dev": "node ./node_modules/vite/bin/vite.js",
     "build": "node ./node_modules/vite/bin/vite.js build",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
-    "preview": "node ./node_modules/vite/bin/vite.js preview"
+    "preview": "node ./node_modules/vite/bin/vite.js preview",
+    "test:ui-smoke": "node scripts/visual-smoke.mjs",
+    "screenshot:ui": "node scripts/visual-smoke.mjs",
+    "test:user-paths": "npm run typecheck && npm run build && npm run test:ui-smoke"
   },
   "dependencies": {
     "@types/dagre": "^0.7.54",
@@ -20,6 +23,7 @@
     "@types/react": "^18.2.43",
     "@types/react-dom": "^18.2.17",
     "@vitejs/plugin-react": "^4.2.1",
+    "playwright": "^1.61.1",
     "typescript": "^5.3.3",
     "vite": "^5.0.8"
   }

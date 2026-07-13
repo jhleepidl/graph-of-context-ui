@@ -21,7 +21,9 @@ import { useRunStudioData } from '../hooks/useRunStudioData'
 import { useRunStudioActions } from '../hooks/useRunStudioActions'
 import { buildWorkspaceGroup, useWorkspaceThreadSelection } from '../hooks/useWorkspaceThreadSelection'
 import { useWorkspaceTabs } from '../hooks/useWorkspaceTabs'
+import { usePageVisibility } from '../hooks/usePageVisibility'
 import { scoreNodesForRequest, type PriorityBucket } from '../utils/contextPriority'
+import { workspacePollDelay } from '../utils/runtimePolling'
 
 const PANEL_WIDTH_STORAGE_KEY = 'goc:panel-widths:v1'
 const LEFT_PANEL_MIN_WIDTH = 260
@@ -131,6 +133,7 @@ function captureTokenFromHash(): void {
 
 export default function WorkspaceApp() {
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const pageVisible = usePageVisibility()
   const [authGateState, setAuthGateState] = useState<AuthGateState>('checking')
   const [authGateMessage, setAuthGateMessage] = useState<string>('')
   const {
@@ -182,6 +185,12 @@ export default function WorkspaceApp() {
     focusRunDrilldown: focusRunStudioDrilldown,
     clearRunDrilldown: clearRunStudioDrilldown,
   } = useRunStudioData()
+  const runStudioStatus = String(
+    runStudioSummary?.now?.state?.current_run_status
+      || runStudioSummary?.projections?.execution?.current_step?.status
+      || '',
+  ).trim().toLowerCase()
+  const runStudioActive = ['active', 'running', 'queued', 'accepted', 'working'].includes(runStudioStatus)
   const {
     threads,
     setThreads,
@@ -493,44 +502,44 @@ export default function WorkspaceApp() {
     if (!threadId) return
 
     let cancelled = false
-    let inFlight = false
+    let timer: number | null = null
+    let pollCount = 0
+
+    const schedule = (delay: number) => {
+      if (cancelled) return
+      timer = window.setTimeout(() => void poll(), delay)
+    }
 
     const poll = async () => {
-      if (cancelled || inFlight) return
-      inFlight = true
+      if (cancelled) return
+      pollCount += 1
       try {
-        const g = await api.graph(threadId)
-        if (cancelled) return
-        const nextNodes = Array.isArray(g?.nodes) ? g.nodes : []
-        const nextEdges = Array.isArray(g?.edges) ? g.edges : []
-        setNodes((prev) => (graphNodesEqual(prev, nextNodes) ? prev : nextNodes))
-        setEdges((prev) => (graphEdgesEqual(prev, nextEdges) ? prev : nextEdges))
-        if (workspaceMainTab === 'run_studio') {
-          void refreshRunStudio(threadId, ctxId || undefined, { silent: true, includeLoadedDetails: true })
+        if (workspaceMainTab === 'raw_trace') {
+          const g = await api.graph(threadId)
+          if (cancelled) return
+          const nextNodes = Array.isArray(g?.nodes) ? g.nodes : []
+          const nextEdges = Array.isArray(g?.edges) ? g.edges : []
+          setNodes((prev) => (graphNodesEqual(prev, nextNodes) ? prev : nextNodes))
+          setEdges((prev) => (graphEdgesEqual(prev, nextEdges) ? prev : nextEdges))
+        } else {
+          const includeLoadedDetails = pollCount === 1 || (runStudioActive ? pollCount % 3 === 0 : pollCount % 6 === 0)
+          await refreshRunStudio(threadId, ctxId || undefined, { silent: pollCount > 1, includeLoadedDetails })
         }
       } catch (e) {
-        console.error('runtime graph poll failed', e)
+        console.error('workspace refresh failed', e)
       } finally {
-        inFlight = false
+        if (!cancelled) {
+          schedule(workspacePollDelay({ active: runStudioActive, visible: pageVisible, rawTrace: workspaceMainTab === 'raw_trace' }))
+        }
       }
     }
 
     void poll()
-    const timer = window.setInterval(() => {
-      void poll()
-    }, 1500)
-
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      if (timer) window.clearTimeout(timer)
     }
-  }, [workspaceMainTab, threadId, ctxId])
-
-  useEffect(() => {
-    if (workspaceMainTab !== 'run_studio') return
-    if (!threadId) return
-    void refreshRunStudio(threadId, ctxId || undefined, { includeLoadedDetails: true })
-  }, [workspaceMainTab, threadId, ctxId])
+  }, [workspaceMainTab, threadId, ctxId, pageVisible, runStudioActive, refreshRunStudio])
 
   const startPanelResize = useCallback((handle: ResizeHandle, evt: React.MouseEvent<HTMLDivElement>) => {
     const wrap = wrapRef.current
@@ -844,14 +853,34 @@ export default function WorkspaceApp() {
   }, [nodesById, setWorkspaceMainTab])
 
   const leftPanelContent = (
-    <>
+    <aside className="roomSidebar" aria-label="작업방 탐색">
       {threadResolutionNotice && (
-        <div className="runStudioWarning">
-          <b>Thread deep-link notice:</b> {threadResolutionNotice}
+        <div className="runStudioWarning roomSidebarNotice">
+          <b>Deep-link notice:</b> {threadResolutionNotice}
         </div>
       )}
 
-      <div className="row">
+      <header className="roomSidebarHeader">
+        <div>
+          <div className="runStudioEyebrow">작업방</div>
+          <h2>내 작업 공간</h2>
+        </div>
+        <button
+          className="primary roomSidebarNewButton"
+          onClick={async () => {
+            const t = await api.createThread('New Room')
+            const ts = await api.threads()
+            setThreads(ts)
+            setWorkspaceKey(buildWorkspaceGroup(t).key)
+            await switchThread(t.id)
+          }}
+        >
+          + 새 작업방
+        </button>
+      </header>
+
+      <label className="roomSidebarWorkspacePicker">
+        <span>작업 공간</span>
         <select
           value={workspaceKey}
           onChange={async (e) => {
@@ -862,7 +891,6 @@ export default function WorkspaceApp() {
             if (threadId && nextGroup.threadIds.includes(threadId)) return
             await switchThread(nextGroup.threadIds[0])
           }}
-          style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}
         >
           {workspaceGroups.map((group) => (
             <option key={group.key} value={group.key}>
@@ -870,94 +898,110 @@ export default function WorkspaceApp() {
             </option>
           ))}
         </select>
+      </label>
+
+      <div className="roomSidebarList" role="list" aria-label="작업 공간의 작업방">
+        {visibleThreads.length === 0 && <div className="roomSidebarEmpty">이 작업 공간에는 아직 작업방이 없습니다.</div>}
+        {visibleThreads.map((t) => {
+          const selected = t.id === threadId
+          return (
+            <button
+              type="button"
+              role="listitem"
+              key={t.id}
+              className={`roomSidebarItem ${selected ? 'isActive' : ''}`}
+              onClick={() => void switchThread(t.id)}
+            >
+              <span className="roomSidebarItemMark" aria-hidden="true" />
+              <span className="roomSidebarItemText">
+                <b>{t.title || '이름 없는 작업방'}</b>
+                <small>{t.id.slice(0, 8)}</small>
+              </span>
+            </button>
+          )
+        })}
       </div>
 
-      <div className="row">
-        <button onClick={async () => {
-          const t = await api.createThread('New Thread')
-          const ts = await api.threads()
-          setThreads(ts)
-          setWorkspaceKey(buildWorkspaceGroup(t).key)
-          await switchThread(t.id)
-        }}>New Thread</button>
-        <button className="danger" onClick={handleDeleteCurrentThread} disabled={!threadId}>Delete Thread</button>
+      {threadId && (
+        <div className="roomSidebarSelectedTools">
+          <div className="roomSidebarSelectedHeading">
+            <span>선택한 작업방</span>
+            <button className="dangerText" onClick={handleDeleteCurrentThread}>삭제</button>
+          </div>
 
-        <select value={threadId || ''} onChange={async (e) => {
-          const nextThreadId = e.target.value
-          if (!nextThreadId) return
-          await switchThread(nextThreadId)
-        }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
-          {!threadId && <option value="">Select thread...</option>}
-          {visibleThreads.map((t) => (
-            <option key={t.id} value={t.id}>{t.title} ({t.id.slice(0, 6)})</option>
-          ))}
-        </select>
-        <button
-          onClick={() => {
-            if (!threadId) return
-            const suffix = ctxId ? `&ctx=${encodeURIComponent(ctxId)}` : ''
-            const target = `/agents?thread=${encodeURIComponent(threadId)}${suffix}`
-            window.history.pushState(null, '', target)
-            window.dispatchEvent(new Event('popstate'))
-          }}
-          disabled={!threadId}
-        >
-          Open in Agents
+          <label>
+            <span>사용할 정보</span>
+            <select value={ctxId || ''} onChange={async (e) => {
+              const nextCtxId = e.target.value
+              setCtxId(nextCtxId)
+              if (threadId && nextCtxId) await reloadAll(threadId, nextCtxId)
+            }}>
+              {ctxSets.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+
+          <div className="roomSidebarToolRow">
+            <button onClick={async () => {
+              const name = prompt('새 정보 설정의 이름을 입력하세요.', '다른 자료 범위')
+              if (!name) return
+              const created = await api.createCtx(threadId, name)
+              const sets = await api.ctxSets(threadId)
+              setCtxSets(sets)
+              setCtxId(created.id)
+              await reloadAll(threadId, created.id)
+            }}>새 정보 설정</button>
+            <button onClick={() => void reloadAll()}>다시 불러오기</button>
+          </div>
+
+          <button
+            className="roomSidebarAgentLink"
+            onClick={() => {
+              const suffix = ctxId ? `&ctx=${encodeURIComponent(ctxId)}` : ''
+              const target = `/agents?thread=${encodeURIComponent(threadId)}${suffix}`
+              window.history.pushState(null, '', target)
+              window.dispatchEvent(new Event('popstate'))
+            }}
+          >
+            AI 구성 열기 (고급)
+          </button>
+        </div>
+      )}
+
+      <details className="roomSidebarDetails">
+        <summary>작업방 기억 검색</summary>
+        <Suspense fallback={<WorkspacePanelFallback label="검색 패널을 불러오는 중…" />}>
+          <SearchPanel
+            onSearch={async (q) => {
+              if (!threadId || !q) return []
+              const r = await api.search(threadId, q, 10)
+              return r.results || []
+            }}
+            onActivate={async (nodeId) => { await toggleActive(nodeId, true) }}
+          />
+        </Suspense>
+      </details>
+
+      <details className="roomSidebarDetails">
+        <summary>변경 기록 찾아보기</summary>
+        <Suspense fallback={<WorkspacePanelFallback label="타임라인을 불러오는 중…" />}>
+          <Timeline
+            nodes={nodes}
+            activeIds={activeIds}
+            onToggle={toggleActive}
+            onOpenNode={(id) => setDetailNodeId(id)}
+            partCountByParent={partCountByParent}
+          />
+        </Suspense>
+      </details>
+
+      {selectedIds.length > 0 && (
+        <button className="roomSidebarFoldButton" onClick={foldSelected}>
+          Fold {selectedIds.length} selected nodes
         </button>
-      </div>
-
-      <div className="row">
-        <select value={ctxId || ''} onChange={async (e) => {
-          const nextCtxId = e.target.value
-          setCtxId(nextCtxId)
-          if (threadId && nextCtxId) {
-            await reloadAll(threadId, nextCtxId)
-          }
-        }} style={{ flex: 1, padding: 6, borderRadius: 10, border: '1px solid #e5e7eb' }}>
-          {ctxSets.map((c) => (
-            <option key={c.id} value={c.id}>{c.name} ({c.id.slice(0, 6)})</option>
-          ))}
-        </select>
-        <button onClick={async () => {
-          if (!threadId) return
-          const name = prompt('ContextSet name?', 'alt')
-          if (!name) return
-          const created = await api.createCtx(threadId, name)
-          const sets = await api.ctxSets(threadId)
-          setCtxSets(sets)
-          setCtxId(created.id)
-          await reloadAll(threadId, created.id)
-        }}>New ContextSet</button>
-      </div>
-
-      <div className="row">
-        <button onClick={foldSelected}>Fold selected</button>
-        <button onClick={() => reloadAll()}>Reload</button>
-      </div>
-
-      <Suspense fallback={<WorkspacePanelFallback label="검색 패널을 불러오는 중…" />}>
-        <SearchPanel
-          onSearch={async (q) => {
-            if (!threadId || !q) return []
-            const r = await api.search(threadId, q, 10)
-            return r.results || []
-          }}
-          onActivate={async (nodeId) => {
-            await toggleActive(nodeId, true)
-          }}
-        />
-      </Suspense>
-
-      <Suspense fallback={<WorkspacePanelFallback label="타임라인을 불러오는 중…" />}>
-        <Timeline
-          nodes={nodes}
-          activeIds={activeIds}
-          onToggle={toggleActive}
-          onOpenNode={(id) => setDetailNodeId(id)}
-          partCountByParent={partCountByParent}
-        />
-      </Suspense>
-    </>
+      )}
+    </aside>
   )
 
   const centerPanelContent = (
@@ -965,7 +1009,7 @@ export default function WorkspaceApp() {
       {!threadId && (
         <div className="card">
           <div className="runStudioWarning">
-            <b>No thread selected.</b> {threadResolutionNotice || 'Select a thread to open Run Studio.'}
+            <b>No thread selected.</b> {threadResolutionNotice || 'Select a thread to open its Room state.'}
           </div>
         </div>
       )}
@@ -976,13 +1020,13 @@ export default function WorkspaceApp() {
       />
 
       {workspaceMainTab === 'companion' && (
-        <Suspense fallback={<WorkspacePanelFallback label="Companion Hub를 불러오는 중…" />}>
+        <Suspense fallback={<WorkspacePanelFallback label="Room Home을 불러오는 중…" />}>
           <CompanionControlHub threadId={threadId} />
         </Suspense>
       )}
 
       {workspaceMainTab === 'run_studio' && (
-        <Suspense fallback={<WorkspacePanelFallback label="Run Studio를 불러오는 중…" />}>
+        <Suspense fallback={<WorkspacePanelFallback label="Room Work를 불러오는 중…" />}>
           <RunStudioLayout
           threadId={threadId}
           summary={runStudioSummary}
@@ -1095,7 +1139,7 @@ export default function WorkspaceApp() {
       )}
 
       {workspaceMainTab === 'artifacts' && (
-        <Suspense fallback={<WorkspacePanelFallback label="Artifacts 패널을 불러오는 중…" />}>
+        <Suspense fallback={<WorkspacePanelFallback label="결과물 패널을 불러오는 중…" />}>
           <ArtifactsPanel nodes={nodes} activeIds={activeIds} />
         </Suspense>
       )}
@@ -1134,7 +1178,7 @@ export default function WorkspaceApp() {
                 {rightPanelTab === 'prompt' && 'Copy/Paste, context suggestion, token budgeting, resource notes'}
                 {rightPanelTab === 'run' && 'Run query with current active context'}
                 {rightPanelTab === 'job_settings' && 'Edit agent_set/tool_set for current thread'}
-                {rightPanelTab === 'conversation_agents' && 'Configure thread team defaults (setup only; actual runtime team appears in Run Studio)'}
+                {rightPanelTab === 'conversation_agents' && 'Configure thread team defaults (setup only; actual runtime team appears in Room Work)'}
                 {rightPanelTab === 'inspector' && 'Compiled context and version/planner diagnostics'}
               </div>
             </div>

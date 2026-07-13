@@ -37,14 +37,15 @@ def ingest_events(body: RuntimeEventIngestRequest):
 
 
 @router.get('/events')
-def read_events(run_id: str = '', thread_id: str = '', limit: int = 200):
+def read_events(run_id: str = '', thread_id: str = '', after_event_id: str = '', limit: int = 200):
     get_current_principal()
     with Session(engine) as session:
-        rows = list_runtime_events(session, run_id=run_id, thread_id=thread_id, limit=limit)
+        rows = list_runtime_events(session, run_id=run_id, thread_id=thread_id, after_event_id=after_event_id, limit=limit)
         return {
             'kind': 'runtime_event_list_v1',
             'count': len(rows),
             'items': [serialize_runtime_event(row) for row in rows],
+            'next_cursor': (rows[-1].event_id if after_event_id and rows else (rows[0].event_id if rows else after_event_id or None)),
         }
 
 

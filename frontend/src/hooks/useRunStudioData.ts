@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import {
   type RunStudioAgentTeam,
@@ -93,6 +93,20 @@ export function useRunStudioData() {
   const [focusedRunId, setFocusedRunId] = useState<string | null>(null)
   const [focusedEventId, setFocusedEventId] = useState<string | null>(null)
   const [focusedEventLabel, setFocusedEventLabel] = useState<string>('')
+  const scopeRef = useRef({ threadId: '', generation: 0 })
+  const summaryRequestRef = useRef(0)
+
+  const activateScope = useCallback((threadId: string) => {
+    const cleanThreadId = cleanText(threadId)
+    if (scopeRef.current.threadId !== cleanThreadId) {
+      scopeRef.current = { threadId: cleanThreadId, generation: scopeRef.current.generation + 1 }
+    }
+    return scopeRef.current.generation
+  }, [])
+
+  const isCurrentScope = useCallback((threadId: string, generation: number) => {
+    return scopeRef.current.threadId === cleanText(threadId) && scopeRef.current.generation === generation
+  }, [])
 
   const markDetailLoading = useCallback((key: DetailKey, value: boolean) => {
     setDetailLoading((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }))
@@ -112,6 +126,8 @@ export function useRunStudioData() {
   }, [markDetailLoaded])
 
   const clear = useCallback(() => {
+    scopeRef.current = { threadId: '', generation: scopeRef.current.generation + 1 }
+    summaryRequestRef.current += 1
     setSummary(null)
     setAgentTeam(null)
     setContextDecisions(null)
@@ -140,36 +156,39 @@ export function useRunStudioData() {
 
   const runDetailRequest = useCallback(async <T,>(
     key: DetailKey,
+    scopeKey: string,
     request: () => Promise<T>,
     setter: (value: T) => void,
     options?: LoadDetailOptions,
   ): Promise<T | null> => {
+    const generation = activateScope(scopeKey)
     markDetailLoading(key, true)
     if (!options?.silent) setError('')
     try {
       const value = await request()
+      if (!isCurrentScope(scopeKey, generation)) return null
       setter(value)
       markDetailLoaded(key, true)
       return value
     } catch (detailError) {
-      if (!options?.silent) setError(toErrorMessage(detailError))
+      if (isCurrentScope(scopeKey, generation) && !options?.silent) setError(toErrorMessage(detailError))
       return null
     } finally {
-      markDetailLoading(key, false)
+      if (isCurrentScope(scopeKey, generation)) markDetailLoading(key, false)
     }
-  }, [markDetailLoaded, markDetailLoading])
+  }, [activateScope, isCurrentScope, markDetailLoaded, markDetailLoading])
 
   const loadAgentTeam = useCallback(async (threadId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
-    return runDetailRequest('agentTeam', () => api.runStudioAgentTeam(tId), setAgentTeam, options)
+    return runDetailRequest('agentTeam', tId, () => api.runStudioAgentTeam(tId), setAgentTeam, options)
   }, [runDetailRequest])
 
   const loadContextDecisions = useCallback(async (threadId?: string | null, contextSetId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const cId = cleanText(contextSetId) || undefined
-    return runDetailRequest('contextDecisions', () => api.runStudioContextDecisions(tId, cId), setContextDecisions, options)
+    return runDetailRequest('contextDecisions', tId, () => api.runStudioContextDecisions(tId, cId), setContextDecisions, options)
   }, [runDetailRequest])
 
   const loadEvidence = useCallback(async (threadId?: string | null, contextSetId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
@@ -177,55 +196,55 @@ export function useRunStudioData() {
     if (!tId) return null
     const cId = cleanText(contextSetId) || undefined
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('evidence', () => api.runStudioEvidence(tId, cId, rId), setEvidence, options)
+    return runDetailRequest('evidence', tId, () => api.runStudioEvidence(tId, cId, rId), setEvidence, options)
   }, [runDetailRequest])
 
   const loadContextPacks = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('contextPacks', () => api.runStudioContextPacks(tId, rId), setContextPacks, options)
+    return runDetailRequest('contextPacks', tId, () => api.runStudioContextPacks(tId, rId), setContextPacks, options)
   }, [runDetailRequest])
 
   const loadMemoryGraph = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('memoryGraph', () => api.runStudioMemoryGraph(tId, rId), setMemoryGraph, options)
+    return runDetailRequest('memoryGraph', tId, () => api.runStudioMemoryGraph(tId, rId), setMemoryGraph, options)
   }, [runDetailRequest])
 
   const loadMemoryTopology = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('memoryTopology', () => api.runStudioMemoryTopology(tId, rId), setMemoryTopology, options)
+    return runDetailRequest('memoryTopology', tId, () => api.runStudioMemoryTopology(tId, rId), setMemoryTopology, options)
   }, [runDetailRequest])
 
   const loadMemoryDemand = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('memoryDemand', () => api.runStudioMemoryDemand(tId, rId), setMemoryDemand, options)
+    return runDetailRequest('memoryDemand', tId, () => api.runStudioMemoryDemand(tId, rId), setMemoryDemand, options)
   }, [runDetailRequest])
 
   const loadTraceScope = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('traceScope', () => api.runStudioTraceScope(tId, rId), setTraceScope, options)
+    return runDetailRequest('traceScope', tId, () => api.runStudioTraceScope(tId, rId), setTraceScope, options)
   }, [runDetailRequest])
 
   const loadTeamSelection = useCallback(async (threadId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
-    return runDetailRequest('teamSelection', () => api.exportTeamSelectionDataset(tId, 20, 'json'), setTeamSelection, options)
+    return runDetailRequest('teamSelection', tId, () => api.exportTeamSelectionDataset(tId, 20, 'json'), setTeamSelection, options)
   }, [runDetailRequest])
 
   const loadSkillUsage = useCallback(async (threadId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
     const rId = cleanText(runId) || undefined
-    return runDetailRequest('skillUsage', () => api.runStudioSkillUsage(tId, rId), setSkillUsage, options)
+    return runDetailRequest('skillUsage', tId, () => api.runStudioSkillUsage(tId, rId), setSkillUsage, options)
   }, [runDetailRequest])
 
 
@@ -283,6 +302,7 @@ export function useRunStudioData() {
   const loadRunBundle = useCallback(async (threadId?: string | null, contextSetId?: string | null, runId?: string | null, options?: LoadDetailOptions) => {
     const tId = cleanText(threadId)
     if (!tId) return null
+    const generation = activateScope(tId)
     const cId = cleanText(contextSetId) || undefined
     const rId = cleanText(runId) || undefined
     const bundleKeys: DetailKey[] = ['evidence', 'contextPacks', 'skillUsage', 'memoryGraph', 'memoryTopology', 'memoryDemand', 'traceScope']
@@ -290,14 +310,15 @@ export function useRunStudioData() {
     if (!options?.silent) setError('')
     try {
       const bundle = await api.runStudioRunBundle(tId, cId, rId)
+      if (!isCurrentScope(tId, generation)) return null
       return applyRunBundle(bundle)
     } catch (detailError) {
-      if (!options?.silent) setError(toErrorMessage(detailError))
+      if (isCurrentScope(tId, generation) && !options?.silent) setError(toErrorMessage(detailError))
       return null
     } finally {
-      bundleKeys.forEach((key) => markDetailLoading(key, false))
+      if (isCurrentScope(tId, generation)) bundleKeys.forEach((key) => markDetailLoading(key, false))
     }
-  }, [applyRunBundle, markDetailLoading])
+  }, [activateScope, applyRunBundle, isCurrentScope, markDetailLoading])
 
   const focusRunDrilldown = useCallback(async (
     threadId?: string | null,
@@ -362,12 +383,15 @@ export function useRunStudioData() {
 
     const silent = Boolean(options?.silent)
     const includeLoadedDetails = Boolean(options?.includeLoadedDetails)
+    const generation = activateScope(tId)
+    const requestId = ++summaryRequestRef.current
 
     if (!silent) setLoading(true)
     setError('')
 
     try {
       const nextSummary = await api.runStudioSummary(tId, cId)
+      if (!isCurrentScope(tId, generation) || requestId !== summaryRequestRef.current) return
       const loadedSnapshot = detailLoaded
       applySummary(nextSummary, loadedSnapshot)
 
@@ -384,11 +408,11 @@ export function useRunStudioData() {
         if (tasks.length > 0) await Promise.all(tasks)
       }
     } catch (refreshError) {
-      setError(toErrorMessage(refreshError))
+      if (isCurrentScope(tId, generation) && requestId === summaryRequestRef.current) setError(toErrorMessage(refreshError))
     } finally {
-      if (!silent) setLoading(false)
+      if (!silent && isCurrentScope(tId, generation) && requestId === summaryRequestRef.current) setLoading(false)
     }
-  }, [applySummary, clear, detailLoaded, focusedRunId, loadAgentTeam, loadContextDecisions, loadRunBundle, loadTeamSelection])
+  }, [activateScope, applySummary, clear, detailLoaded, focusedRunId, isCurrentScope, loadAgentTeam, loadContextDecisions, loadRunBundle, loadTeamSelection])
 
   const derivedRunId = useMemo(() => cleanText(summary?.current_run_skills?.run_id) || null, [summary])
 

@@ -47,14 +47,14 @@ export default function WorkspaceShell({
               {workspaceMainTabLabel}
             </button>
             <button className={mobileSection === 'left' ? 'primary' : ''} onClick={() => setMobileSection('left')}>
-              Threads
+              작업방 목록
             </button>
             <button
               className={mobileSection === 'right' ? 'primary' : ''}
               onClick={() => setMobileSection('right')}
               disabled={!showRightColumn}
             >
-              Context
+              정보
             </button>
           </div>
         </div>
@@ -70,7 +70,7 @@ export default function WorkspaceShell({
             className="panelResizer"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize left panel"
+            aria-label="왼쪽 패널 크기 조절"
             onMouseDown={onStartLeftResize}
           />
         )}
@@ -84,7 +84,7 @@ export default function WorkspaceShell({
             className="panelResizer"
             role="separator"
             aria-orientation="vertical"
-            aria-label="Resize right panel"
+            aria-label="오른쪽 패널 크기 조절"
             onMouseDown={onStartRightResize}
           />
         )}

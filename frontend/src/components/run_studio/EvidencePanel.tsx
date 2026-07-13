@@ -9,6 +9,7 @@ type Props = {
   onFocusTrace?: (nodeIds: string[]) => void
   onAddToActive?: (nodeId: string) => void
   onPinNode?: (nodeId: string, level: 'required' | 'preferred') => void
+  onExcludeSource?: (source: string) => void
 }
 
 export default function EvidencePanel({
@@ -19,6 +20,7 @@ export default function EvidencePanel({
   onFocusTrace,
   onAddToActive,
   onPinNode,
+  onExcludeSource,
 }: Props) {
   const items = evidence?.items || []
   const counts = evidence?.counts || {}
@@ -68,6 +70,9 @@ export default function EvidencePanel({
               {(item.evidence_nodes?.length || 0) > 0 && <span className="pill">evidence {item.evidence_nodes?.length}</span>}
               {(item.conflict_node_ids?.length || 0) > 0 && <span className="pill">conflicts {item.conflict_node_ids?.length}</span>}
               {typeof item.score === 'number' && <span className="pill">score {item.score.toFixed(2)}</span>}
+              {onExcludeSource && (item.provenance?.[0] || item.claim_node_id) && (
+                <button className="tiny" onClick={() => onExcludeSource(item.provenance?.[0] || item.claim_node_id)}>Exclude source</button>
+              )}
             </div>
             <div>{item.claim_text || item.claim_node_id}</div>
             {item.evidence_nodes && item.evidence_nodes.length > 0 && (

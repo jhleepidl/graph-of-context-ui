@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
 from app.models import RuntimeEvent, RuntimeRunProjection, utcnow
@@ -284,11 +285,32 @@ def ingest_runtime_events(session: Session, events: list[dict[str, Any]]) -> dic
     }
 
 
-def list_runtime_events(session: Session, *, run_id: str = '', thread_id: str = '', limit: int = 200) -> list[RuntimeEvent]:
+def list_runtime_events(
+    session: Session,
+    *,
+    run_id: str = '',
+    thread_id: str = '',
+    after_event_id: str = '',
+    limit: int = 200,
+) -> list[RuntimeEvent]:
     stmt = select(RuntimeEvent)
     if run_id:
         stmt = stmt.where(RuntimeEvent.run_id == _clean(run_id, 160))
     if thread_id:
         stmt = stmt.where(RuntimeEvent.thread_id == _clean(thread_id, 160))
-    stmt = stmt.order_by(RuntimeEvent.occurred_at.desc(), RuntimeEvent.event_sequence.desc()).limit(max(1, min(int(limit or 200), 1000)))
+
+    cursor_id = _clean(after_event_id, 200)
+    cursor = None
+    if cursor_id:
+        cursor = session.exec(select(RuntimeEvent).where(RuntimeEvent.event_id == cursor_id)).first()
+    if cursor is not None:
+        stmt = stmt.where(or_(
+            RuntimeEvent.ingested_at > cursor.ingested_at,
+            and_(RuntimeEvent.ingested_at == cursor.ingested_at, RuntimeEvent.id > cursor.id),
+        ))
+        stmt = stmt.order_by(RuntimeEvent.ingested_at.asc(), RuntimeEvent.id.asc())
+    else:
+        stmt = stmt.order_by(RuntimeEvent.ingested_at.desc(), RuntimeEvent.id.desc())
+
+    stmt = stmt.limit(max(1, min(int(limit or 200), 1000)))
     return list(session.exec(stmt).all())

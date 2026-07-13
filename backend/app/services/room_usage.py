@@ -88,15 +88,27 @@ def summarize_room_usage_events(items: list[dict[str, Any]]) -> dict[str, Any]:
     by_domain: dict[str, int] = {}
     by_approach: dict[str, int] = {}
     for item in items:
-        by_event[item.get('event_type') or 'room_event'] = by_event.get(item.get('event_type') or 'room_event', 0) + 1
+        event_type = item.get('event_type') or 'room_event'
+        by_event[event_type] = by_event.get(event_type, 0) + 1
         by_domain[item.get('domain_label') or 'general_workbench'] = by_domain.get(item.get('domain_label') or 'general_workbench', 0) + 1
         if item.get('recommended_approach'):
             by_approach[item.get('recommended_approach')] = by_approach.get(item.get('recommended_approach'), 0) + 1
+    attempts = by_event.get('room_continuation_requested', 0)
+    completions = by_event.get('room_continuation_completed', 0)
     return {
         'event_count': len(items),
         'by_event_type': by_event,
         'by_domain': by_domain,
         'by_recommended_approach': by_approach,
+        'continuity': {
+            'continuation_attempt_count': attempts,
+            'continuation_completion_count': completions,
+            'continuation_completion_rate': (completions / attempts) if attempts else None,
+            'brief_view_count': by_event.get('room_continuity_brief_view', 0),
+            'source_boundary_view_count': by_event.get('room_source_boundary_view', 0),
+            'rules_view_count': by_event.get('room_rules_view', 0),
+            'branch_proposal_count': by_event.get('room_branch_proposed', 0),
+        },
     }
 
 

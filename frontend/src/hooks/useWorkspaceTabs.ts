@@ -34,11 +34,12 @@ function readStoredWorkspaceMainTab(): WorkspaceMainTab {
   if (typeof window === 'undefined') return 'run_studio'
   try {
     const raw = window.localStorage.getItem(WORKSPACE_MAIN_TAB_STORAGE_KEY)
-    if (raw === 'companion' || raw === 'run_studio' || raw === 'board' || raw === 'graph' || raw === 'raw_trace' || raw === 'artifacts' || raw === 'advanced') return raw
+    if (raw === 'companion') return 'run_studio'
+    if (raw === 'run_studio' || raw === 'board' || raw === 'graph' || raw === 'raw_trace' || raw === 'artifacts' || raw === 'advanced') return raw
   } catch {
     // ignore storage failures
   }
-  return 'companion'
+  return 'run_studio'
 }
 
 export function useWorkspaceTabs() {
@@ -71,12 +72,12 @@ export function useWorkspaceTabs() {
   }, [mobileSection])
 
   const workspaceMainTabLabel = useMemo(() => {
-    if (workspaceMainTab === 'companion') return 'Companion Hub'
-    if (workspaceMainTab === 'run_studio') return 'Run Studio'
+    if (workspaceMainTab === 'companion') return 'Room Home'
+    if (workspaceMainTab === 'run_studio') return 'Room Work'
     if (workspaceMainTab === 'board') return 'Board'
-    if (workspaceMainTab === 'graph') return 'Graph'
+    if (workspaceMainTab === 'graph') return '관계 보기'
     if (workspaceMainTab === 'raw_trace') return 'Raw Trace'
-    if (workspaceMainTab === 'artifacts') return 'Artifacts'
+    if (workspaceMainTab === 'artifacts') return '결과물'
     return 'Advanced'
   }, [workspaceMainTab])
 

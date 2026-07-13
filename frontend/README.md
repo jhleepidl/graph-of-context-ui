@@ -1,3 +1,9 @@
+# Room-first UI priority
+
+The default workspace entry is Room Home/Room Work. Render the current goal, next action, evidence/source scope, rules/corrections, and active work before agent/model topology. Runtime mechanics remain available as advanced observability. Do not add scenario-specific keyword routing to the UI.
+
+---
+
 # Frontend Notes
 
 ## Run

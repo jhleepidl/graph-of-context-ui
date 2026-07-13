@@ -6,6 +6,7 @@ type Props = {
   onOpenNode?: (nodeId: string) => void
   onFocusNode?: (nodeId: string) => void
   onPinNode?: (nodeId: string, level: 'required' | 'preferred') => void
+  onExcludeNode?: (source: string) => void
 }
 
 export default function ContextDecisionPanel({
@@ -13,6 +14,7 @@ export default function ContextDecisionPanel({
   onOpenNode,
   onFocusNode,
   onPinNode,
+  onExcludeNode,
 }: Props) {
   const selected = decisions?.selected || []
   const pinned = decisions?.pinned || []
@@ -49,6 +51,9 @@ export default function ContextDecisionPanel({
                   {item.target_node_id && onOpenNode && <button className="tiny" onClick={() => onOpenNode(item.target_node_id || item.id)}>Detail</button>}
                   {!item.pinned && item.target_node_id && onPinNode && (
                     <button className="tiny" onClick={() => onPinNode(item.target_node_id || item.id, 'preferred')}>Pin</button>
+                  )}
+                  {onExcludeNode && (
+                    <button className="tiny" onClick={() => onExcludeNode(item.text || item.target_node_id || item.id)}>Exclude</button>
                   )}
                 </div>
                 <div>{item.text || item.id}</div>

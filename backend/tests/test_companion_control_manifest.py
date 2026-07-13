@@ -17,7 +17,8 @@ class CompanionControlManifestTests(unittest.TestCase):
     def test_manifest_exposes_user_facing_companions_and_controls(self) -> None:
         manifest = get_companion_control_manifest()
         self.assertEqual(manifest['schema_version'], 'goc.companion_control_manifest/v1')
-        self.assertEqual(manifest['product_positioning']['external_language'], 'AI Companion / AI Friend')
+        self.assertEqual(manifest['product_positioning']['external_language'], 'Persistent AI Room')
+        self.assertEqual(manifest['product_positioning']['principle'], 'The model can change. The Room remembers.')
         companion_ids = {item['id'] for item in manifest['companions']}
         self.assertGreaterEqual({'research', 'implementation', 'product', 'concierge'}, companion_ids)
         context_commands = {item['telegram_command'] for item in manifest['context_modes']}
@@ -26,6 +27,8 @@ class CompanionControlManifestTests(unittest.TestCase):
         self.assertIn('/context exclude <source-or-assumption>', context_commands)
         flow_commands = {cmd for flow in manifest['user_flows'] for cmd in flow.get('commands', [])}
         self.assertIn('/correct materialize-preview', flow_commands)
+        self.assertIn('/brief', flow_commands)
+        self.assertIn('/continue', flow_commands)
         self.assertEqual(manifest['runtime_status']['goc_web_runtime'], 'manifest_and_hub_scaffold')
 
     def test_router_returns_same_manifest_shape_without_db(self) -> None:

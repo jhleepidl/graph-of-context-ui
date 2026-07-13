@@ -1,3 +1,13 @@
+# Room Continuity Control Surface
+
+GoC's primary product surface is **Room continuity**: current goal, next action, source/evidence boundaries, user rules and corrections, active work, checkpoints, branches, and artifacts. `ddalggak` remains the execution plane. Agent, model, topology, collaboration, and harness projections remain inspectable under Advanced Runtime; they are not the product home.
+
+> The model can change. The Room remembers.
+
+The strongest suitable current single model plus provider-native delegation is the default execution baseline. External multi-agent orchestration must be justified by independent review needs or measured evaluation uplift.
+
+---
+
 # Graph-of-Context Run Studio
 
 Graph-of-Context (GoC) is a graph-first projection and control layer for conversational runtimes.

@@ -105,6 +105,12 @@ _AGENT_MODES: List[Dict[str, Any]] = [
 
 _USER_FLOWS: List[Dict[str, Any]] = [
     {
+        "id": "room_continuity",
+        "label": "Resume the Room without re-explaining",
+        "description": "Review the active goal, source boundaries, rules, corrections, and next action before continuing or branching.",
+        "commands": ["/brief", "/continue", "/sources", "/rules", "/branch <new direction>"],
+    },
+    {
         "id": "choose_companion",
         "label": "Choose who to talk to",
         "description": "Pick a specialized companion instead of manually wiring memory sources.",
@@ -136,9 +142,9 @@ def get_companion_control_manifest() -> Dict[str, Any]:
     return {
         "schema_version": COMPANION_CONTROL_SCHEMA_VERSION,
         "product_positioning": {
-            "external_language": "AI Companion / AI Friend",
+            "external_language": "Persistent AI Room",
             "internal_language": "AI Room substrate",
-            "principle": "AI Rooms are the infrastructure; AI Companions are the user experience.",
+            "principle": "The model can change. The Room remembers.",
         },
         "companions": deepcopy(_COMPANIONS),
         "context_modes": deepcopy(_CONTEXT_MODES),
@@ -146,11 +152,12 @@ def get_companion_control_manifest() -> Dict[str, Any]:
         "user_flows": deepcopy(_USER_FLOWS),
         "runtime_status": deepcopy(_RUNTIME_STATUS),
         "ux_notes": [
-            "Prefer a single Companion Hub entrypoint over exposing Graph/Board/Run Studio first.",
+            "Prefer Room goal, source boundaries, rules, corrections, and continuation controls over Agent/model configuration on the first screen.",
             "Low-risk context repair should be fuzzy and recoverable; high-risk memory/tool actions stay strict.",
             "Do not silently promote corrections to project-shared memory; create reviewable proposals and branchable materialization candidates.",
         ],
         "non_goals": [
+            "Do not position multi-model or multi-agent execution as the primary product value.",
             "Do not make one global best friend that always sees every memory.",
             "Do not force users to manage raw memory graphs before asking a question.",
             "Do not rewrite the whole GoC Studio before validating the simplified Companion Hub.",

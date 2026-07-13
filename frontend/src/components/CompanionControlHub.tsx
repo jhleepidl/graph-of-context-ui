@@ -88,7 +88,7 @@ export default function CompanionControlHub({ threadId }: { threadId?: string | 
   if (loading) {
     return (
       <div className="card companionHub">
-        <div className="muted">Companion Hub를 불러오는 중…</div>
+        <div className="muted">Room Home을 불러오는 중…</div>
       </div>
     )
   }
@@ -96,7 +96,7 @@ export default function CompanionControlHub({ threadId }: { threadId?: string | 
   if (error || !manifest) {
     return (
       <div className="card companionHub">
-        <h3 style={{ marginTop: 0 }}>Companion Hub</h3>
+        <h3 style={{ marginTop: 0 }}>Room Home</h3>
         <div className="runStudioWarning">Companion control manifest를 불러오지 못했습니다. {error}</div>
       </div>
     )
@@ -106,10 +106,10 @@ export default function CompanionControlHub({ threadId }: { threadId?: string | 
     <div className="companionHubStack">
       <div className="card companionHero">
         <div>
-          <h2 style={{ marginTop: 0, marginBottom: 6 }}>Companion Hub</h2>
+          <h2 style={{ marginTop: 0, marginBottom: 6 }}>Room Home</h2>
           <p className="muted" style={{ marginTop: 0 }}>
-            먼저 누구와 이야기할지 고르고, 이번 요청에서 어떤 context를 허용할지 정합니다.
-            복잡한 Graph/Board 조작은 나중에 필요할 때만 열면 됩니다.
+            이 Room의 목표·근거·규칙·정정·진행 상태를 먼저 확인합니다.
+            Companion, Agent, 모델 설정은 필요한 경우에만 조정합니다.
           </p>
           <div className="row" style={{ marginBottom: 0 }}>
             <span className="pill">{manifest.schema_version}</span>
@@ -118,16 +118,26 @@ export default function CompanionControlHub({ threadId }: { threadId?: string | 
           </div>
         </div>
         <div className="companionHeroAside">
-          <b>{manifest.product_positioning?.principle || 'AI Rooms are infrastructure; AI Companions are the experience.'}</b>
+          <b>{manifest.product_positioning?.principle || 'The model can change. The Room remembers.'}</b>
           <p className="muted" style={{ marginBottom: 0 }}>
-            Web Hub는 현재 안전한 manifest/copy-command scaffold입니다. durable write는 아직 runtime command surface를 통해 처리합니다.
+            Room state는 사용자 통제 아래 유지됩니다. durable write는 review 가능한 runtime command surface를 통해 처리합니다.
           </p>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginTop: 0 }}>Room continuity shortcuts</h3>
+        <p className="muted">Telegram에서 현재 Room 상태를 확인하고, 같은 목표와 제약을 유지한 채 이어가거나 분기할 수 있습니다.</p>
+        <div className="companionCommandList">
+          {['/brief', '/continue', '/sources', '/rules', '/correct <correction>', '/branch <new direction>'].map((command) => (
+            <button key={command} onClick={() => copyCommand(command, setCopyStatus)}>{command}</button>
+          ))}
         </div>
       </div>
 
       <div className="companionGrid">
         <div className="card companionCardWide">
-          <h3 style={{ marginTop: 0 }}>1. Companion 선택</h3>
+          <h3 style={{ marginTop: 0 }}>1. Companion 선택 (optional)</h3>
           <div className="companionList">
             {manifest.companions.map((item) => (
               <button

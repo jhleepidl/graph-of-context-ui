@@ -45,6 +45,7 @@ from app.routers.companion_control import router as companion_control_router
 from app.routers.runtime_events import router as runtime_events_router
 from app.routers.runtime_commands import router as runtime_commands_router
 from app.routers.harness_evaluations import router as harness_evaluations_router
+from app.routers.recipes import router as recipes_router
 from app.services.users import upsert_user_by_telegram_id
 
 app = FastAPI(title="Graph-of-Context MVP API")
@@ -165,5 +166,6 @@ app.include_router(companion_control_router)
 app.include_router(runtime_events_router)
 app.include_router(runtime_commands_router)
 app.include_router(harness_evaluations_router)
+app.include_router(recipes_router)
 
 app.include_router(hierarchy_router)

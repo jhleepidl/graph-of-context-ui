@@ -45,7 +45,7 @@ export default function ArtifactsPanel({ nodes, activeIds }: Props) {
   return (
     <div className="card runStudioPanel">
       <div className="runStudioPanelHeader">
-        <h3>Artifacts</h3>
+        <h3>결과물</h3>
         <span className="pill">count: {artifacts.length}</span>
       </div>
 

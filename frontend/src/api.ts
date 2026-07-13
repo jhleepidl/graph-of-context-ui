@@ -338,6 +338,14 @@ export function createMemoryMaterializationShadowModule(threadId: string, body: 
 }
 
 export const api = {
+  recipeCatalog: (options: { query?: string; category?: string; status?: string } = {}) => {
+    const q = new URLSearchParams()
+    if (options.query) q.set('query', options.query)
+    if (options.category) q.set('category', options.category)
+    if (options.status) q.set('status', options.status)
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/recipes${suffix}`))
+  },
   harnessEvaluationRuns: (options: { limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
@@ -350,12 +358,36 @@ export const api = {
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/evaluations/harness/variants${suffix}`))
   },
+  createRuntimeCommand: (body: {
+    command_id?: string
+    command_type: string
+    thread_id?: string
+    aggregate_type?: string
+    aggregate_id?: string
+    expected_revision?: number
+    payload?: Record<string, unknown>
+  }) =>
+    j<any>(apiFetch('/api/runtime/commands', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })),
+  runtimeCommand: (commandId: string) =>
+    j<any>(apiFetch(`/api/runtime/commands/${encodeURIComponent(commandId)}`)),
+  runtimeCommands: (options: { status?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams()
+    if (options.status) q.set('status', options.status)
+    if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
+    const suffix = q.toString() ? `?${q.toString()}` : ''
+    return j<any>(apiFetch(`/api/runtime/commands${suffix}`))
+  },
   runtimeRunProjection: (runId: string) =>
     j<any>(apiFetch(`/api/runtime/runs/${encodeURIComponent(runId)}/projection`)),
-  runtimeEvents: (options: { run_id?: string; thread_id?: string; limit?: number } = {}) => {
+  runtimeEvents: (options: { run_id?: string; thread_id?: string; after_event_id?: string; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (options.run_id) q.set('run_id', options.run_id)
     if (options.thread_id) q.set('thread_id', options.thread_id)
+    if (options.after_event_id) q.set('after_event_id', options.after_event_id)
     if (typeof options.limit === 'number' && Number.isFinite(options.limit) && options.limit > 0) q.set('limit', String(options.limit))
     const suffix = q.toString() ? `?${q.toString()}` : ''
     return j<any>(apiFetch(`/api/runtime/events${suffix}`))

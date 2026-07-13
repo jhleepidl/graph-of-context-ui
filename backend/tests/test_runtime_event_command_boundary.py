@@ -12,14 +12,14 @@ try:
         create_runtime_command,
         serialize_runtime_command,
     )
-    from app.services.runtime_events import ingest_runtime_events
+    from app.services.runtime_events import ingest_runtime_events, list_runtime_events
     from tests.db_test_utils import create_test_engine, dispose_tracked_engines
     _IMPORT_ERROR = None
 except ModuleNotFoundError as exc:  # pragma: no cover
     SQLModel = Session = select = None  # type: ignore[assignment]
     RuntimeRunProjection = None  # type: ignore[assignment]
     acknowledge_runtime_command = create_runtime_command = serialize_runtime_command = None  # type: ignore[assignment]
-    ingest_runtime_events = None  # type: ignore[assignment]
+    ingest_runtime_events = list_runtime_events = None  # type: ignore[assignment]
     create_test_engine = dispose_tracked_engines = None  # type: ignore[assignment]
     HTTPException = Exception  # type: ignore[assignment]
     _IMPORT_ERROR = exc
@@ -84,6 +84,32 @@ class RuntimeEventCommandBoundaryTests(unittest.TestCase):
             self.assertEqual(duplicate['duplicates'], 1)
             projection = session.exec(select(RuntimeRunProjection).where(RuntimeRunProjection.run_id == 'run-1')).one()
             self.assertEqual(projection.event_count, 3)
+
+    def test_event_cursor_returns_only_newer_events_in_ingest_order(self) -> None:
+        events = [
+            {
+                'schema_version': 'openharness.run_trace/v1',
+                'sync_schema_version': 'openharness.run_sync/v1',
+                'event_id': f'cursor-{index}',
+                'event_sequence': index,
+                'thread_id': 'thread-cursor',
+                'run_id': 'run-cursor',
+                'event_type': 'run.start' if index == 1 else 'run.metadata',
+                'occurred_at': f'2026-07-13T00:00:0{index}Z',
+                'payload': {'index': index},
+            }
+            for index in range(1, 4)
+        ]
+        with Session(self.engine) as session:
+            ingest_runtime_events(session, events[:2])
+            session.commit()
+            initial = list_runtime_events(session, thread_id='thread-cursor', limit=10)
+            self.assertEqual([row.event_id for row in initial], ['cursor-2', 'cursor-1'])
+
+            ingest_runtime_events(session, events[2:])
+            session.commit()
+            delta = list_runtime_events(session, thread_id='thread-cursor', after_event_id='cursor-2', limit=10)
+            self.assertEqual([row.event_id for row in delta], ['cursor-3'])
 
     def test_command_creation_is_idempotent_and_acknowledged(self) -> None:
         body = {
