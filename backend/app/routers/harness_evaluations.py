@@ -31,6 +31,8 @@ class HarnessEvaluationIngestRequest(BaseModel):
     total_run_count: int = 0
     passed_run_count: int = 0
     failed_run_count: int = 0
+    execution_error_run_count: int | None = None
+    quality_run_count: int | None = None
     variant_results: list[dict[str, Any]] = []
     recommendation: dict[str, Any] | None = None
     started_at: str | None = None

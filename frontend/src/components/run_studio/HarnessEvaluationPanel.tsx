@@ -8,6 +8,8 @@ type EvalRun = {
   total_run_count?: number
   passed_run_count?: number
   failed_run_count?: number
+  execution_error_run_count?: number
+  quality_run_count?: number
   recommendation_variant_id?: string | null
   recommendation_runtime_signature?: string | null
   finished_at?: string | null
@@ -92,7 +94,7 @@ export default function HarnessEvaluationPanel() {
             {runs.map((row) => (
               <div key={String(row.evaluation_id)} className="timelineItem">
                 <div><b>{row.evaluation_id}</b> · {row.status || 'completed'}</div>
-                <div className="muted">{row.suite || 'live'} · {row.passed_run_count || 0}/{row.total_run_count || 0} passed{row.recommendation_variant_id ? ` · recommended ${row.recommendation_variant_id}` : ''}{row.recommendation_runtime_signature ? ` · ${row.recommendation_runtime_signature}` : ''}</div>
+                <div className="muted">{row.suite || 'live'} · {row.passed_run_count || 0}/{row.quality_run_count ?? row.total_run_count ?? 0} quality runs passed{row.execution_error_run_count ? ` · ${row.execution_error_run_count} execution unavailable` : ''}{row.recommendation_variant_id ? ` · recommended ${row.recommendation_variant_id}` : ''}{row.recommendation_runtime_signature ? ` · ${row.recommendation_runtime_signature}` : ''}</div>
               </div>
             ))}
           </div>

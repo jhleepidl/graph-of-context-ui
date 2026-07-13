@@ -60,6 +60,12 @@ def _load_json(value: str, fallback: Any) -> Any:
 
 
 def serialize_harness_evaluation_run(row: HarnessEvaluationRun, *, include_payload: bool = False) -> dict[str, Any]:
+    raw_payload = _load_json(row.payload_json, {})
+    quality_run_count = (
+        _int(_obj(raw_payload).get("quality_run_count"))
+        if _obj(raw_payload).get("quality_run_count") is not None
+        else max(0, row.passed_run_count + row.failed_run_count)
+    )
     payload = {
         "evaluation_id": row.evaluation_id,
         "suite": row.suite,
@@ -68,6 +74,8 @@ def serialize_harness_evaluation_run(row: HarnessEvaluationRun, *, include_paylo
         "total_run_count": row.total_run_count,
         "passed_run_count": row.passed_run_count,
         "failed_run_count": row.failed_run_count,
+        "execution_error_run_count": _int(_obj(raw_payload).get("execution_error_run_count")),
+        "quality_run_count": quality_run_count,
         "recommendation_variant_id": row.recommendation_variant_id or None,
         "recommendation_runtime_signature": row.recommendation_runtime_signature or None,
         "started_at": row.started_at.isoformat() if row.started_at else None,
@@ -76,7 +84,7 @@ def serialize_harness_evaluation_run(row: HarnessEvaluationRun, *, include_paylo
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
     if include_payload:
-        payload["payload"] = _load_json(row.payload_json, {})
+        payload["payload"] = raw_payload
     return payload
 
 
@@ -126,6 +134,11 @@ def ingest_harness_evaluation(session: Session, payload: dict[str, Any]) -> tupl
     session.flush()
 
     variants: list[HarnessEvaluationVariantResult] = []
+    existing_results = list(session.exec(
+        select(HarnessEvaluationVariantResult).where(HarnessEvaluationVariantResult.evaluation_id == evaluation_id)
+    ).all())
+    existing_by_signature = {item.runtime_signature: item for item in existing_results}
+    retained_signatures: set[str] = set()
     for item in _arr(body.get("variant_results")):
         variant = _obj(item)
         variant_id = _text(variant.get("harness_variant_id"), 240)
@@ -138,15 +151,19 @@ def ingest_harness_evaluation(session: Session, payload: dict[str, Any]) -> tupl
             _text(variant.get("reasoning_effort"), 80) or "provider-default",
             _text(variant.get("cli_version"), 300) or "unknown-cli",
         ])
-        result = session.exec(
-            select(HarnessEvaluationVariantResult).where(
-                HarnessEvaluationVariantResult.evaluation_id == evaluation_id,
-                HarnessEvaluationVariantResult.runtime_signature == runtime_signature,
-            )
-        ).first()
+        result = existing_by_signature.get(runtime_signature)
+        has_quality_run_count = variant.get("quality_run_count") is not None
+        quality_run_count = _int(variant.get("quality_run_count")) if has_quality_run_count else _int(variant.get("run_count"))
+        execution_error_run_count = _int(variant.get("execution_error_run_count"))
+        if quality_run_count <= 0 and execution_error_run_count > 0:
+            if result is not None:
+                session.delete(result)
+                existing_by_signature.pop(runtime_signature, None)
+            continue
         if result is None:
             result = HarnessEvaluationVariantResult(evaluation_id=evaluation_id, runtime_signature=runtime_signature, harness_variant_id=variant_id)
             session.add(result)
+        retained_signatures.add(runtime_signature)
         result.runtime_signature = runtime_signature
         result.harness_variant_id = variant_id
         result.harness_variant_hash = _text(variant.get("harness_variant_hash"), 128)
@@ -154,7 +171,7 @@ def ingest_harness_evaluation(session: Session, payload: dict[str, Any]) -> tupl
         result.model = _text(variant.get("model"), 200)
         result.reasoning_effort = _text(variant.get("reasoning_effort"), 80)
         result.cli_version = _text(variant.get("cli_version"), 300)
-        result.run_count = _int(variant.get("run_count"))
+        result.run_count = quality_run_count
         result.passed_run_count = _int(variant.get("passed_run_count"))
         result.failed_run_count = _int(variant.get("failed_run_count"))
         result.success_rate = _float(variant.get("success_rate"))
@@ -162,6 +179,9 @@ def ingest_harness_evaluation(session: Session, payload: dict[str, Any]) -> tupl
         result.average_duration_ms = _float(variant.get("average_duration_ms"))
         result.payload_json = _json(variant)
         variants.append(result)
+    for signature, result in existing_by_signature.items():
+        if signature not in retained_signatures:
+            session.delete(result)
     session.flush()
     return row, variants, created
 
